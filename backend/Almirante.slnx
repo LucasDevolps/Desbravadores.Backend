@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Almirante.Api.Tests/Almirante.Api.Tests.csproj" />
+  <Project Path="Almirante.Api/Almirante.Api.csproj" />
+  <Project Path="Almirante.AppHost/Almirante.AppHost.csproj" />
+  <Project Path="Almirante.ServiceDefaults/Almirante.ServiceDefaults.csproj" />
+</Solution>

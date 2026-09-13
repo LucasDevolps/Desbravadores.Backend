@@ -1,0 +1,57 @@
+name: almirante
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: almirante-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?defina SQL_SA_PASSWORD no arquivo .env}
+      MSSQL_PID: Developer
+    ports:
+      - "${SQL_HOST_PORT:-14330}:1433"
+    volumes:
+      # Volume nomeado e persistente: pode ser exportado (docker volume + docker run --rm -v ...)
+      # e restaurado em outra máquina para compartilhar backups/estado atual do banco.
+      - almirante-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Almirante.Api/Dockerfile
+    container_name: almirante-api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};TrustServerCertificate=True
+      Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
+      Jwt__Audience: ${JWT_AUDIENCE:-Almirante.Frontend}
+      Jwt__Key: ${JWT_KEY:?defina JWT_KEY no arquivo .env}
+      Jwt__ExpirationMinutes: ${JWT_EXPIRATION_MINUTES:-60}
+      SeedAdmin__Nome: ${SEED_ADMIN_NOME:-Administrador}
+      SeedAdmin__Email: ${SEED_ADMIN_EMAIL:-admin@local.dev}
+      SeedAdmin__Senha: ${SEED_ADMIN_SENHA:?defina SEED_ADMIN_SENHA no arquivo .env}
+      Cors__AllowedOrigins__0: ${CORS_ORIGIN_1:-http://localhost:4200}
+      Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
+    ports:
+      - "${API_HOST_PORT:-8090}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  almirante-sqlserver-data:
+    name: almirante-sqlserver-data
