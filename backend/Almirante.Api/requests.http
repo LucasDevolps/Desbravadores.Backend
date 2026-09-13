@@ -1,0 +1,54 @@
+@baseUrl = http://localhost:8090
+@token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
+
+### 1. Login (credenciais válidas)
+POST {{baseUrl}}/api/Auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@local.dev",
+  "senha": "senha"
+}
+
+### 2. Auth/Me
+GET {{baseUrl}}/api/Auth/Me
+Authorization: Bearer {{token}}
+
+### 3. Logout
+POST {{baseUrl}}/api/Auth/logout
+Authorization: Bearer {{token}}
+
+### 4. Listar usuários
+GET {{baseUrl}}/api/Usuarios
+Authorization: Bearer {{token}}
+
+### 5. Listar lançamentos (com paginação e filtros)
+GET {{baseUrl}}/api/Lancamentos?page=1&pageSize=10&search=guilherme&status=Pago&tipo=Mensalidade
+Authorization: Bearer {{token}}
+
+### 6. Criar lançamento
+POST {{baseUrl}}/api/Lancamentos
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "membroNome": "Novo Membro",
+  "tipo": "Doação",
+  "categoria": "Clube",
+  "valor": 42.5,
+  "vencimento": "2026-12-01",
+  "status": "Pendente"
+}
+
+### 7. Atualizar lançamento (PUT parcial)
+PUT {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "Pago"
+}
+
+### 8. Excluir lançamento
+DELETE {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}

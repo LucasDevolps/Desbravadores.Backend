@@ -55,3 +55,21 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Visual Studio
+.vs/
+
+# Frontend (Angular) artifacts - not versioned from the backend repo
+node_modules/
+dist/
+.angular/
+
+# Secrets and certificates - never commit real credentials
+*.env
+!.env.example
+*.pfx
+*.p12
+*.key
+*.pem
+secrets.json
+appsettings.*.local.json
