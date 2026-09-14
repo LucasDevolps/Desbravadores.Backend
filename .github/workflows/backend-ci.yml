@@ -1,0 +1,33 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+jobs:
+  build-and-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # actions/setup-dotnet tries to install the SDK under C:\Program Files\dotnet,
+      # which the runner account can't write to. The .NET 10 SDK is already installed
+      # on this self-hosted runner, so we use it directly instead.
+      - name: Restore
+        run: dotnet restore backend/Almirante.slnx
+
+      - name: Build
+        run: dotnet build backend/Almirante.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal
