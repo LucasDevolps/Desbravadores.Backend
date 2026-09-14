@@ -1,0 +1,45 @@
+name: Backend Deploy (develop)
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+
+jobs:
+  publish-to-iis:
+    runs-on: self-hosted
+
+    env:
+      SITE_PATH: C:\desbravadores\site
+      PUBLISH_PATH: ${{ github.workspace }}\_publish
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish
+        run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
+
+      # ANCM watches for app_offline.htm and shuts the running app process down,
+      # releasing file locks, without needing IIS admin rights to recycle the app pool.
+      - name: Take site offline
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "${{ env.SITE_PATH }}" -Force | Out-Null
+          Set-Content -Path "${{ env.SITE_PATH }}\app_offline.htm" -Value "<html><body>Deploying...</body></html>"
+          Start-Sleep -Seconds 5
+
+      - name: Copy published files to the site folder
+        shell: pwsh
+        run: |
+          robocopy "${{ env.PUBLISH_PATH }}" "${{ env.SITE_PATH }}" /MIR /XF appsettings.Production.json app_offline.htm /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed with exit code $LASTEXITCODE"
+          }
+          exit 0
+
+      - name: Bring site back online
+        shell: pwsh
+        run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
