@@ -20,11 +20,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-
+      # actions/setup-dotnet tries to install the SDK under C:\Program Files\dotnet,
+      # which the runner account can't write to. The .NET 10 SDK is already installed
+      # on this self-hosted runner, so we use it directly instead.
       - name: Restore
         run: dotnet restore backend/Almirante.slnx
 
