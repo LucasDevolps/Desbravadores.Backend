@@ -17,6 +17,7 @@ public class AuthService(
         var emailNormalizado = email.Trim().ToUpperInvariant();
 
         var usuario = await db.Usuarios
+            .Include(u => u.Cargo)
             .SingleOrDefaultAsync(u => u.EmailNormalizado == emailNormalizado, cancellationToken);
 
         if (usuario is null)
@@ -39,30 +40,38 @@ public class AuthService(
                 AccessToken = issuedToken.AccessToken,
                 ExpiresAtUtc = issuedToken.ExpiresAtUtc,
             },
-            Usuario = new UsuarioDto
-            {
-                Id = usuario.Id,
-                Nome = usuario.Nome,
-                Email = usuario.Email,
-                Roles = usuario.Roles,
-            },
+            Usuario = ToDto(usuario),
         };
     }
 
     public async Task<UsuarioDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        var usuario = await db.Usuarios.SingleOrDefaultAsync(u => u.Id == id, cancellationToken);
+        var usuario = await db.Usuarios
+            .Include(u => u.Cargo)
+            .SingleOrDefaultAsync(u => u.Id == id, cancellationToken);
         if (usuario is null)
         {
             return null;
         }
 
-        return new UsuarioDto
-        {
-            Id = usuario.Id,
-            Nome = usuario.Nome,
-            Email = usuario.Email,
-            Roles = usuario.Roles,
-        };
+        return ToDto(usuario);
     }
+
+    private static UsuarioDto ToDto(Usuario usuario) => new()
+    {
+        Id = usuario.Id,
+        Nome = usuario.Nome,
+        Email = usuario.Email,
+        Cargo = new CargoDto
+        {
+            Id = usuario.Cargo!.Id,
+            Nome = usuario.Cargo.Nome,
+            Descricao = usuario.Cargo.Descricao,
+            Ativo = usuario.Cargo.Ativo,
+            CriadoPor = usuario.Cargo.CriadoPor,
+            CriadoEm = usuario.Cargo.CriadoEm,
+            UltimaAtualizacao = usuario.Cargo.UltimaAtualizacao,
+            Role = usuario.Cargo.Role,
+        },
+    };
 }

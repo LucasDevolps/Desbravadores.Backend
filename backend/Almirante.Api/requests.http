@@ -52,3 +52,7 @@ Content-Type: application/json
 ### 8. Excluir lançamento
 DELETE {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
 Authorization: Bearer {{token}}
+
+### 9. Listar cargos
+GET {{baseUrl}}/api/Cargos
+Authorization: Bearer {{token}}

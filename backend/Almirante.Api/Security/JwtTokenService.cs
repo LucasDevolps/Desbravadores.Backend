@@ -24,7 +24,7 @@ public class JwtTokenService(IOptions<JwtOptions> options)
             new(JwtRegisteredClaimNames.Email, usuario.Email),
             new(ClaimTypes.NameIdentifier, usuario.Id.ToString()),
             new(ClaimTypes.Name, usuario.Nome),
-            new(ClaimTypes.Role, usuario.Roles),
+            new(ClaimTypes.Role, usuario.Cargo!.Role),
         };
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Key));

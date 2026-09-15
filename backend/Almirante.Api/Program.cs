@@ -23,6 +23,7 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
+builder.Services.AddScoped<CargosService>();
 
 builder.Services.AddControllers().AddJsonOptions(options =>
 {

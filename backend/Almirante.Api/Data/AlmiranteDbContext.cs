@@ -7,6 +7,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 {
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
+    public DbSet<Cargo> Cargos => Set<Cargo>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -18,8 +19,12 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.Email).HasMaxLength(256).IsRequired();
             entity.Property(u => u.EmailNormalizado).HasMaxLength(256).IsRequired();
             entity.Property(u => u.SenhaHash).IsRequired();
-            entity.Property(u => u.Roles).HasMaxLength(200).IsRequired();
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
+
+            entity.HasOne(u => u.Cargo)
+                .WithMany()
+                .HasForeignKey(u => u.CargoId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Lancamento>(entity =>
@@ -38,6 +43,17 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasIndex(l => l.Tipo);
             entity.HasIndex(l => l.Vencimento);
             entity.HasIndex(l => l.MembroId);
+        });
+
+        modelBuilder.Entity<Cargo>(entity =>
+        {
+            entity.ToTable("Cargos");
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Nome).HasMaxLength(200).IsRequired();
+            entity.Property(c => c.Descricao).HasMaxLength(1000).IsRequired();
+            entity.Property(c => c.CriadoPor).HasMaxLength(200).IsRequired();
+            entity.Property(c => c.Role).HasMaxLength(20).IsRequired();
+            entity.HasIndex(c => c.Role).IsUnique();
         });
     }
 }
