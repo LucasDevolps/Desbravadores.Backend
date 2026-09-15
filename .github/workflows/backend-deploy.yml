@@ -15,8 +15,12 @@ jobs:
       matrix:
         # Um runner Linux por máquina de destino. Cada label é único (ver
         # config --labels na hora de registrar o runner), então o job roda
-        # em paralelo em cada máquina a cada push em develop.
-        target: [popos-lucas, popos-amigo]
+        # em paralelo em cada máquina a cada push em develop. Só inclua um
+        # target aqui depois que o runner self-hosted correspondente estiver
+        # registrado e online (repo > Settings > Actions > Runners) —
+        # caso contrário o job fica preso na fila esperando um runner que
+        # nunca aparece.
+        target: [popos-lucas]
 
     concurrency:
       group: backend-deploy-${{ matrix.target }}
