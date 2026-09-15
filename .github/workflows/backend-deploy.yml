@@ -1,0 +1,49 @@
+name: Backend Deploy (Pop!_OS)
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "backend/**"
+      - "compose.yaml"
+      - ".github/workflows/backend-deploy.yml"
+
+concurrency:
+  group: backend-deploy-popos
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Runner self-hosted instalado no Pop!_OS (labels automáticas: self-hosted, Linux, X64)
+    runs-on: [self-hosted, Linux]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copiar .env fixo da máquina
+        run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
+
+      - name: Build e subir containers
+        run: docker compose up -d --build
+
+      - name: Aguardar API ficar saudável
+        run: |
+          set -a
+          source .env
+          set +a
+          port="${API_HOST_PORT:-8090}"
+          for i in $(seq 1 30); do
+            if curl -sf "http://localhost:${port}/health" > /dev/null; then
+              echo "API saudável em http://localhost:${port}"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API não respondeu em tempo hábil." >&2
+          docker compose logs --tail=100 api
+          exit 1
+
+      - name: Limpar imagens antigas
+        if: always()
+        run: docker image prune -f
