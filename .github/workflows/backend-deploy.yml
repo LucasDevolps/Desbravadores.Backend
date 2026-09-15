@@ -8,14 +8,22 @@ on:
       - "compose.yaml"
       - ".github/workflows/backend-deploy.yml"
 
-concurrency:
-  group: backend-deploy-popos
-  cancel-in-progress: false
-
 jobs:
   deploy:
-    # Runner self-hosted instalado no Pop!_OS (labels automáticas: self-hosted, Linux, X64)
-    runs-on: [self-hosted, Linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        # Um runner Linux por máquina de destino. Cada label é único (ver
+        # config --labels na hora de registrar o runner), então o job roda
+        # em paralelo em cada máquina a cada push em develop.
+        target: [popos-lucas, popos-amigo]
+
+    concurrency:
+      group: backend-deploy-${{ matrix.target }}
+      cancel-in-progress: false
+
+    # Runner self-hosted Linux com o label específico da máquina de destino
+    runs-on: [self-hosted, Linux, "${{ matrix.target }}"]
 
     steps:
       - name: Checkout
