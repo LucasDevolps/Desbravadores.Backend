@@ -11,6 +11,14 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // Usuarios não tem endpoint de criação (a única linha é o admin recriado pelo
+            // DbSeeder a cada start). Não há como preencher a nova FK obrigatória CargoId com
+            // um Cargo válido para linhas pré-existentes nesta migration (a tabela Cargos só é
+            // populada pelo seeder em C#, depois que as migrations rodam), então limpamos a
+            // tabela aqui; o DbSeeder recria o admin logo em seguida com o mesmo e-mail/senha
+            // configurados, já apontando para o Cargo correto.
+            migrationBuilder.Sql("DELETE FROM [Usuarios];");
+
             migrationBuilder.DropColumn(
                 name: "Roles",
                 table: "Usuarios");
