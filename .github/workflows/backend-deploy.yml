@@ -1,4 +1,4 @@
-name: Backend Deploy (Pop!_OS)
+name: Backend Deploy
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - ".github/workflows/backend-deploy.yml"
 
 jobs:
-  deploy:
+  deploy-linux:
     strategy:
       fail-fast: false
       matrix:
@@ -39,7 +39,13 @@ jobs:
       - name: Build e subir containers
         run: docker compose up -d --build
 
-      - name: Aguardar API ficar saudável
+      # A aplicação roda as migrations pendentes automaticamente na
+      # inicialização (Program.cs chama DbSeeder.SeedAsync antes de aceitar
+      # tráfego). Esse passo espera o container subir e só reporta sucesso
+      # quando a API responde, o que confirma que as migrations rodaram —
+      # se falharem, o processo derruba a aplicação e o healthcheck nunca
+      # fica verde.
+      - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
         run: |
           set -a
           source .env
@@ -59,3 +65,72 @@ jobs:
       - name: Limpar imagens antigas
         if: always()
         run: docker image prune -f
+
+  deploy-windows:
+    concurrency:
+      group: backend-deploy-windows
+      cancel-in-progress: false
+
+    # Runner self-hosted Windows (repo > Settings > Actions > Runners). "Windows"
+    # precisa estar explícito aqui: como também existe um runner self-hosted
+    # Linux registrado, "runs-on: self-hosted" sozinho seria ambíguo.
+    runs-on: [self-hosted, Windows]
+
+    env:
+      SITE_PATH: C:\desbravadores\site
+      PUBLISH_PATH: ${{ github.workspace }}\_publish
+      # Porta configurada no binding do site no IIS. Ajuste se o site
+      # estiver publicado em outra porta.
+      SITE_PORT: 7370
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish
+        run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
+
+      # ANCM observa o app_offline.htm e derruba o processo em execução,
+      # liberando os locks de arquivo, sem precisar de direitos de admin do
+      # IIS para reciclar o app pool a partir do CI.
+      - name: Tirar o site do ar
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "${{ env.SITE_PATH }}" -Force | Out-Null
+          Set-Content -Path "${{ env.SITE_PATH }}\app_offline.htm" -Value "<html><body>Deploying...</body></html>"
+          Start-Sleep -Seconds 5
+
+      - name: Copiar os arquivos publicados para o site
+        shell: pwsh
+        run: |
+          robocopy "${{ env.PUBLISH_PATH }}" "${{ env.SITE_PATH }}" /MIR /XF appsettings.Production.json app_offline.htm /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) {
+            throw "robocopy falhou com o código $LASTEXITCODE"
+          }
+          exit 0
+
+      - name: Colocar o site no ar novamente
+        shell: pwsh
+        run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
+
+      # A primeira requisição após remover o app_offline.htm faz o ANCM subir
+      # um processo novo, que roda as migrations pendentes antes de aceitar
+      # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Esse passo
+      # só reporta sucesso quando a API responde, confirmando que a
+      # publicação — e as migrations — funcionaram.
+      - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
+        shell: pwsh
+        run: |
+          $uri = "http://localhost:${{ env.SITE_PORT }}/health"
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 5
+              if ($response.StatusCode -eq 200) {
+                Write-Host "API saudável em $uri"
+                exit 0
+              }
+            } catch {}
+            Start-Sleep -Seconds 2
+          }
+          Write-Error "API não respondeu em tempo hábil em $uri. Verifique os logs do IIS/Event Viewer no runner."
+          exit 1
