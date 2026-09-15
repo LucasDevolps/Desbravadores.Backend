@@ -26,6 +26,7 @@ public static class DbSeeder
 
         await SeedAdminAsync(db, passwordHasher, seedOptions.Value, cancellationToken);
         await SeedLancamentosAsync(db, cancellationToken);
+        await SeedCargosAsync(db, cancellationToken);
     }
 
     // SQL error 1801 = "Database '...' already exists". Under container restarts the database
@@ -108,6 +109,41 @@ public static class DbSeeder
         };
 
         db.Lancamentos.AddRange(demo);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // Cargos com base nas funções descritas no Manual Administrativo do Clube de
+    // Desbravadores (diretoria do clube e cargos exercidos dentro das unidades).
+    private static async Task SeedCargosAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
+    {
+        if (await db.Cargos.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+
+        const string criadoPor = "Sistema";
+
+        var cargos = new[]
+        {
+            new Cargo { Id = Guid.NewGuid(), Nome = "Diretor", Descricao = "Lidera todo o clube, dirige as reuniões, define metas do ano e preside as comissões.", CriadoPor = criadoPor, Role = "DIR" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Diretor Associado", Descricao = "Coordena classes, especialidades e unidades, substituindo o diretor em sua ausência.", CriadoPor = criadoPor, Role = "DIRA" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Secretário", Descricao = "Registra pontos, presenças, atas e relatórios, além de cuidar do cadastro e da comunicação do clube.", CriadoPor = criadoPor, Role = "SEC" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Tesoureiro", Descricao = "Administra as finanças do clube junto com a tesouraria da igreja.", CriadoPor = criadoPor, Role = "TES" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Capelão", Descricao = "Conduz a vida espiritual do clube, coordenando o devocional e a classe bíblica.", CriadoPor = criadoPor, Role = "CAP" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Conselheiro", Descricao = "Acompanha de perto uma unidade em todas as atividades e avalia o desenvolvimento de cada membro.", CriadoPor = criadoPor, Role = "CONS" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Conselheiro Associado", Descricao = "Auxilia o conselheiro e assume a unidade quando ele falta.", CriadoPor = criadoPor, Role = "CONSA" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Instrutor", Descricao = "Ensina uma classe específica ou especialidades, podendo ser convidado externo ao clube.", CriadoPor = criadoPor, Role = "INST" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Capitão de Unidade", Descricao = "Anima e representa a unidade, eleito por votação, e porta o bandeirim.", CriadoPor = criadoPor, Role = "CPT" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Secretário de Unidade", Descricao = "Vice-líder da unidade, cuida da ficha do Cantinho da Unidade e assume quando o capitão falta.", CriadoPor = criadoPor, Role = "SECU" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Tesoureiro de Unidade", Descricao = "Recolhe as mensalidades da unidade e presta contas.", CriadoPor = criadoPor, Role = "TESU" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Almoxarife", Descricao = "Guarda e conserva o material da unidade.", CriadoPor = criadoPor, Role = "ALM" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Padioleiro", Descricao = "Cuida da caixa de primeiros socorros da unidade.", CriadoPor = criadoPor, Role = "PAD" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Coordenador de Recreação", Descricao = "Inventa jogos e desafios para o Cantinho da Unidade.", CriadoPor = criadoPor, Role = "COREC" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Capelão de Unidade", Descricao = "Lidera os momentos espirituais e incentiva o ano bíblico na unidade.", CriadoPor = criadoPor, Role = "CAPU" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Jovem de 10 a 15 anos, membro do clube, que pode ocupar qualquer um dos cargos de unidade.", CriadoPor = criadoPor, Role = "DS" },
+        };
+
+        db.Cargos.AddRange(cargos);
         await db.SaveChangesAsync(cancellationToken);
     }
 }
