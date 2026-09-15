@@ -7,6 +7,7 @@ public class Usuario
     public required string Email { get; set; }
     public required string EmailNormalizado { get; set; }
     public required string SenhaHash { get; set; }
-    public string Roles { get; set; } = "Admin";
+    public Guid CargoId { get; set; }
+    public Cargo? Cargo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
 }

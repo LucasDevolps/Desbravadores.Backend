@@ -16,7 +16,17 @@ public class UsuariosService(AlmiranteDbContext db)
                 Nome = u.Nome,
                 Email = u.Email,
                 DataCriacao = u.DataCriacao,
-                Roles = u.Roles,
+                Cargo = new CargoDto
+                {
+                    Id = u.Cargo!.Id,
+                    Nome = u.Cargo.Nome,
+                    Descricao = u.Cargo.Descricao,
+                    Ativo = u.Cargo.Ativo,
+                    CriadoPor = u.Cargo.CriadoPor,
+                    CriadoEm = u.Cargo.CriadoEm,
+                    UltimaAtualizacao = u.Cargo.UltimaAtualizacao,
+                    Role = u.Cargo.Role,
+                },
             })
             .ToListAsync(cancellationToken);
     }

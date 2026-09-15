@@ -24,7 +24,7 @@ public class AuthTests
         Assert.NotNull(body);
         Assert.False(string.IsNullOrWhiteSpace(body!.Token.AccessToken));
         Assert.Equal(AlmiranteApiFactory.AdminEmail, body.Usuario.Email);
-        Assert.Equal("Admin", body.Usuario.Roles);
+        Assert.Equal("ADM", body.Usuario.Cargo.Role);
     }
 
     [Fact]
