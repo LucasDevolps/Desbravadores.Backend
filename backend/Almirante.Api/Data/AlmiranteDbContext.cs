@@ -19,8 +19,12 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.Email).HasMaxLength(256).IsRequired();
             entity.Property(u => u.EmailNormalizado).HasMaxLength(256).IsRequired();
             entity.Property(u => u.SenhaHash).IsRequired();
-            entity.Property(u => u.Roles).HasMaxLength(200).IsRequired();
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
+
+            entity.HasOne(u => u.Cargo)
+                .WithMany()
+                .HasForeignKey(u => u.CargoId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Lancamento>(entity =>

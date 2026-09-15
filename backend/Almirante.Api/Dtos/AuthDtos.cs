@@ -22,7 +22,7 @@ public class UsuarioDto
     public Guid Id { get; set; }
     public required string Nome { get; set; }
     public required string Email { get; set; }
-    public required string Roles { get; set; }
+    public required CargoDto Cargo { get; set; }
 }
 
 public class UsuarioListItemDto
@@ -31,7 +31,7 @@ public class UsuarioListItemDto
     public required string Nome { get; set; }
     public required string Email { get; set; }
     public DateTime DataCriacao { get; set; }
-    public required string Roles { get; set; }
+    public required CargoDto Cargo { get; set; }
 }
 
 public class LoginResponse

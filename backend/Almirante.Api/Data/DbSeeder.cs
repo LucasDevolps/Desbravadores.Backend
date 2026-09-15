@@ -24,10 +24,12 @@ public static class DbSeeder
             await db.Database.EnsureCreatedAsync(cancellationToken);
         }
 
+        await SeedCargosAsync(db, cancellationToken);
         await SeedAdminAsync(db, passwordHasher, seedOptions.Value, cancellationToken);
         await SeedLancamentosAsync(db, cancellationToken);
-        await SeedCargosAsync(db, cancellationToken);
     }
+
+    private const string CargoAdminRole = "ADM";
 
     // SQL error 1801 = "Database '...' already exists". Under container restarts the database
     // created by a previous run already exists (thanks to the persistent volume), but EF Core's
@@ -60,6 +62,11 @@ public static class DbSeeder
             return;
         }
 
+        var cargoAdminId = await db.Cargos
+            .Where(c => c.Role == CargoAdminRole)
+            .Select(c => c.Id)
+            .SingleAsync(cancellationToken);
+
         var admin = new Usuario
         {
             Id = Guid.NewGuid(),
@@ -67,7 +74,7 @@ public static class DbSeeder
             Email = seedOptions.Email,
             EmailNormalizado = emailNormalizado,
             SenhaHash = string.Empty,
-            Roles = "Admin",
+            CargoId = cargoAdminId,
             DataCriacao = DateTime.UtcNow,
         };
 
@@ -125,6 +132,7 @@ public static class DbSeeder
 
         var cargos = new[]
         {
+            new Cargo { Id = Guid.NewGuid(), Nome = "Administrador", Descricao = "Acesso administrativo total à plataforma, responsável pela gestão do sistema e não corresponde a um cargo de unidade do clube.", CriadoPor = criadoPor, Role = CargoAdminRole },
             new Cargo { Id = Guid.NewGuid(), Nome = "Diretor", Descricao = "Lidera todo o clube, dirige as reuniões, define metas do ano e preside as comissões.", CriadoPor = criadoPor, Role = "DIR" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Diretor Associado", Descricao = "Coordena classes, especialidades e unidades, substituindo o diretor em sua ausência.", CriadoPor = criadoPor, Role = "DIRA" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Secretário", Descricao = "Registra pontos, presenças, atas e relatórios, além de cuidar do cadastro e da comunicação do clube.", CriadoPor = criadoPor, Role = "SEC" },
