@@ -290,7 +290,9 @@ dotnet build backend/Almirante.slnx --configuration Release --no-restore
 dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal
 ```
 
-A execução atual realiza validação de compilação e testes. Ela ainda não publica automaticamente a aplicação no IIS.
+A execução atual realiza validação de compilação e testes.
+
+O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 
 ## Observabilidade e saúde
 
