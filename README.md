@@ -1,42 +1,53 @@
 # Desbravadores.Backend
 
-Backend do projeto **Almirante**, uma API HTTP para autenticação, consulta de usuários e gerenciamento de lançamentos financeiros. A aplicação está implementada em ASP.NET Core, persiste os dados no SQL Server com Entity Framework Core e protege os recursos da API com JWT.
+Backend do projeto **Almirante**, responsável pela autenticação, consulta de usuários e gerenciamento de lançamentos financeiros dos Desbravadores. A aplicação é uma API HTTP construída com ASP.NET Core, persiste os dados no SQL Server por meio do Entity Framework Core e protege os recursos com autenticação JWT Bearer.
 
-## O que está implementado
+## Estado atual
+
+O backend está em fase de **MVP funcional** e possui:
 
 - login com e-mail e senha e emissão de token JWT;
 - consulta dos dados do usuário autenticado;
-- logout stateless (o endpoint encerra a requisição, mas não revoga o token JWT);
+- logout stateless — encerra a requisição, mas não revoga o token emitido;
 - listagem de usuários;
-- criação, listagem, atualização e exclusão de lançamentos;
+- criação, listagem, atualização e exclusão de lançamentos financeiros;
 - paginação, busca e filtros na listagem de lançamentos;
+- validação dos dados recebidos e respostas de erro no padrão Problem Details;
 - migrações do banco executadas na inicialização;
 - carga inicial idempotente de um administrador e de lançamentos demonstrativos;
-- documentação Swagger no ambiente `Development`;
-- endpoints de health check em `/health` e `/alive`;
-- execução por Docker Compose ou .NET Aspire;
-- testes de integração da autenticação e dos lançamentos.
+- Swagger/OpenAPI com suporte a Bearer Token, disponível em todos os ambientes;
+- health checks de prontidão e atividade;
+- telemetria com OpenTelemetry por meio do Service Defaults do Aspire;
+- execução local com Docker Compose ou .NET Aspire;
+- testes de integração da autenticação e dos lançamentos;
+- integração contínua com GitHub Actions em runner self-hosted.
 
-## Tecnologias presentes no projeto
+## Tecnologias
 
-- .NET 10 e ASP.NET Core;
+- .NET 10;
+- ASP.NET Core Web API;
 - Entity Framework Core 10;
 - SQL Server 2022;
-- autenticação JWT Bearer;
+- JWT Bearer;
 - Swagger / OpenAPI;
 - .NET Aspire;
-- xUnit;
-- Docker e Docker Compose.
+- OpenTelemetry;
+- xUnit e WebApplicationFactory;
+- Docker e Docker Compose;
+- GitHub Actions.
 
-## Estrutura
+## Estrutura do repositório
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── backend-ci.yml          # restore, build e testes do backend
 ├── backend/
-│   ├── Almirante.Api/             # API, regras, persistência e migrações
-│   ├── Almirante.Api.Tests/       # testes de integração
-│   ├── Almirante.AppHost/         # orquestração local com Aspire
-│   ├── Almirante.ServiceDefaults/ # health checks, telemetria e service discovery
+│   ├── Almirante.Api/              # API, regras, persistência e migrações
+│   ├── Almirante.Api.Tests/        # testes de integração
+│   ├── Almirante.AppHost/          # orquestração local com Aspire
+│   ├── Almirante.ServiceDefaults/  # health checks, telemetria e service discovery
 │   └── Almirante.slnx
 ├── compose.yaml
 ├── .env.example
@@ -49,7 +60,7 @@ Backend do projeto **Almirante**, uma API HTTP para autenticação, consulta de 
 
 - Docker com o comando `docker compose` disponível.
 
-### Passos
+### Configuração
 
 Na raiz do repositório, crie o arquivo de configuração local:
 
@@ -57,28 +68,37 @@ Na raiz do repositório, crie o arquivo de configuração local:
 cp .env.example .env
 ```
 
-Altere no `.env`, no mínimo, os valores de `SQL_SA_PASSWORD`, `JWT_KEY` e `SEED_ADMIN_SENHA`. Em seguida, inicie a API e o SQL Server:
+Altere no `.env`, no mínimo, os valores de:
+
+- `SQL_SA_PASSWORD`;
+- `JWT_KEY`;
+- `SEED_ADMIN_SENHA`.
+
+O arquivo `.env` contém segredos locais e não deve ser versionado.
+
+### Inicialização
 
 ```bash
 docker compose up --build
 ```
 
-Com os valores fornecidos pelo `.env.example`, os serviços ficam disponíveis em:
+Com os valores do `.env.example`, os serviços ficam disponíveis em:
 
 - API: `http://localhost:8090`;
-- health check: `http://localhost:8090/health`;
-- Swagger: `http://localhost:8090/swagger` porque o exemplo define `ASPNETCORE_ENVIRONMENT=Development`;
+- Swagger: `http://localhost:8090/swagger`;
+- readiness: `http://localhost:8090/health`;
+- liveness: `http://localhost:8090/alive`;
 - SQL Server: `localhost,14330`.
 
-O Compose usa o volume nomeado `almirante-sqlserver-data` para persistir os dados do SQL Server.
+O Compose utiliza o volume nomeado `almirante-sqlserver-data` para persistir os dados do SQL Server.
 
-Para encerrar os contêineres:
+Para encerrar os contêineres sem apagar os dados:
 
 ```bash
 docker compose down
 ```
 
-Esse comando mantém o volume de dados. Para também removê-lo:
+Para também remover o volume persistente:
 
 ```bash
 docker compose down -v
@@ -89,7 +109,7 @@ docker compose down -v
 ### Pré-requisitos
 
 - SDK do .NET 10;
-- runtime de contêiner compatível com o Aspire, usado para iniciar o SQL Server.
+- runtime de contêiner compatível com o Aspire.
 
 Execute o AppHost:
 
@@ -97,18 +117,26 @@ Execute o AppHost:
 dotnet run --project backend/Almirante.AppHost
 ```
 
-O AppHost cria o recurso SQL Server com volume persistente, registra o banco `almirante` e inicia o projeto da API. Os endereços atribuídos aos recursos são exibidos pelo Aspire durante a execução.
+O AppHost:
 
-As configurações de desenvolvimento já contêm uma chave JWT e as credenciais do administrador de seed usadas localmente:
+- inicia um SQL Server em contêiner;
+- utiliza o volume persistente `almirante-sqlserver-data`;
+- cria o banco lógico `almirante`;
+- aguarda o banco ficar disponível;
+- inicia a API e exibe os endereços dos recursos no painel do Aspire.
+
+As configurações de desenvolvimento incluem credenciais locais para o administrador inicial:
 
 - e-mail: `admin@local.dev`;
 - senha: `senha`.
 
-## Configuração por variáveis de ambiente
+Esses valores são exclusivos para desenvolvimento e devem ser substituídos em qualquer outro ambiente.
 
-O arquivo `.env.example` é consumido pelo Docker Compose e documenta os valores aceitos:
+## Variáveis de ambiente
 
-| Variável | Uso | Valor padrão no Compose |
+O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configurações disponíveis:
+
+| Variável | Finalidade | Padrão no Compose |
 | --- | --- | --- |
 | `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server | obrigatória |
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
@@ -116,15 +144,16 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta os valores
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
 | `JWT_AUDIENCE` | audiência do token JWT | `Almirante.Frontend` |
-| `JWT_KEY` | chave usada para assinar e validar o JWT | obrigatória |
+| `JWT_KEY` | chave de assinatura e validação do JWT | obrigatória |
 | `JWT_EXPIRATION_MINUTES` | duração do token em minutos | `60` |
 | `SEED_ADMIN_NOME` | nome do administrador inicial | `Administrador` |
 | `SEED_ADMIN_EMAIL` | e-mail do administrador inicial | `admin@local.dev` |
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
-| `CORS_ORIGIN_1` | primeira origem aceita pelo CORS | `http://localhost:4200` |
-| `CORS_ORIGIN_2` | segunda origem aceita pelo CORS | `http://localhost:4201` |
+| `CORS_ORIGIN_1` | primeira origem permitida pelo CORS | `http://localhost:4200` |
+| `CORS_ORIGIN_2` | segunda origem permitida pelo CORS | `http://localhost:4201` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint opcional para exportação OTLP | não definido |
 
-As chaves obrigatórias são exigidas pela interpolação do `compose.yaml`. O arquivo `.env` contém segredos locais e não deve ser versionado.
+A `JWT_KEY` deve possuir pelo menos 32 caracteres e ser diferente em cada ambiente.
 
 ## Autenticação
 
@@ -136,22 +165,24 @@ curl --request POST http://localhost:8090/api/Auth/login \
   --data '{"email":"admin@local.dev","senha":"senha"}'
 ```
 
-A resposta contém `token.accessToken`, `token.expiresAtUtc` e os dados do usuário. Envie o token nos endpoints protegidos:
+A resposta contém `token.accessToken`, `token.expiresAtUtc` e os dados do usuário. Nos endpoints protegidos, envie:
 
 ```http
 Authorization: Bearer SEU_TOKEN
 ```
 
-## Endpoints implementados
+O logout atual não mantém blacklist nem sessão persistida. Portanto, um JWT válido continua utilizável até expirar.
 
-Todos os endpoints, exceto o login e os health checks, exigem um token JWT válido.
+## Endpoints
+
+Com exceção do login, do Swagger e dos health checks, todos os endpoints exigem um token JWT válido.
 
 | Método | Rota | Comportamento |
 | --- | --- | --- |
 | `POST` | `/api/Auth/login` | valida e-mail e senha e retorna o token e o usuário |
 | `POST` | `/api/Auth/logout` | retorna `204 No Content`; não revoga o JWT |
 | `GET` | `/api/Auth/Me` | retorna o usuário autenticado |
-| `GET` | `/api/Usuarios` | lista os usuários por nome |
+| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome |
 | `GET` | `/api/Lancamentos` | lista lançamentos com paginação e filtros |
 | `POST` | `/api/Lancamentos` | cria um lançamento |
 | `PUT` | `/api/Lancamentos/{id}` | atualiza os campos enviados de um lançamento |
@@ -161,7 +192,7 @@ Todos os endpoints, exceto o login e os health checks, exigem um token JWT váli
 
 ### Consulta de lançamentos
 
-`GET /api/Lancamentos` aceita os parâmetros:
+`GET /api/Lancamentos` aceita:
 
 | Parâmetro | Comportamento |
 | --- | --- |
@@ -181,11 +212,19 @@ curl 'http://localhost:8090/api/Lancamentos?page=1&pageSize=10&tipo=Campori' \
 
 A resposta possui `items`, `total`, `page`, `pageSize` e `totalPages`. Os itens são ordenados pelo vencimento, do mais recente para o mais antigo.
 
-### Dados aceitos em lançamentos
+### Dados de lançamentos
 
-Na criação, `membroNome`, `tipo`, `categoria`, `vencimento` e `status` são obrigatórios. `membroId`, `descricao` e `moeda` são opcionais; quando `moeda` não é informada, a API usa `BRL`. O valor não pode ser negativo.
+Na criação, são obrigatórios:
 
-Valores validados pela API:
+- `membroNome`;
+- `tipo`;
+- `categoria`;
+- `vencimento`;
+- `status`.
+
+`membroId`, `descricao` e `moeda` são opcionais. Quando a moeda não é informada, a API utiliza `BRL`. O valor não pode ser negativo.
+
+Valores aceitos:
 
 - tipos: `Mensalidade`, `Campori`, `Acampamento`, `Uniflash`, `Doação`, `Evento` e `Outros`;
 - categorias: `Clube` e `Evento`;
@@ -210,16 +249,65 @@ curl --request POST http://localhost:8090/api/Lancamentos \
   }'
 ```
 
-## Banco de dados e carga inicial
+## Banco de dados e seed
 
-Na inicialização, a API aplica as migrações do Entity Framework Core. Depois, cria o administrador configurado caso ainda não exista um usuário com o mesmo e-mail normalizado. Também inclui 20 lançamentos demonstrativos somente quando a tabela de lançamentos está vazia.
+Na inicialização, a API aplica as migrações do Entity Framework Core. Em seguida:
+
+1. cria o administrador configurado, caso ainda não exista um usuário com o mesmo e-mail normalizado;
+2. inclui 20 lançamentos demonstrativos somente quando a tabela de lançamentos está vazia.
+
+O processo é idempotente e pode ser executado novamente sem duplicar o administrador nem os dados demonstrativos já existentes.
 
 ## Testes
 
-Execute a suíte a partir da raiz do repositório:
+Execute a suíte a partir da raiz:
 
 ```bash
 dotnet test backend/Almirante.slnx
 ```
 
-Os testes usam o provedor em memória do Entity Framework Core e cobrem autenticação, autorização, listagem, filtros, paginação, validação e o fluxo de criação, atualização e exclusão de lançamentos.
+Os testes utilizam o provedor em memória do Entity Framework Core e cobrem:
+
+- login válido, inválido e requisição malformada;
+- autorização dos endpoints protegidos;
+- listagem, paginação e filtros;
+- validação dos lançamentos;
+- criação, atualização e exclusão;
+- respostas `404 Not Found`.
+
+## Integração contínua
+
+O workflow `.github/workflows/backend-ci.yml` é executado em um runner **self-hosted** quando há:
+
+- push para `main` com alterações em `backend/**` ou no próprio workflow;
+- pull request direcionada à `main` com alterações nesses mesmos caminhos.
+
+O pipeline utiliza o SDK .NET 10 já instalado no runner e executa:
+
+```bash
+dotnet restore backend/Almirante.slnx
+dotnet build backend/Almirante.slnx --configuration Release --no-restore
+dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal
+```
+
+A execução atual realiza validação de compilação e testes. Ela ainda não publica automaticamente a aplicação no IIS.
+
+## Observabilidade e saúde
+
+O projeto `Almirante.ServiceDefaults` configura:
+
+- logs, métricas e traces com OpenTelemetry;
+- instrumentação do ASP.NET Core, HttpClient e runtime;
+- exportação OTLP quando `OTEL_EXPORTER_OTLP_ENDPOINT` estiver configurado;
+- service discovery;
+- resiliência padrão para clientes HTTP;
+- `/health` para readiness;
+- `/alive` para liveness.
+
+As requisições aos health checks são excluídas dos traces.
+
+## Swagger
+
+O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
+
+Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
