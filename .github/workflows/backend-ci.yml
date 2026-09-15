@@ -14,7 +14,9 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: self-hosted
+    # Pinado em Windows: agora também existe um runner self-hosted Linux (Pop!_OS)
+    # para deploy, e "runs-on: self-hosted" sozinho poderia cair nele.
+    runs-on: [self-hosted, Windows]
 
     steps:
       - name: Checkout

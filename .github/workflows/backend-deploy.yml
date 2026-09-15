@@ -1,45 +1,57 @@
-name: Backend Deploy (develop)
+name: Backend Deploy (Pop!_OS)
 
 on:
   push:
     branches: [develop]
     paths:
       - "backend/**"
+      - "compose.yaml"
       - ".github/workflows/backend-deploy.yml"
 
 jobs:
-  publish-to-iis:
-    runs-on: self-hosted
+  deploy:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Um runner Linux por máquina de destino. Cada label é único (ver
+        # config --labels na hora de registrar o runner), então o job roda
+        # em paralelo em cada máquina a cada push em develop.
+        target: [popos-lucas, popos-amigo]
 
-    env:
-      SITE_PATH: C:\desbravadores\site
-      PUBLISH_PATH: ${{ github.workspace }}\_publish
+    concurrency:
+      group: backend-deploy-${{ matrix.target }}
+      cancel-in-progress: false
+
+    # Runner self-hosted Linux com o label específico da máquina de destino
+    runs-on: [self-hosted, Linux, "${{ matrix.target }}"]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Publish
-        run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
+      - name: Copiar .env fixo da máquina
+        run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
 
-      # ANCM watches for app_offline.htm and shuts the running app process down,
-      # releasing file locks, without needing IIS admin rights to recycle the app pool.
-      - name: Take site offline
-        shell: pwsh
+      - name: Build e subir containers
+        run: docker compose up -d --build
+
+      - name: Aguardar API ficar saudável
         run: |
-          New-Item -ItemType Directory -Path "${{ env.SITE_PATH }}" -Force | Out-Null
-          Set-Content -Path "${{ env.SITE_PATH }}\app_offline.htm" -Value "<html><body>Deploying...</body></html>"
-          Start-Sleep -Seconds 5
+          set -a
+          source .env
+          set +a
+          port="${API_HOST_PORT:-8090}"
+          for i in $(seq 1 30); do
+            if curl -sf "http://localhost:${port}/health" > /dev/null; then
+              echo "API saudável em http://localhost:${port}"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API não respondeu em tempo hábil." >&2
+          docker compose logs --tail=100 api
+          exit 1
 
-      - name: Copy published files to the site folder
-        shell: pwsh
-        run: |
-          robocopy "${{ env.PUBLISH_PATH }}" "${{ env.SITE_PATH }}" /MIR /XF appsettings.Production.json app_offline.htm /NFL /NDL /NJH /NJS
-          if ($LASTEXITCODE -ge 8) {
-            throw "robocopy failed with exit code $LASTEXITCODE"
-          }
-          exit 0
-
-      - name: Bring site back online
-        shell: pwsh
-        run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
+      - name: Limpar imagens antigas
+        if: always()
+        run: docker image prune -f
