@@ -305,8 +305,11 @@ public class LancamentosGeraisAuditoriaSqlServerTests : IClassFixture<Lancamento
         // Max Pool Size=1 força a mesma conexão física a ser reutilizada entre as duas exclusões
         // sequenciais abaixo — exatamente o cenário que SESSION_CONTEXT + limpeza em `finally`
         // (LancamentosGeraisService.DeleteAsync) precisa proteger.
-        var connectionStringPoolLimitado = $"{_fixture.ConnectionString};Max Pool Size=1";
-        using var factoryDedicada = new SqlServerLancamentosGeraisFactory(connectionStringPoolLimitado);
+        var connectionStringPoolLimitadoBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_fixture.ConnectionString)
+        {
+            MaxPoolSize = 1,
+        };
+        using var factoryDedicada = SqlServerLancamentosGeraisFactory.CreateAndWarmUp(connectionStringPoolLimitadoBuilder.ConnectionString);
 
         var (clienteA, responsavelA) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factoryDedicada, "TES");
         using var httpClienteA = clienteA;
@@ -378,15 +381,20 @@ public class LancamentosGeraisAuditoriaSqlServerTests : IClassFixture<Lancamento
             // Mesma imagem usada em compose.yaml, para refletir o SQL Server real do deploy.
             _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
             await _container.StartAsync();
-            ConnectionString = $"{_container.GetConnectionString()};Database=almirante_teste";
 
-            Factory = new SqlServerLancamentosGeraisFactory(ConnectionString);
+            var connectionStringBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(_container.GetConnectionString())
+            {
+                InitialCatalog = "almirante_teste",
+            };
+            ConnectionString = connectionStringBuilder.ConnectionString;
 
-            // Força a construção do host agora (roda DbSeeder.SeedAsync -> migrations reais,
-            // incluindo a criação do trigger, contra o container) em vez de na primeira
-            // requisição do primeiro teste.
-            using var warmup = Factory.CreateClient();
-            var response = await warmup.GetAsync("/health");
+            // CreateAndWarmUp já força a construção do host (roda DbSeeder.SeedAsync ->
+            // migrations reais, incluindo a criação do trigger, contra o container) em vez de na
+            // primeira requisição do primeiro teste.
+            Factory = SqlServerLancamentosGeraisFactory.CreateAndWarmUp(ConnectionString);
+
+            using var client = Factory.CreateClient();
+            var response = await client.GetAsync("/health");
             response.EnsureSuccessStatusCode();
         }
 
