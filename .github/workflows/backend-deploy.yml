@@ -79,9 +79,6 @@ jobs:
     env:
       SITE_PATH: C:\desbravadores\site
       PUBLISH_PATH: ${{ github.workspace }}\_publish
-      # Porta configurada no binding do site no IIS. Ajuste se o site
-      # estiver publicado em outra porta.
-      SITE_PORT: 8080
 
     steps:
       - name: Checkout
@@ -89,6 +86,17 @@ jobs:
 
       - name: Publish
         run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
+
+      # Liga o stdout log do ANCM (desligado por padrão). Se a aplicação
+      # travar na inicialização (ex.: erro de migration ou de configuração),
+      # o erro fica registrado aqui em vez de só um "não respondeu" sem
+      # explicação — o passo de healthcheck imprime esse log se falhar.
+      - name: Habilitar log de diagnóstico do ANCM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "${{ env.PUBLISH_PATH }}\logs" -Force | Out-Null
+          (Get-Content "${{ env.PUBLISH_PATH }}\web.config") -replace 'stdoutLogEnabled="false"', 'stdoutLogEnabled="true"' |
+            Set-Content "${{ env.PUBLISH_PATH }}\web.config"
 
       # ANCM observa o app_offline.htm e derruba o processo em execução,
       # liberando os locks de arquivo, sem precisar de direitos de admin do
@@ -113,16 +121,40 @@ jobs:
         shell: pwsh
         run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
 
+      # Em vez de chutar a porta do binding (já erramos duas vezes:
+      # 7370 e 8080 — nenhuma respondeu, então o problema pode nem ser a
+      # porta), pergunta pro próprio IIS qual porta o site que aponta para
+      # SITE_PATH está usando.
+      - name: Descobrir a porta do site no IIS
+        id: site-port
+        shell: pwsh
+        run: |
+          Import-Module WebAdministration -ErrorAction Stop
+          $site = Get-Website | Where-Object { $_.PhysicalPath.TrimEnd('\') -eq "${{ env.SITE_PATH }}".TrimEnd('\') } | Select-Object -First 1
+          if (-not $site) {
+            Write-Error "Nenhum site do IIS encontrado com PhysicalPath = ${{ env.SITE_PATH }}. Sites existentes: $((Get-Website | Select-Object -ExpandProperty Name) -join ', ')"
+            exit 1
+          }
+          $binding = Get-WebBinding -Name $site.Name | Select-Object -First 1
+          if ($binding.bindingInformation -notmatch ':(\d+):') {
+            Write-Error "Não consegui extrair a porta do binding '$($binding.bindingInformation)' do site '$($site.Name)'."
+            exit 1
+          }
+          $port = $Matches[1]
+          Write-Host "Site '$($site.Name)' encontrado (PhysicalPath: $($site.PhysicalPath)), porta $port"
+          "port=$port" >> $env:GITHUB_OUTPUT
+
       # A primeira requisição após remover o app_offline.htm faz o ANCM subir
       # um processo novo, que roda as migrations pendentes antes de aceitar
       # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Esse passo
       # só reporta sucesso quando a API responde, confirmando que a
-      # publicação — e as migrations — funcionaram.
+      # publicação — e as migrations — funcionaram. Se não responder, imprime
+      # o log de diagnóstico do ANCM para mostrar o erro real.
       - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
         shell: pwsh
         run: |
-          $uri = "http://localhost:${{ env.SITE_PORT }}/health"
-          for ($i = 0; $i -lt 30; $i++) {
+          $uri = "http://localhost:${{ steps.site-port.outputs.port }}/health"
+          for ($i = 0; $i -lt 40; $i++) {
             try {
               $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 5
               if ($response.StatusCode -eq 200) {
@@ -130,7 +162,15 @@ jobs:
                 exit 0
               }
             } catch {}
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 3
           }
-          Write-Error "API não respondeu em tempo hábil em $uri. Verifique os logs do IIS/Event Viewer no runner."
+          Write-Error "API não respondeu em tempo hábil em $uri."
+          $log = Get-ChildItem "${{ env.SITE_PATH }}\logs" -Filter "stdout*.log" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($log) {
+            Write-Host "--- Últimas linhas de $($log.FullName) ---"
+            Get-Content $log.FullName -Tail 150
+          } else {
+            Write-Host "Nenhum log de stdout encontrado em ${{ env.SITE_PATH }}\logs — a aplicação pode nem ter chegado a iniciar."
+          }
           exit 1
