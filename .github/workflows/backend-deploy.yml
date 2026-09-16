@@ -81,7 +81,7 @@ jobs:
       PUBLISH_PATH: ${{ github.workspace }}\_publish
       # Porta configurada no binding do site no IIS. Ajuste se o site
       # estiver publicado em outra porta.
-      SITE_PORT: 7370
+      SITE_PORT: 8080
 
     steps:
       - name: Checkout
