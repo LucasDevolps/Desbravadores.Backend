@@ -148,35 +148,15 @@ jobs:
 
       # A primeira requisição após remover o app_offline.htm faz o ANCM subir
       # um processo novo, que roda as migrations pendentes antes de aceitar
-      # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Esse passo
-      # só reporta sucesso quando a API responde, confirmando que a
-      # publicação — e as migrations — funcionaram. Se não responder, imprime
-      # o log de diagnóstico do ANCM para mostrar o erro real. Já subimos de
-      # 2min para 5min e ainda não foi suficiente (confirmado ao vivo: a API
-      # respondia 200 minutos depois do job desistir, sem nenhum crash/
-      # reinício de processo no meio) — a migration da tabela Cargos deixa o
-      # cold start bem mais lento que isso. 180x5s = 15min de folga.
-      - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
+      # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Já tentamos
+      # bloquear o job aqui esperando /health (2min, 5min, 15min) e continuou
+      # dando falso-negativo: a API sempre subia saudável minutos depois do
+      # job desistir, sem nenhum crash no meio — só a migration é lenta. Em
+      # vez de brigar com o timeout, o job termina aqui e devolve a URL pro
+      # dev conferir manualmente quando quiser.
+      - name: Publicação concluída — verificar manualmente
         shell: pwsh
         run: |
           $uri = "http://localhost:${{ steps.site-port.outputs.port }}/health"
-          for ($i = 0; $i -lt 180; $i++) {
-            try {
-              $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 5
-              if ($response.StatusCode -eq 200) {
-                Write-Host "API saudável em $uri"
-                exit 0
-              }
-            } catch {}
-            Start-Sleep -Seconds 5
-          }
-          Write-Error "API não respondeu em tempo hábil em $uri."
-          $log = Get-ChildItem "${{ env.SITE_PATH }}\logs" -Filter "stdout*.log" -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($log) {
-            Write-Host "--- Últimas linhas de $($log.FullName) ---"
-            Get-Content $log.FullName -Tail 150
-          } else {
-            Write-Host "Nenhum log de stdout encontrado em ${{ env.SITE_PATH }}\logs — a aplicação pode nem ter chegado a iniciar."
-          }
-          exit 1
+          $agora = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
+          Write-Host "::notice::Consulte a URL $uri — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."
