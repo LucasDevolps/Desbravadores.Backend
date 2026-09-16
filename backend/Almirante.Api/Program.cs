@@ -5,6 +5,7 @@ using Almirante.Api.Options;
 using Almirante.Api.Security;
 using Almirante.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -51,6 +52,7 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
+builder.Services.AddScoped<LancamentosGeraisService>();
 builder.Services.AddScoped<CargosService>();
 
 builder.Services.AddControllers().AddJsonOptions(options =>
@@ -83,7 +85,20 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // Escopo do lançamento geral (LancamentosGeraisController): ver
+    // Security/LancamentoGeralAuthorization.cs e o handler abaixo, que transforma qualquer falha
+    // desta policy (sem token, token inválido/expirado, ou role insuficiente) em 401
+    // "ACESSO NEGADO!" — sem afetar o comportamento padrão dos demais endpoints.
+    options.AddPolicy(LancamentoGeralAuthorization.PolicyName, policy =>
+        policy.RequireRole(LancamentoGeralAuthorization.RolesPermitidas));
+});
+
+// Único IAuthorizationMiddlewareResultHandler da aplicação. Delega para o comportamento padrão
+// em todos os endpoints, exceto os que carregam a policy LancamentoGeralAuthorization.PolicyName
+// (ver o handler para o porquê de não usar [Authorize(Roles=...)] simples aqui).
+builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 
 const string LocalCorsPolicy = "LocalFrontend";
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()

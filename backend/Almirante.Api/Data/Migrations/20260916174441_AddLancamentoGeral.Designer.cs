@@ -4,6 +4,7 @@ using Almirante.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Almirante.Api.Data.Migrations
 {
     [DbContext(typeof(AlmiranteDbContext))]
-    partial class AlmiranteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260916174441_AddLancamentoGeral")]
+    partial class AddLancamentoGeral
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -115,11 +118,6 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<string>("TipoFluxo")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
                     b.Property<decimal>("Valor")
                         .HasColumnType("decimal(18,2)");
 
@@ -201,11 +199,6 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<string>("TipoFluxo")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
                     b.Property<Guid>("UsuarioResponsavelId")
                         .HasColumnType("uniqueidentifier");
 
@@ -258,11 +251,6 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
-
-                    b.Property<string>("TipoFluxo")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
 
                     b.Property<int>("UsuariosProcessados")
                         .HasColumnType("int");

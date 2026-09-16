@@ -10,7 +10,7 @@ public class LancamentoValidationException(string message) : Exception(message);
 
 public class LancamentosService(AlmiranteDbContext db)
 {
-    private const string DateFormat = "yyyy-MM-dd";
+    private const string DateFormat = LancamentoValidacao.DateFormat;
 
     public async Task<LancamentosResponse> ListAsync(
         int page,
@@ -74,10 +74,13 @@ public class LancamentosService(AlmiranteDbContext db)
 
     public async Task<LancamentoDto> CreateAsync(CreateLancamentoRequest request, CancellationToken cancellationToken)
     {
-        ValidateTipo(request.Tipo);
-        ValidateCategoria(request.Categoria);
-        ValidateStatus(request.Status);
-        var vencimento = ParseVencimento(request.Vencimento);
+        LancamentoValidacao.ValidateTipo(request.Tipo);
+        LancamentoValidacao.ValidateCategoria(request.Categoria);
+        LancamentoValidacao.ValidateStatus(request.Status);
+        LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
+        LancamentoValidacao.ValidateValor(request.Valor);
+        var vencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
+        LancamentoValidacao.ValidateVencimentoNaoPassado(vencimento);
 
         var lancamento = new Lancamento
         {
@@ -87,6 +90,7 @@ public class LancamentosService(AlmiranteDbContext db)
             Tipo = request.Tipo,
             Descricao = request.Descricao,
             Categoria = request.Categoria,
+            TipoFluxo = request.TipoFluxo,
             Valor = request.Valor,
             Moeda = string.IsNullOrWhiteSpace(request.Moeda) ? "BRL" : request.Moeda,
             Vencimento = vencimento,
@@ -120,7 +124,7 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Tipo is not null)
         {
-            ValidateTipo(request.Tipo);
+            LancamentoValidacao.ValidateTipo(request.Tipo);
             lancamento.Tipo = request.Tipo;
         }
 
@@ -131,17 +135,19 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Categoria is not null)
         {
-            ValidateCategoria(request.Categoria);
+            LancamentoValidacao.ValidateCategoria(request.Categoria);
             lancamento.Categoria = request.Categoria;
+        }
+
+        if (request.TipoFluxo is not null)
+        {
+            LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
+            lancamento.TipoFluxo = request.TipoFluxo;
         }
 
         if (request.Valor.HasValue)
         {
-            if (request.Valor.Value < 0)
-            {
-                throw new LancamentoValidationException("Valor não pode ser negativo.");
-            }
-
+            LancamentoValidacao.ValidateValor(request.Valor.Value);
             lancamento.Valor = request.Valor.Value;
         }
 
@@ -152,12 +158,14 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Vencimento is not null)
         {
-            lancamento.Vencimento = ParseVencimento(request.Vencimento);
+            var novoVencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
+            LancamentoValidacao.ValidateVencimentoNaoPassado(novoVencimento);
+            lancamento.Vencimento = novoVencimento;
         }
 
         if (request.Status is not null)
         {
-            ValidateStatus(request.Status);
+            LancamentoValidacao.ValidateStatus(request.Status);
             lancamento.Status = request.Status;
         }
 
@@ -181,40 +189,6 @@ public class LancamentosService(AlmiranteDbContext db)
         return true;
     }
 
-    private static DateOnly ParseVencimento(string vencimento)
-    {
-        if (!DateOnly.TryParseExact(vencimento, DateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-        {
-            throw new LancamentoValidationException("Vencimento deve usar o formato yyyy-MM-dd.");
-        }
-
-        return parsed;
-    }
-
-    private static void ValidateTipo(string tipo)
-    {
-        if (!LancamentoTipos.Todos.Contains(tipo))
-        {
-            throw new LancamentoValidationException($"Tipo inválido: {tipo}.");
-        }
-    }
-
-    private static void ValidateCategoria(string categoria)
-    {
-        if (!LancamentoCategorias.Todas.Contains(categoria))
-        {
-            throw new LancamentoValidationException($"Categoria inválida: {categoria}.");
-        }
-    }
-
-    private static void ValidateStatus(string status)
-    {
-        if (!LancamentoStatuses.Todos.Contains(status))
-        {
-            throw new LancamentoValidationException($"Status inválido: {status}.");
-        }
-    }
-
     private static LancamentoDto ToDto(Lancamento lancamento) => new()
     {
         Id = lancamento.Id,
@@ -227,5 +201,6 @@ public class LancamentosService(AlmiranteDbContext db)
         Moeda = lancamento.Moeda,
         Vencimento = lancamento.Vencimento.ToString(DateFormat, CultureInfo.InvariantCulture),
         Status = lancamento.Status,
+        TipoFluxo = lancamento.TipoFluxo,
     };
 }
