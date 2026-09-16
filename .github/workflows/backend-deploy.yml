@@ -146,6 +146,81 @@ jobs:
           Write-Host "Site '$($site.Name)' encontrado (PhysicalPath: $($site.PhysicalPath)), porta $port"
           "port=$port" >> $env:GITHUB_OUTPUT
 
+      # Espelha no Windows a proteção de rate limit de login que o Nginx já dá no Docker
+      # Compose (deploy-linux). Não existe Docker aqui: o nginx roda nativo, só em
+      # loopback (127.0.0.1:8090 -> 127.0.0.1:<porta do IIS>), na frente do site do IIS.
+      # Idempotente: reaproveita a instalação existente em runs futuros, só baixando o
+      # nginx na primeira vez.
+      - name: Instalar Nginx (Windows), se ainda não existir
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\nginx\nginx.exe")) {
+            $ProgressPreference = 'SilentlyContinue'
+            $zipPath = "$env:TEMP\nginx.zip"
+            Invoke-WebRequest -Uri "https://nginx.org/download/nginx-1.27.4.zip" -OutFile $zipPath
+            $extractDir = "$env:TEMP\nginx-extract"
+            Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+            $inner = Get-ChildItem $extractDir -Directory | Select-Object -First 1
+            Move-Item -Path $inner.FullName -Destination "C:\nginx"
+            Remove-Item $zipPath, $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Nginx instalado em C:\nginx"
+          } else {
+            Write-Host "Nginx já instalado em C:\nginx"
+          }
+
+      # nginx/nginx.windows.conf (versionado no repo) é a fonte da verdade; este passo só
+      # substitui o placeholder da porta pela porta real descoberta acima e recarrega.
+      - name: Publicar config do Nginx e (re)carregar
+        shell: pwsh
+        run: |
+          $conf = Get-Content "nginx\nginx.windows.conf" -Raw
+          $conf = $conf -replace '__IIS_PORT__', "${{ steps.site-port.outputs.port }}"
+          Set-Content -Path "C:\nginx\conf\almirante.conf" -Value $conf -NoNewline
+
+          Push-Location C:\nginx
+          try {
+            & .\nginx.exe -t
+            if ($LASTEXITCODE -ne 0) { throw "nginx -t falhou (config inválida)" }
+
+            $running = Get-Process nginx -ErrorAction SilentlyContinue
+            if ($running) {
+              & .\nginx.exe -s reload
+              Write-Host "Nginx recarregado com a config atual."
+            } else {
+              Start-Process -FilePath "C:\nginx\nginx.exe" -WorkingDirectory "C:\nginx" -WindowStyle Hidden
+              Write-Host "Nginx iniciado."
+            }
+          } finally {
+            Pop-Location
+          }
+
+          if (-not (Get-ScheduledTask -TaskName "NginxAlmirante" -ErrorAction SilentlyContinue)) {
+            $action = New-ScheduledTaskAction -Execute "C:\nginx\nginx.exe" -WorkingDirectory "C:\nginx"
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+            Register-ScheduledTask -TaskName "NginxAlmirante" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "Reverse proxy Nginx da API Almirante (rate limit de login), na frente do IIS." | Out-Null
+            Write-Host "Tarefa agendada NginxAlmirante criada (inicia o nginx com o Windows)."
+          }
+
+      # ForwardedHeadersMiddleware (Program.cs) só confia em X-Forwarded-For/-Proto quando
+      # ReverseProxy:TrustedNetworkCidr está configurado. appsettings.Production.json é
+      # ignorado pelo robocopy acima (persiste entre deploys), então isso só precisa
+      # acontecer uma vez — idempotente, não sobrescreve o resto do arquivo nem imprime
+      # segredos no log.
+      - name: Configurar confiança no proxy (ReverseProxy:TrustedNetworkCidr)
+        shell: pwsh
+        run: |
+          $path = "${{ env.SITE_PATH }}\appsettings.Production.json"
+          $json = Get-Content $path -Raw | ConvertFrom-Json
+          if (-not $json.PSObject.Properties['ReverseProxy']) {
+            $json | Add-Member -MemberType NoteProperty -Name 'ReverseProxy' -Value ([PSCustomObject]@{ TrustedNetworkCidr = "127.0.0.1/32" })
+          } else {
+            $json.ReverseProxy.TrustedNetworkCidr = "127.0.0.1/32"
+          }
+          $json | ConvertTo-Json -Depth 10 | Set-Content -Path $path -Encoding utf8
+          Write-Host "ReverseProxy:TrustedNetworkCidr configurado em appsettings.Production.json."
+
       # A primeira requisição após remover o app_offline.htm faz o ANCM subir
       # um processo novo, que roda as migrations pendentes antes de aceitar
       # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Já tentamos
@@ -157,6 +232,6 @@ jobs:
       - name: Publicação concluída — verificar manualmente
         shell: pwsh
         run: |
-          $uri = "http://localhost:${{ steps.site-port.outputs.port }}/health"
+          $uri = "http://127.0.0.1:8090/health"
           $agora = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
-          Write-Host "::notice::Consulte a URL $uri — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."
+          Write-Host "::notice::Consulte a URL $uri (via nginx, com rate limit de login) — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."
