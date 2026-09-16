@@ -151,15 +151,16 @@ jobs:
       # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Esse passo
       # só reporta sucesso quando a API responde, confirmando que a
       # publicação — e as migrations — funcionaram. Se não responder, imprime
-      # o log de diagnóstico do ANCM para mostrar o erro real. 60x5s (5min):
-      # confirmado ao vivo que a app ficava saudável pouco depois dos 40x3s
-      # (2min) anteriores expirarem — só precisava de mais tempo, não é bug
-      # de porta/config.
+      # o log de diagnóstico do ANCM para mostrar o erro real. Já subimos de
+      # 2min para 5min e ainda não foi suficiente (confirmado ao vivo: a API
+      # respondia 200 minutos depois do job desistir, sem nenhum crash/
+      # reinício de processo no meio) — a migration da tabela Cargos deixa o
+      # cold start bem mais lento que isso. 180x5s = 15min de folga.
       - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
         shell: pwsh
         run: |
           $uri = "http://localhost:${{ steps.site-port.outputs.port }}/health"
-          for ($i = 0; $i -lt 60; $i++) {
+          for ($i = 0; $i -lt 180; $i++) {
             try {
               $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 5
               if ($response.StatusCode -eq 200) {
