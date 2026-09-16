@@ -44,19 +44,21 @@ jobs:
       # tráfego). Esse passo espera o container subir e só reporta sucesso
       # quando a API responde, o que confirma que as migrations rodaram —
       # se falharem, o processo derruba a aplicação e o healthcheck nunca
-      # fica verde.
+      # fica verde. 60x3s (3min) porque migrations maiores (ex.: Cargos)
+      # atrasam o start além do que 30x2s (1min) tolerava, derrubando o
+      # deploy mesmo quando a app sobe normalmente logo em seguida.
       - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
         run: |
           set -a
           source .env
           set +a
           port="${API_HOST_PORT:-8090}"
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf "http://localhost:${port}/health" > /dev/null; then
               echo "API saudável em http://localhost:${port}"
               exit 0
             fi
-            sleep 2
+            sleep 3
           done
           echo "API não respondeu em tempo hábil." >&2
           docker compose logs --tail=100 api
@@ -149,12 +151,15 @@ jobs:
       # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Esse passo
       # só reporta sucesso quando a API responde, confirmando que a
       # publicação — e as migrations — funcionaram. Se não responder, imprime
-      # o log de diagnóstico do ANCM para mostrar o erro real.
+      # o log de diagnóstico do ANCM para mostrar o erro real. 60x5s (5min):
+      # confirmado ao vivo que a app ficava saudável pouco depois dos 40x3s
+      # (2min) anteriores expirarem — só precisava de mais tempo, não é bug
+      # de porta/config.
       - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
         shell: pwsh
         run: |
           $uri = "http://localhost:${{ steps.site-port.outputs.port }}/health"
-          for ($i = 0; $i -lt 40; $i++) {
+          for ($i = 0; $i -lt 60; $i++) {
             try {
               $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 5
               if ($response.StatusCode -eq 200) {
@@ -162,7 +167,7 @@ jobs:
                 exit 0
               }
             } catch {}
-            Start-Sleep -Seconds 3
+            Start-Sleep -Seconds 5
           }
           Write-Error "API não respondeu em tempo hábil em $uri."
           $log = Get-ChildItem "${{ env.SITE_PATH }}\logs" -Filter "stdout*.log" -ErrorAction SilentlyContinue |
