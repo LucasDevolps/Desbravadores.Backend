@@ -44,19 +44,21 @@ jobs:
       # tráfego). Esse passo espera o container subir e só reporta sucesso
       # quando a API responde, o que confirma que as migrations rodaram —
       # se falharem, o processo derruba a aplicação e o healthcheck nunca
-      # fica verde.
+      # fica verde. 60x3s (3min) porque migrations maiores (ex.: Cargos)
+      # atrasam o start além do que 30x2s (1min) tolerava, derrubando o
+      # deploy mesmo quando a app sobe normalmente logo em seguida.
       - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
         run: |
           set -a
           source .env
           set +a
           port="${API_HOST_PORT:-8090}"
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf "http://localhost:${port}/health" > /dev/null; then
               echo "API saudável em http://localhost:${port}"
               exit 0
             fi
-            sleep 2
+            sleep 3
           done
           echo "API não respondeu em tempo hábil." >&2
           docker compose logs --tail=100 api
@@ -79,9 +81,6 @@ jobs:
     env:
       SITE_PATH: C:\desbravadores\site
       PUBLISH_PATH: ${{ github.workspace }}\_publish
-      # Porta configurada no binding do site no IIS. Ajuste se o site
-      # estiver publicado em outra porta.
-      SITE_PORT: 8080
 
     steps:
       - name: Checkout
@@ -89,6 +88,17 @@ jobs:
 
       - name: Publish
         run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
+
+      # Liga o stdout log do ANCM (desligado por padrão). Se a aplicação
+      # travar na inicialização (ex.: erro de migration ou de configuração),
+      # o erro fica registrado aqui em vez de só um "não respondeu" sem
+      # explicação — o passo de healthcheck imprime esse log se falhar.
+      - name: Habilitar log de diagnóstico do ANCM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "${{ env.PUBLISH_PATH }}\logs" -Force | Out-Null
+          (Get-Content "${{ env.PUBLISH_PATH }}\web.config") -replace 'stdoutLogEnabled="false"', 'stdoutLogEnabled="true"' |
+            Set-Content "${{ env.PUBLISH_PATH }}\web.config"
 
       # ANCM observa o app_offline.htm e derruba o processo em execução,
       # liberando os locks de arquivo, sem precisar de direitos de admin do
@@ -113,24 +123,40 @@ jobs:
         shell: pwsh
         run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
 
-      # A primeira requisição após remover o app_offline.htm faz o ANCM subir
-      # um processo novo, que roda as migrations pendentes antes de aceitar
-      # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Esse passo
-      # só reporta sucesso quando a API responde, confirmando que a
-      # publicação — e as migrations — funcionaram.
-      - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
+      # Em vez de chutar a porta do binding (já erramos duas vezes:
+      # 7370 e 8080 — nenhuma respondeu, então o problema pode nem ser a
+      # porta), pergunta pro próprio IIS qual porta o site que aponta para
+      # SITE_PATH está usando.
+      - name: Descobrir a porta do site no IIS
+        id: site-port
         shell: pwsh
         run: |
-          $uri = "http://localhost:${{ env.SITE_PORT }}/health"
-          for ($i = 0; $i -lt 30; $i++) {
-            try {
-              $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 5
-              if ($response.StatusCode -eq 200) {
-                Write-Host "API saudável em $uri"
-                exit 0
-              }
-            } catch {}
-            Start-Sleep -Seconds 2
+          Import-Module WebAdministration -ErrorAction Stop
+          $site = Get-Website | Where-Object { $_.PhysicalPath.TrimEnd('\') -eq "${{ env.SITE_PATH }}".TrimEnd('\') } | Select-Object -First 1
+          if (-not $site) {
+            Write-Error "Nenhum site do IIS encontrado com PhysicalPath = ${{ env.SITE_PATH }}. Sites existentes: $((Get-Website | Select-Object -ExpandProperty Name) -join ', ')"
+            exit 1
           }
-          Write-Error "API não respondeu em tempo hábil em $uri. Verifique os logs do IIS/Event Viewer no runner."
-          exit 1
+          $binding = Get-WebBinding -Name $site.Name | Select-Object -First 1
+          if ($binding.bindingInformation -notmatch ':(\d+):') {
+            Write-Error "Não consegui extrair a porta do binding '$($binding.bindingInformation)' do site '$($site.Name)'."
+            exit 1
+          }
+          $port = $Matches[1]
+          Write-Host "Site '$($site.Name)' encontrado (PhysicalPath: $($site.PhysicalPath)), porta $port"
+          "port=$port" >> $env:GITHUB_OUTPUT
+
+      # A primeira requisição após remover o app_offline.htm faz o ANCM subir
+      # um processo novo, que roda as migrations pendentes antes de aceitar
+      # tráfego (Program.cs chama DbSeeder.SeedAsync no startup). Já tentamos
+      # bloquear o job aqui esperando /health (2min, 5min, 15min) e continuou
+      # dando falso-negativo: a API sempre subia saudável minutos depois do
+      # job desistir, sem nenhum crash no meio — só a migration é lenta. Em
+      # vez de brigar com o timeout, o job termina aqui e devolve a URL pro
+      # dev conferir manualmente quando quiser.
+      - name: Publicação concluída — verificar manualmente
+        shell: pwsh
+        run: |
+          $uri = "http://localhost:${{ steps.site-port.outputs.port }}/health"
+          $agora = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
+          Write-Host "::notice::Consulte a URL $uri — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."
