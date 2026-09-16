@@ -78,6 +78,9 @@ public class LancamentosTests
         Assert.Equal(100, body!.PageSize);
     }
 
+    private static string VencimentoFuturo(int diasAPartirDeHoje = 30) =>
+        DateTime.UtcNow.AddDays(diasAPartirDeHoje).ToString("yyyy-MM-dd");
+
     [Fact]
     public async Task Create_ComDadosValidos_Retorna201ESemMembroObrigatorio()
     {
@@ -89,8 +92,9 @@ public class LancamentosTests
             membroNome = "Novo Membro",
             tipo = "Doação",
             categoria = "Clube",
+            tipoFluxo = "Entrada",
             valor = 42.50m,
-            vencimento = "2026-12-01",
+            vencimento = VencimentoFuturo(),
             status = "Pendente",
         });
 
@@ -100,6 +104,7 @@ public class LancamentosTests
         Assert.Null(created!.MembroId);
         Assert.Equal("Novo Membro", created.MembroNome);
         Assert.Equal("BRL", created.Moeda);
+        Assert.Equal("Entrada", created.TipoFluxo);
     }
 
     [Fact]
@@ -113,8 +118,69 @@ public class LancamentosTests
             membroNome = "Membro",
             tipo = "Outros",
             categoria = "Clube",
+            tipoFluxo = "Despesa",
             valor = -10m,
-            vencimento = "2026-12-01",
+            vencimento = VencimentoFuturo(),
+            status = "Pendente",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_ComValorZero_Retorna400()
+    {
+        using var factory = new AlmiranteApiFactory();
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+
+        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
+        {
+            membroNome = "Membro",
+            tipo = "Outros",
+            categoria = "Clube",
+            tipoFluxo = "Despesa",
+            valor = 0m,
+            vencimento = VencimentoFuturo(),
+            status = "Pendente",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_ComVencimentoNoPassado_Retorna400()
+    {
+        using var factory = new AlmiranteApiFactory();
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+
+        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
+        {
+            membroNome = "Membro",
+            tipo = "Outros",
+            categoria = "Clube",
+            tipoFluxo = "Entrada",
+            valor = 10m,
+            vencimento = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd"),
+            status = "Pendente",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_ComTipoFluxoInvalido_Retorna400()
+    {
+        using var factory = new AlmiranteApiFactory();
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+
+        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
+        {
+            membroNome = "Membro",
+            tipo = "Outros",
+            categoria = "Clube",
+            tipoFluxo = "Saida",
+            valor = 10m,
+            vencimento = VencimentoFuturo(),
             status = "Pendente",
         });
 
@@ -132,8 +198,9 @@ public class LancamentosTests
             membroNome = "Membro Fluxo",
             tipo = "Evento",
             categoria = "Evento",
+            tipoFluxo = "Entrada",
             valor = 100m,
-            vencimento = "2026-11-15",
+            vencimento = VencimentoFuturo(45),
             status = "Pendente",
         });
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
