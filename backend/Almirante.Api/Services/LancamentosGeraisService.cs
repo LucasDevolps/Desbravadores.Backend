@@ -25,7 +25,7 @@ public enum LancamentoGeralDeleteOutcome
 
 public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<LancamentosGeraisService> logger)
 {
-    private const string DateFormat = LancamentoValidacao.DateFormat;
+    private const string DateFormat = "yyyy-MM-dd";
 
     // Resumo financeiro provisório: valores fixos exigidos pelo requisito atual, independentes
     // do período filtrado ou da existência de lançamentos. Substituir por um cálculo real (soma
@@ -44,12 +44,7 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
         Guid usuarioSolicitanteId,
         CancellationToken cancellationToken)
     {
-        LancamentoValidacao.ValidateTipo(request.Tipo);
-        LancamentoValidacao.ValidateCategoria(request.Categoria);
-        LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
-        LancamentoValidacao.ValidateValor(request.Valor);
-        var vencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
-        LancamentoValidacao.ValidateVencimentoNaoPassado(vencimento);
+        var vencimento = DateOnly.ParseExact(request.Vencimento, DateFormat, CultureInfo.InvariantCulture);
 
         var requestHash = ComputeRequestHash(request.Tipo, request.Categoria, request.TipoFluxo, request.Valor, vencimento);
 
@@ -293,32 +288,18 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
             return (hoje.AddDays(-89), hoje);
         }
 
+        // periodo/dataInicio/dataFim já foram validados por ListLancamentosGeraisQueryValidator
+        // antes do MediatR chegar a este handler/serviço (período pertence a {30, 60, 90,
+        // personalizado}, e no caso "personalizado" as datas são obrigatórias, bem formadas e
+        // dataInicio <= dataFim) — daqui para baixo os valores são tratados como confiáveis.
         if (periodo == "personalizado")
         {
-            if (string.IsNullOrWhiteSpace(dataInicio) || string.IsNullOrWhiteSpace(dataFim))
-            {
-                throw new LancamentoValidationException("Período personalizado exige dataInicio e dataFim.");
-            }
-
-            if (!DateOnly.TryParseExact(dataInicio, DateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var inicio))
-            {
-                throw new LancamentoValidationException("dataInicio inválida. Use o formato yyyy-MM-dd.");
-            }
-
-            if (!DateOnly.TryParseExact(dataFim, DateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var fim))
-            {
-                throw new LancamentoValidationException("dataFim inválida. Use o formato yyyy-MM-dd.");
-            }
-
-            if (inicio > fim)
-            {
-                throw new LancamentoValidationException("dataInicio não pode ser posterior a dataFim.");
-            }
-
+            var inicio = DateOnly.ParseExact(dataInicio!, DateFormat, CultureInfo.InvariantCulture);
+            var fim = DateOnly.ParseExact(dataFim!, DateFormat, CultureInfo.InvariantCulture);
             return (inicio, fim);
         }
 
-        throw new LancamentoValidationException($"Período inválido: {periodo}.");
+        throw new InvalidOperationException($"Período inesperado: {periodo}. Deveria ter sido rejeitado na validação.");
     }
 
     private LancamentoGeralCreateResult ResultadoParaExistente(LancamentoOperacao existente, string requestHash)
@@ -337,13 +318,13 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
         return new LancamentoGeralCreateResult(LancamentoGeralCreateOutcome.Reutilizado, ToResponse(existente));
     }
 
-    private static string ComputeRequestHash(string tipo, string categoria, string tipoFluxo, decimal valor, DateOnly vencimento)
+    private static string ComputeRequestHash(string tipo, string categoria, TipoFluxoLancamento tipoFluxo, decimal valor, DateOnly vencimento)
     {
         var canonical = string.Join(
             '|',
             tipo,
             categoria,
-            tipoFluxo,
+            tipoFluxo.ToString(),
             valor.ToString("F2", CultureInfo.InvariantCulture),
             vencimento.ToString(DateFormat, CultureInfo.InvariantCulture));
 

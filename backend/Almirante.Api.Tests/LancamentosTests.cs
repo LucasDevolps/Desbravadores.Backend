@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Almirante.Api.Dtos;
+using Almirante.Api.Entities;
 
 namespace Almirante.Api.Tests;
 
@@ -104,7 +105,7 @@ public class LancamentosTests
         Assert.Null(created!.MembroId);
         Assert.Equal("Novo Membro", created.MembroNome);
         Assert.Equal("BRL", created.Moeda);
-        Assert.Equal("Entrada", created.TipoFluxo);
+        Assert.Equal(TipoFluxoLancamento.Entrada, created.TipoFluxo);
     }
 
     [Fact]

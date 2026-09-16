@@ -10,10 +10,11 @@ namespace Almirante.Api.Security;
 
 // Único IAuthorizationMiddlewareResultHandler registrado na aplicação (substitui o handler
 // padrão do framework). Para a maioria dos endpoints, delega 100% para o comportamento padrão
-// (_default) — nada muda. Só intercepta quando o endpoint carrega a policy
-// LancamentoGeralAuthorization.PolicyName, caso em que qualquer falha de autorização (sem token,
-// token inválido/expirado, ou autenticado sem uma das roles permitidas) vira 401 com a mensagem
-// exata exigida pelo requisito, em vez do 401 "silencioso" (sem token) ou 403 (sem role) padrão.
+// (_default) — nada muda. Só intercepta quando o endpoint restringe por role ([AutorizarRoles] ou
+// um [Authorize(Roles = "...")] cru), caso em que qualquer falha de autorização (sem token, token
+// inválido/expirado, ou autenticado sem uma das roles permitidas) vira 401 com a mensagem exata
+// "ACESSO NEGADO!", em vez do 401 "silencioso" (sem token) ou 403 (sem role) padrão — válido para
+// qualquer controller que use [AutorizarRoles], não só Lançamentos.
 public class AcessoNegadoAuthorizationMiddlewareResultHandler : IAuthorizationMiddlewareResultHandler
 {
     private const string MensagemAcessoNegado = "ACESSO NEGADO!";
@@ -26,7 +27,7 @@ public class AcessoNegadoAuthorizationMiddlewareResultHandler : IAuthorizationMi
         AuthorizationPolicy policy,
         PolicyAuthorizationResult authorizeResult)
     {
-        if (!authorizeResult.Succeeded && AplicaEscopoLancamentoGeral(context))
+        if (!authorizeResult.Succeeded && RestringePorRole(context))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.ContentType = "application/problem+json";
@@ -41,7 +42,7 @@ public class AcessoNegadoAuthorizationMiddlewareResultHandler : IAuthorizationMi
         await _default.HandleAsync(next, context, policy, authorizeResult);
     }
 
-    private static bool AplicaEscopoLancamentoGeral(HttpContext context)
+    private static bool RestringePorRole(HttpContext context)
     {
         var endpoint = context.GetEndpoint();
         if (endpoint is null)
@@ -51,6 +52,6 @@ public class AcessoNegadoAuthorizationMiddlewareResultHandler : IAuthorizationMi
 
         return endpoint.Metadata
             .GetOrderedMetadata<IAuthorizeData>()
-            .Any(a => a.Policy == LancamentoGeralAuthorization.PolicyName);
+            .Any(a => !string.IsNullOrEmpty(a.Roles));
     }
 }

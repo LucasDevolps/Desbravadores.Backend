@@ -18,7 +18,7 @@ public class LancamentoOperacao
 
     public required string Tipo { get; set; }
     public required string Categoria { get; set; }
-    public required string TipoFluxo { get; set; }
+    public required TipoFluxoLancamento TipoFluxo { get; set; }
     public decimal Valor { get; set; }
     public DateOnly Vencimento { get; set; }
 

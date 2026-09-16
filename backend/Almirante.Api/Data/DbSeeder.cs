@@ -1,5 +1,6 @@
 using Almirante.Api.Entities;
 using Almirante.Api.Options;
+using Almirante.Api.Security;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -28,8 +29,6 @@ public static class DbSeeder
         await SeedAdminAsync(db, passwordHasher, seedOptions.Value, cancellationToken);
         await SeedLancamentosAsync(db, cancellationToken);
     }
-
-    private const string CargoAdminRole = "ADM";
 
     // SQL error 1801 = "Database '...' already exists". Under container restarts the database
     // created by a previous run already exists (thanks to the persistent volume), but EF Core's
@@ -63,7 +62,7 @@ public static class DbSeeder
         }
 
         var cargoAdminId = await db.Cargos
-            .Where(c => c.Role == CargoAdminRole)
+            .Where(c => c.Role == Roles.Admin)
             .Select(c => c.Id)
             .SingleAsync(cancellationToken);
 
@@ -93,26 +92,26 @@ public static class DbSeeder
 
         var demo = new[]
         {
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade do clube", Categoria = LancamentoCategorias.Clube, Valor = 20m, Vencimento = new DateOnly(2026, 8, 10), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Campori, Descricao = "Campori regional", Categoria = LancamentoCategorias.Evento, Valor = 200m, Vencimento = new DateOnly(2027, 2, 20), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Acampamento, Descricao = "Acampamento de verão", Categoria = LancamentoCategorias.Evento, Valor = 50m, Vencimento = new DateOnly(2026, 4, 16), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Uniflash, Descricao = "Uniflash anual", Categoria = LancamentoCategorias.Evento, Valor = 5m, Vencimento = new DateOnly(2026, 5, 29), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Mateus", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 25m, Vencimento = new DateOnly(2026, 8, 11), Status = LancamentoStatuses.Pendente, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Pedro", Tipo = LancamentoTipos.Campori, Descricao = "Campori estadual", Categoria = LancamentoCategorias.Evento, Valor = 180m, Vencimento = new DateOnly(2027, 3, 1), Status = LancamentoStatuses.Atrasado, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Ana", Tipo = LancamentoTipos.Doacao, Descricao = "Doação para o clube", Categoria = LancamentoCategorias.Clube, Valor = 75m, Vencimento = new DateOnly(2026, 8, 12), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Julia", Tipo = LancamentoTipos.Evento, Descricao = "Evento especial", Categoria = LancamentoCategorias.Evento, Valor = 120m, Vencimento = new DateOnly(2026, 4, 2), Status = LancamentoStatuses.Pendente, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Arthur", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 30m, Vencimento = new DateOnly(2026, 8, 15), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Beatriz", Tipo = LancamentoTipos.Acampamento, Descricao = "Acampamento", Categoria = LancamentoCategorias.Evento, Valor = 90m, Vencimento = new DateOnly(2026, 5, 18), Status = LancamentoStatuses.Atrasado, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Lucas", Tipo = LancamentoTipos.Uniflash, Descricao = "Uniflash", Categoria = LancamentoCategorias.Evento, Valor = 15m, Vencimento = new DateOnly(2026, 5, 21), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Rafael", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 35m, Vencimento = new DateOnly(2026, 8, 18), Status = LancamentoStatuses.Pendente, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Sofia", Tipo = LancamentoTipos.Campori, Descricao = "Campori regional", Categoria = LancamentoCategorias.Evento, Valor = 210m, Vencimento = new DateOnly(2027, 3, 8), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Marina", Tipo = LancamentoTipos.Doacao, Descricao = "Doação para eventos", Categoria = LancamentoCategorias.Clube, Valor = 50m, Vencimento = new DateOnly(2026, 8, 22), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "João", Tipo = LancamentoTipos.Evento, Descricao = "Evento especial", Categoria = LancamentoCategorias.Evento, Valor = 140m, Vencimento = new DateOnly(2026, 4, 17), Status = LancamentoStatuses.Atrasado, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Letícia", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 27m, Vencimento = new DateOnly(2026, 8, 19), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Gabriel", Tipo = LancamentoTipos.Acampamento, Descricao = "Acampamento", Categoria = LancamentoCategorias.Evento, Valor = 110m, Vencimento = new DateOnly(2026, 6, 25), Status = LancamentoStatuses.Pendente, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Alice", Tipo = LancamentoTipos.Uniflash, Descricao = "Uniflash", Categoria = LancamentoCategorias.Evento, Valor = 12m, Vencimento = new DateOnly(2026, 5, 30), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Thiago", Tipo = LancamentoTipos.Campori, Descricao = "Campori regional", Categoria = LancamentoCategorias.Evento, Valor = 190m, Vencimento = new DateOnly(2027, 3, 7), Status = LancamentoStatuses.Pendente, TipoFluxo = LancamentoTiposFluxo.Entrada },
-            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Camila", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 22m, Vencimento = new DateOnly(2026, 8, 20), Status = LancamentoStatuses.Pago, TipoFluxo = LancamentoTiposFluxo.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade do clube", Categoria = LancamentoCategorias.Clube, Valor = 20m, Vencimento = new DateOnly(2026, 8, 10), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Campori, Descricao = "Campori regional", Categoria = LancamentoCategorias.Evento, Valor = 200m, Vencimento = new DateOnly(2027, 2, 20), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Acampamento, Descricao = "Acampamento de verão", Categoria = LancamentoCategorias.Evento, Valor = 50m, Vencimento = new DateOnly(2026, 4, 16), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Guilherme", Tipo = LancamentoTipos.Uniflash, Descricao = "Uniflash anual", Categoria = LancamentoCategorias.Evento, Valor = 5m, Vencimento = new DateOnly(2026, 5, 29), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Mateus", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 25m, Vencimento = new DateOnly(2026, 8, 11), Status = LancamentoStatuses.Pendente, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Pedro", Tipo = LancamentoTipos.Campori, Descricao = "Campori estadual", Categoria = LancamentoCategorias.Evento, Valor = 180m, Vencimento = new DateOnly(2027, 3, 1), Status = LancamentoStatuses.Atrasado, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Ana", Tipo = LancamentoTipos.Doacao, Descricao = "Doação para o clube", Categoria = LancamentoCategorias.Clube, Valor = 75m, Vencimento = new DateOnly(2026, 8, 12), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Julia", Tipo = LancamentoTipos.Evento, Descricao = "Evento especial", Categoria = LancamentoCategorias.Evento, Valor = 120m, Vencimento = new DateOnly(2026, 4, 2), Status = LancamentoStatuses.Pendente, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Arthur", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 30m, Vencimento = new DateOnly(2026, 8, 15), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Beatriz", Tipo = LancamentoTipos.Acampamento, Descricao = "Acampamento", Categoria = LancamentoCategorias.Evento, Valor = 90m, Vencimento = new DateOnly(2026, 5, 18), Status = LancamentoStatuses.Atrasado, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Lucas", Tipo = LancamentoTipos.Uniflash, Descricao = "Uniflash", Categoria = LancamentoCategorias.Evento, Valor = 15m, Vencimento = new DateOnly(2026, 5, 21), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Rafael", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 35m, Vencimento = new DateOnly(2026, 8, 18), Status = LancamentoStatuses.Pendente, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Sofia", Tipo = LancamentoTipos.Campori, Descricao = "Campori regional", Categoria = LancamentoCategorias.Evento, Valor = 210m, Vencimento = new DateOnly(2027, 3, 8), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Marina", Tipo = LancamentoTipos.Doacao, Descricao = "Doação para eventos", Categoria = LancamentoCategorias.Clube, Valor = 50m, Vencimento = new DateOnly(2026, 8, 22), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "João", Tipo = LancamentoTipos.Evento, Descricao = "Evento especial", Categoria = LancamentoCategorias.Evento, Valor = 140m, Vencimento = new DateOnly(2026, 4, 17), Status = LancamentoStatuses.Atrasado, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Letícia", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 27m, Vencimento = new DateOnly(2026, 8, 19), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Gabriel", Tipo = LancamentoTipos.Acampamento, Descricao = "Acampamento", Categoria = LancamentoCategorias.Evento, Valor = 110m, Vencimento = new DateOnly(2026, 6, 25), Status = LancamentoStatuses.Pendente, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Alice", Tipo = LancamentoTipos.Uniflash, Descricao = "Uniflash", Categoria = LancamentoCategorias.Evento, Valor = 12m, Vencimento = new DateOnly(2026, 5, 30), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Thiago", Tipo = LancamentoTipos.Campori, Descricao = "Campori regional", Categoria = LancamentoCategorias.Evento, Valor = 190m, Vencimento = new DateOnly(2027, 3, 7), Status = LancamentoStatuses.Pendente, TipoFluxo = TipoFluxoLancamento.Entrada },
+            new Lancamento { Id = Guid.NewGuid(), MembroNome = "Camila", Tipo = LancamentoTipos.Mensalidade, Descricao = "Mensalidade", Categoria = LancamentoCategorias.Clube, Valor = 22m, Vencimento = new DateOnly(2026, 8, 20), Status = LancamentoStatuses.Pago, TipoFluxo = TipoFluxoLancamento.Entrada },
         };
 
         db.Lancamentos.AddRange(demo);
@@ -132,11 +131,11 @@ public static class DbSeeder
 
         var cargos = new[]
         {
-            new Cargo { Id = Guid.NewGuid(), Nome = "Administrador", Descricao = "Acesso administrativo total à plataforma, responsável pela gestão do sistema e não corresponde a um cargo de unidade do clube.", CriadoPor = criadoPor, Role = CargoAdminRole },
-            new Cargo { Id = Guid.NewGuid(), Nome = "Diretor", Descricao = "Lidera todo o clube, dirige as reuniões, define metas do ano e preside as comissões.", CriadoPor = criadoPor, Role = "DIR" },
-            new Cargo { Id = Guid.NewGuid(), Nome = "Diretor Associado", Descricao = "Coordena classes, especialidades e unidades, substituindo o diretor em sua ausência.", CriadoPor = criadoPor, Role = "DIRA" },
-            new Cargo { Id = Guid.NewGuid(), Nome = "Secretário", Descricao = "Registra pontos, presenças, atas e relatórios, além de cuidar do cadastro e da comunicação do clube.", CriadoPor = criadoPor, Role = "SEC" },
-            new Cargo { Id = Guid.NewGuid(), Nome = "Tesoureiro", Descricao = "Administra as finanças do clube junto com a tesouraria da igreja.", CriadoPor = criadoPor, Role = "TES" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Administrador", Descricao = "Acesso administrativo total à plataforma, responsável pela gestão do sistema e não corresponde a um cargo de unidade do clube.", CriadoPor = criadoPor, Role = Roles.Admin },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Diretor", Descricao = "Lidera todo o clube, dirige as reuniões, define metas do ano e preside as comissões.", CriadoPor = criadoPor, Role = Roles.Diretor },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Diretor Associado", Descricao = "Coordena classes, especialidades e unidades, substituindo o diretor em sua ausência.", CriadoPor = criadoPor, Role = Roles.DiretorAssociado },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Secretário", Descricao = "Registra pontos, presenças, atas e relatórios, além de cuidar do cadastro e da comunicação do clube.", CriadoPor = criadoPor, Role = Roles.Secretario },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Tesoureiro", Descricao = "Administra as finanças do clube junto com a tesouraria da igreja.", CriadoPor = criadoPor, Role = Roles.Tesoureiro },
             new Cargo { Id = Guid.NewGuid(), Nome = "Capelão", Descricao = "Conduz a vida espiritual do clube, coordenando o devocional e a classe bíblica.", CriadoPor = criadoPor, Role = "CAP" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Conselheiro", Descricao = "Acompanha de perto uma unidade em todas as atividades e avalia o desenvolvimento de cada membro.", CriadoPor = criadoPor, Role = "CONS" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Conselheiro Associado", Descricao = "Auxilia o conselheiro e assume a unidade quando ele falta.", CriadoPor = criadoPor, Role = "CONSA" },
