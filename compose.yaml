@@ -1,5 +1,17 @@
 name: almirante
 
+# Rede dedicada com subnet fixa: é o que permite ao ASP.NET Core (ReverseProxy__TrustedNetworkCidr,
+# ver api.environment abaixo) confiar apenas no nginx para os headers X-Forwarded-For/X-Forwarded-Proto,
+# em vez de confiar em qualquer proxy. Se alterar a subnet aqui, ajuste também API_TRUSTED_PROXY_CIDR
+# no .env.
+networks:
+  almirante-net:
+    name: almirante-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -10,6 +22,8 @@ services:
       MSSQL_PID: Developer
     ports:
       - "${SQL_HOST_PORT:-14330}:1433"
+    networks:
+      - almirante-net
     volumes:
       # Volume nomeado e persistente: pode ser exportado (docker volume + docker run --rm -v ...)
       # e restaurado em outra máquina para compartilhar backups/estado atual do banco.
@@ -42,14 +56,42 @@ services:
       SeedAdmin__Senha: ${SEED_ADMIN_SENHA:?defina SEED_ADMIN_SENHA no arquivo .env}
       Cors__AllowedOrigins__0: ${CORS_ORIGIN_1:-http://localhost:4200}
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
-    ports:
-      - "${API_HOST_PORT:-8090}:8080"
+      ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
+    networks:
+      - almirante-net
+    # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
+    # publica HTTP para fora é o nginx, para que o rate limit do login não possa ser contornado
+    # acessando a API diretamente.
+    expose:
+      - "8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 15s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: almirante-nginx
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - almirante-net
+    # Único ponto de entrada HTTP externo. Mantém a porta 8090 já usada pelo projeto
+    # (documentação, healthchecks e workflows de deploy continuam apontando para ela).
+    ports:
+      - "${API_HOST_PORT:-8090}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
 volumes:
