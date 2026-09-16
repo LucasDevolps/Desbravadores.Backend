@@ -11,6 +11,8 @@ O backend está em fase de **MVP funcional** e possui:
 - logout stateless — encerra a requisição, mas não revoga o token emitido;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
+- lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
+  período, resumo financeiro (provisório) e exclusão lógica auditada por trigger;
 - paginação, busca e filtros na listagem de lançamentos;
 - validação dos dados recebidos e respostas de erro no padrão Problem Details;
 - migrações do banco executadas na inicialização;
@@ -293,7 +295,10 @@ Com exceção do login, do Swagger e dos health checks, todos os endpoints exige
 | `GET` | `/api/Lancamentos` | lista lançamentos com paginação e filtros |
 | `POST` | `/api/Lancamentos` | cria um lançamento |
 | `PUT` | `/api/Lancamentos/{id}` | atualiza os campos enviados de um lançamento |
-| `DELETE` | `/api/Lancamentos/{id}` | exclui um lançamento |
+| `DELETE` | `/api/Lancamentos/{id}` | exclui (fisicamente) um lançamento |
+| `POST` | `/api/Lancamentos/Geral` | lançamento geral: cria o mesmo lançamento para todos os usuários elegíveis (idempotente) — ver [Lançamento geral](#lançamento-geral) |
+| `GET` | `/api/Lancamentos/Geral` | lista os lançamentos ativos criados por lançamento geral, com filtro de período e resumo financeiro |
+| `DELETE` | `/api/Lancamentos/Geral/{id}` | exclui logicamente (nunca fisicamente) um lançamento do escopo do lançamento geral, com motivo obrigatório e auditoria |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
@@ -356,6 +361,137 @@ curl --request POST http://localhost:8090/api/Lancamentos \
   }'
 ```
 
+## Lançamento geral
+
+Cria, numa única operação consistente, o mesmo lançamento para **todos os usuários cadastrados**
+(`POST /api/Lancamentos/Geral`), lista os lançamentos ativos gerados por essa operação
+(`GET /api/Lancamentos/Geral`) e permite excluir logicamente um item específico desse escopo
+(`DELETE /api/Lancamentos/Geral/{id}`). É um escopo separado do CRUD genérico acima: usa as
+mesmas tabelas (`Lancamentos`), mas nunca mistura os dois — lançamentos criados aqui têm um
+`OperacaoId` preenchido; os criados pelo CRUD genérico, não.
+
+### Autorização
+
+Os três endpoints exigem um token Bearer autenticado com uma das roles `ADM`, `DIR`, `DIRA`,
+`SEC` ou `TES`. Ao contrário do restante da API, qualquer falha de autorização neste escopo — sem
+token, token inválido/expirado, ou autenticado sem uma dessas roles — retorna sempre:
+
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: application/problem+json
+
+{ "title": "ACESSO NEGADO!", "status": 401 }
+```
+
+### Criar (`POST /api/Lancamentos/Geral`)
+
+Requer o header `Idempotency-Key` (string não vazia, definida pelo cliente, **diferente do token
+JWT**) além do corpo:
+
+```bash
+curl --request POST http://localhost:8090/api/Lancamentos/Geral \
+  --header 'Authorization: Bearer SEU_TOKEN' \
+  --header 'Idempotency-Key: 5b1f7e2a-9c3d-4e51-8b7a-1234567890ab' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "tipo": "Mensalidade",
+    "categoria": "Clube",
+    "valor": 25.00,
+    "vencimento": "2026-12-10"
+  }'
+```
+
+Resposta (`200 OK`):
+
+```json
+{
+  "operacaoId": "9f2c9e10-...",
+  "usuariosProcessados": 42,
+  "lancamentosCriados": 42,
+  "dataHoraUtc": "2026-12-01T12:00:00Z"
+}
+```
+
+- **Usuários elegíveis**: hoje, todo usuário cadastrado em `Usuarios`. O domínio não define, em
+  nenhum outro lugar do sistema, uma regra de elegibilidade diferente (`Usuario` não tem flag de
+  status/ativo, nem distinção por cargo usada para esse fim) — esta é uma decisão documentada, não
+  um requisito explícito da issue; ajustar em `LancamentosGeraisService.CreateAsync` se surgir uma
+  regra diferente (ex.: restringir ao cargo `DS`).
+- **Idempotência**: reenviar a mesma `Idempotency-Key` com o mesmo corpo devolve `200` com a
+  mesma resposta original, sem criar novos lançamentos. A mesma chave com corpo diferente (tipo,
+  categoria, valor ou vencimento) devolve `409 Conflict`. A garantia é persistida (tabela
+  `LancamentosOperacoes`, chave única) e vale sob concorrência real (não apenas no mesmo processo).
+- **Consistência**: a operação inteira (registro de idempotência + todos os lançamentos) é
+  persistida em uma única transação — todos os lançamentos são criados, ou nenhum é.
+- Lançamentos criados entram com `status: "Pendente"`, `moeda: "BRL"` e `ativo: true`.
+
+### Listar (`GET /api/Lancamentos/Geral`)
+
+Retorna somente lançamentos ativos (`Ativo = 1`) deste escopo, filtrados por vencimento — o
+domínio não define outra data para orientar esta listagem, então **vencimento** foi escolhido por
+representar quando a cobrança é devida. `Vencimento` é `date` (sem hora/fuso), então o dia inicial
+e o final do intervalo entram por completo, sem qualquer perda por causa de horário.
+
+| Parâmetro | Comportamento |
+| --- | --- |
+| (nenhum) | equivalente a `periodo=30` |
+| `periodo=30` \| `60` \| `90` | hoje e os N−1 dias anteriores (data UTC do servidor) |
+| `periodo=personalizado&dataInicio=AAAA-MM-DD&dataFim=AAAA-MM-DD` | intervalo informado; as duas datas são obrigatórias e `dataInicio` não pode ser posterior a `dataFim` |
+
+Período desconhecido, datas em formato inválido, período personalizado sem as duas datas, ou
+`dataInicio` posterior a `dataFim` retornam `400 Bad Request`.
+
+```bash
+curl 'http://localhost:8090/api/Lancamentos/Geral?periodo=90' \
+  --header 'Authorization: Bearer SEU_TOKEN'
+```
+
+```json
+{
+  "lancamentos": [ { "id": "...", "tipo": "Mensalidade", "valor": 25.00, "vencimento": "2026-12-10", "status": "Pendente", "...": "..." } ],
+  "resumo": { "totalDespesas": 800.00, "totalEntradas": 1000.00, "saldoAtual": 200.00 }
+}
+```
+
+`resumo` é **provisório**: valores fixos, sempre os mesmos independentemente do período ou da
+existência de lançamentos (inclusive com `lancamentos: []`). Ver
+`LancamentosGeraisService.ResumoFixoProvisorio` — substituir por um cálculo real quando a regra de
+negócio (o que conta como despesa/entrada) for definida.
+
+### Excluir (`DELETE /api/Lancamentos/Geral/{id}`)
+
+Exclusão **lógica** (`UPDATE ... SET Ativo = 0`), nunca `DELETE` físico. Exige motivo no corpo:
+
+```bash
+curl --request DELETE http://localhost:8090/api/Lancamentos/Geral/COLE_AQUI_O_ID \
+  --header 'Authorization: Bearer SEU_TOKEN' \
+  --header 'Content-Type: application/json' \
+  --data '{ "motivo": "Lançamento cadastrado incorretamente." }'
+```
+
+- `motivo` é obrigatório, validado após `Trim()`, entre 1 e 255 caracteres; vazio, só espaços, ou
+  maior que 255 caracteres retornam `400` (nunca truncado silenciosamente).
+- Lançamento inexistente **ou já inativo** retorna `404 Not Found` — uma segunda tentativa de
+  excluir o mesmo item não gera nova auditoria (o `UPDATE` não afeta nenhuma linha, então o
+  trigger de auditoria, abaixo, nem chega a rodar).
+- Sucesso retorna `204 No Content` e afeta somente o lançamento indicado, nunca o lote inteiro.
+
+#### Auditoria (trigger no banco)
+
+Toda transição `Ativo: true -> false` é auditada pelo trigger
+`TR_Lancamentos_AuditoriaExclusaoLogica` (SQL Server) na tabela `lancamentos_deletados`, com o
+responsável pela exclusão, IP, motivo, data/hora UTC (gerada pelo banco) e um snapshot do
+lançamento antes da exclusão. O usuário responsável e o IP nunca são aceitos do frontend: chegam
+via `SESSION_CONTEXT`, alimentado pela API na mesma conexão/transação do `UPDATE`
+(`LancamentosGeraisService.DeleteAsync`) a partir das claims JWT validadas e do
+`HttpContext.Connection.RemoteIpAddress` (que já respeita `ReverseProxy:TrustedNetworkCidr`, ver
+[Encaminhamento do IP real](#encaminhamento-do-ip-real-e-proteção-contra-spoofing)). Sem esse
+contexto, o próprio trigger rejeita a desativação (a transação inteira é revertida).
+
+Essa auditoria só existe em SQL Server real — o provider EF Core InMemory usado no restante da
+suíte de testes não tem triggers nem `SESSION_CONTEXT` (ver
+[Testes](#testes) sobre `LancamentosGeraisAuditoriaSqlServerTests`).
+
 ## Banco de dados e seed
 
 Na inicialização, a API aplica as migrações do Entity Framework Core. Em seguida:
@@ -367,23 +503,45 @@ O processo é idempotente e pode ser executado novamente sem duplicar o administ
 
 ## Testes
 
-Execute a suíte a partir da raiz:
+Execute a suíte a partir da raiz (exclui os testes que exigem Docker, ver abaixo):
 
 ```bash
-dotnet test backend/Almirante.slnx
+dotnet test backend/Almirante.slnx --filter "Category!=RequiresDocker"
 ```
 
-Os testes utilizam o provedor em memória do Entity Framework Core e cobrem:
+A maior parte dos testes utiliza o provedor em memória do Entity Framework Core e cobre:
 
 - login válido, inválido e requisição malformada;
 - autorização dos endpoints protegidos;
 - listagem, paginação e filtros;
 - validação dos lançamentos;
 - criação, atualização e exclusão;
+- lançamento geral (`LancamentosGeraisTests`): autorização (as 5 roles permitidas e a mensagem
+  exata `ACESSO NEGADO!`), idempotência (reenvio, conflito, consistência), filtros de período,
+  resumo fixo e exclusão lógica — tudo o que não depende do trigger/SQL Server real;
 - configuração do `ForwardedHeadersMiddleware` (`ForwardedHeadersTests`): X-Forwarded-For/X-Forwarded-Proto
   só são aceitos quando a conexão imediata vem da rede confiável configurada, e um valor forjado à
   esquerda do header (simulando o encadeamento do Nginx) é ignorado;
 - respostas `404 Not Found`.
+
+### Testes contra SQL Server real (`LancamentosGeraisAuditoriaSqlServerTests`)
+
+O provedor EF Core InMemory não tem triggers, `SESSION_CONTEXT` nem impõe índices únicos entre
+instâncias de `DbContext` de forma equivalente ao SQL Server — então o comportamento do trigger de
+auditoria da exclusão lógica do lançamento geral (usuário/IP/motivo/snapshot, atualização de
+múltiplas linhas, rollback sem contexto válido, ausência de vazamento de `SESSION_CONTEXT` entre
+requisições) e a idempotência sob concorrência real só podem ser comprovados contra um banco de
+verdade. `LancamentosGeraisAuditoriaSqlServerTests` sobe um SQL Server 2022 real via
+[Testcontainers](https://dotnet.testcontainers.org/) (a mesma imagem do `compose.yaml`) e roda as
+migrações reais contra ele.
+
+Requer Docker disponível na máquina. Por isso fica marcado com `[Trait("Category",
+"RequiresDocker")]` e é excluído do `dotnet test` acima e do CI (`backend-ci.yml`), que roda num
+runner self-hosted sem Docker configurado. Para rodar localmente:
+
+```bash
+dotnet test backend/Almirante.Api.Tests --filter "Category=RequiresDocker"
+```
 
 ### Cenários manuais do rate limit do Nginx
 
@@ -429,10 +587,12 @@ O pipeline utiliza o SDK .NET 10 já instalado no runner e executa:
 ```bash
 dotnet restore backend/Almirante.slnx
 dotnet build backend/Almirante.slnx --configuration Release --no-restore
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal
+dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker"
 ```
 
-A execução atual realiza validação de compilação e testes.
+A execução atual realiza validação de compilação e testes. O filtro exclui
+`LancamentosGeraisAuditoriaSqlServerTests` (exige Docker, indisponível neste runner) — ver
+[Testes contra SQL Server real](#testes-contra-sql-server-real-lancamentosgeraisauditoriasqlservertests).
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 

@@ -56,3 +56,33 @@ Authorization: Bearer {{token}}
 ### 9. Listar cargos
 GET {{baseUrl}}/api/Cargos
 Authorization: Bearer {{token}}
+
+### 10. Lançamento geral: criar (exige role ADM/DIR/DIRA/SEC/TES e Idempotency-Key)
+POST {{baseUrl}}/api/Lancamentos/Geral
+Authorization: Bearer {{token}}
+Idempotency-Key: cole-aqui-um-identificador-unico-da-requisicao
+Content-Type: application/json
+
+{
+  "tipo": "Mensalidade",
+  "categoria": "Clube",
+  "valor": 25.00,
+  "vencimento": "2026-12-10"
+}
+
+### 11. Lançamento geral: listar (ativos, período padrão = últimos 30 dias)
+GET {{baseUrl}}/api/Lancamentos/Geral
+Authorization: Bearer {{token}}
+
+### 12. Lançamento geral: listar com período personalizado
+GET {{baseUrl}}/api/Lancamentos/Geral?periodo=personalizado&dataInicio=2026-01-01&dataFim=2026-12-31
+Authorization: Bearer {{token}}
+
+### 13. Lançamento geral: excluir (lógico, motivo obrigatório)
+DELETE {{baseUrl}}/api/Lancamentos/Geral/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "motivo": "Lançamento cadastrado incorretamente."
+}

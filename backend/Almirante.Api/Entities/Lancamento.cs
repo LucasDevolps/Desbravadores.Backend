@@ -47,4 +47,14 @@ public class Lancamento
     public required string Status { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public DateTime? DataAtualizacao { get; set; }
+
+    // Exclusão lógica: nunca há DELETE físico para lançamentos do escopo "geral" (ver
+    // LancamentosGeraisService). Um trigger no banco audita toda transição true -> false desta
+    // coluna na tabela lancamentos_deletados (ver migration AddLancamentoGeral).
+    public bool Ativo { get; set; } = true;
+
+    // Não nulo somente para lançamentos criados pelo endpoint de lançamento geral
+    // (LancamentosGeraisController). Lançamentos criados pelo CRUD genérico (LancamentosController)
+    // continuam com OperacaoId nulo e ficam fora do escopo/listagem do lançamento geral.
+    public Guid? OperacaoId { get; set; }
 }
