@@ -176,16 +176,39 @@ confiança apenas à conexão que vem dessa rede interna (o próprio container d
 - se alguém acessar a API diretamente (contornando o Nginx), a conexão não vem da rede confiável e
   o header é ignorado por completo; `RemoteIpAddress` reflete o IP real de quem conectou.
 
-### Docker/Nginx vs. IIS
+### Docker/Nginx no Windows (IIS)
 
-Essa proteção é específica do caminho Docker/Linux. O deploy no IIS (Windows) continua sendo uma
-estratégia de hospedagem distinta, sem Nginx: `API_TRUSTED_PROXY_CIDR`/`ReverseProxy:TrustedNetworkCidr`
-não é definido nesse cenário, então `ForwardedHeadersMiddleware` fica com `ForwardedHeaders.None`
-(padrão) e não altera nada — o comportamento atual do IIS é preservado.
+O deploy Windows (IIS, via self-hosted runner) tem a mesma proteção, mas sem Docker: o job
+`deploy-windows` (`.github/workflows/backend-deploy.yml`) instala o Nginx nativo para Windows em
+`C:\nginx` (uma vez só; nos deploys seguintes só atualiza a config) e o registra numa Tarefa
+Agendada do Windows para iniciar sozinho com a máquina.
 
-O `.NET Aspire` (seção abaixo) também continua executando a API diretamente, sem Nginx, em
-desenvolvimento — o foco desta implementação é proteger o caminho Docker Compose, que é o usado em
-produção.
+```text
+Cliente
+  |
+  v
+Nginx (127.0.0.1:8090)
+  |
+  v
+IIS (127.0.0.1:<porta do site>, loopback)
+```
+
+Diferenças em relação ao Docker Compose:
+
+- o nginx roda como processo nativo (`nginx.exe`), não em container; a config fica em
+  `nginx/nginx.windows.conf` no repositório (mesmo rate limit de login do `nginx/nginx.conf`), com
+  um placeholder `__IIS_PORT__` substituído pelo workflow pela porta real do site no IIS (descoberta
+  dinamicamente a cada deploy — essa porta já mudou no passado, ver comentários no workflow);
+- o binding do site no IIS é só em `127.0.0.1` (loopback): não é alcançável de fora desta máquina
+  diretamente, só através do nginx. Esse deploy Windows é usado apenas localmente/rede interna — o
+  deploy público de fato é o Linux (Docker Compose);
+- `ReverseProxy:TrustedNetworkCidr` é configurado como `127.0.0.1/32` em
+  `appsettings.Production.json` (arquivo local ao servidor, fora do controle de versão, preservado
+  entre deploys), já que aqui o nginx e a API rodam na mesma máquina — diferente do Docker, onde a
+  confiança é numa subnet inteira.
+
+O `.NET Aspire` (seção abaixo) continua executando a API diretamente, sem Nginx, em desenvolvimento
+local — a proteção de rate limit só se aplica aos dois caminhos de deploy (Docker Compose e IIS).
 
 ## Executar com .NET Aspire
 
