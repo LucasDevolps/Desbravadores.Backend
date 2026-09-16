@@ -5,6 +5,7 @@ using Almirante.Api.Options;
 using Almirante.Api.Security;
 using Almirante.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -15,6 +16,33 @@ builder.AddServiceDefaults();
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
+builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection(ReverseProxyOptions.SectionName));
+
+// Só confia nos headers X-Forwarded-For/X-Forwarded-Proto quando ReverseProxy:TrustedNetworkCidr
+// estiver configurado (Docker/nginx). Sem essa configuração, ForwardedHeaders permanece "None"
+// (padrão) e o middleware não faz nada — preserva o comportamento atual fora do Docker (ex.: IIS),
+// onde não existe esse proxy e o IP/esquema já chegam corretos por outros meios.
+// Quando configurado, KnownProxies é limpo e substituído por essa única rede conhecida: um
+// X-Forwarded-For enviado diretamente pelo cliente só é aceito se a conexão imediata (o nginx)
+// vier dessa rede, e ForwardLimit=1 garante que só o valor mais à direita (o que o nginx
+// efetivamente observou) é usado — qualquer valor forjado à esquerda pelo cliente é ignorado.
+builder.Services.AddOptions<ForwardedHeadersOptions>()
+    .Configure<Microsoft.Extensions.Options.IOptions<ReverseProxyOptions>>((options, reverseProxyOptions) =>
+    {
+        var trustedNetworkCidr = reverseProxyOptions.Value.TrustedNetworkCidr;
+        if (string.IsNullOrWhiteSpace(trustedNetworkCidr))
+        {
+            return;
+        }
+
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = 1;
+        options.KnownProxies.Clear();
+        options.KnownIPNetworks.Clear();
+        // Totalmente qualificado: Microsoft.AspNetCore.HttpOverrides (acima) também expõe um tipo
+        // IPNetwork (obsoleto), o que tornaria "IPNetwork" ambíguo sem qualificação aqui.
+        options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(trustedNetworkCidr));
+    });
 
 builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
 
@@ -109,6 +137,11 @@ app.UseSwaggerUI();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+
+// Precisa vir antes de qualquer middleware que dependa do IP/esquema reais (redirect HTTPS,
+// autenticação, autorização), para que HttpContext.Connection.RemoteIpAddress e Request.Scheme
+// já reflitam o cliente original quando esses middlewares executarem.
+app.UseForwardedHeaders();
 
 app.UseHttpsRedirection();
 
