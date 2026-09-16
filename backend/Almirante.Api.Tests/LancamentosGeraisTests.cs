@@ -19,6 +19,7 @@ public class LancamentosGeraisTests
     {
         tipo = "Mensalidade",
         categoria = "Clube",
+        tipoFluxo = "Entrada",
         valor = 25.00m,
         vencimento = DateTime.UtcNow.ToString("yyyy-MM-dd"),
     };
@@ -172,6 +173,7 @@ public class LancamentosGeraisTests
         {
             tipo = "Mensalidade",
             categoria = "Clube",
+            tipoFluxo = "Entrada",
             valor = -1m,
             vencimento = "2026-12-01",
         });
@@ -240,6 +242,7 @@ public class LancamentosGeraisTests
         {
             tipo = "Mensalidade",
             categoria = "Clube",
+            tipoFluxo = "Entrada",
             valor = 999.00m,
             vencimento = "2026-12-01",
         });
@@ -322,13 +325,15 @@ public class LancamentosGeraisTests
     {
         using var factory = new AlmiranteApiFactory();
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-        await PostGeralAsync(client, Guid.NewGuid().ToString(), new
+        var criar = await PostGeralAsync(client, Guid.NewGuid().ToString(), new
         {
             tipo = "Mensalidade",
             categoria = "Clube",
+            tipoFluxo = "Entrada",
             valor = 10m,
             vencimento = "2026-12-01",
         });
+        criar.EnsureSuccessStatusCode();
 
         var dentro = await client.GetAsync("/api/Lancamentos/Geral?periodo=personalizado&dataInicio=2026-11-01&dataFim=2026-12-31");
         var fora = await client.GetAsync("/api/Lancamentos/Geral?periodo=personalizado&dataInicio=2027-01-01&dataFim=2027-01-31");

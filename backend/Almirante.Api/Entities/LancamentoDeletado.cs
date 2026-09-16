@@ -28,6 +28,7 @@ public class LancamentoDeletado
     public required string MembroNome { get; set; }
     public required string Tipo { get; set; }
     public required string Categoria { get; set; }
+    public required string TipoFluxo { get; set; }
     public decimal Valor { get; set; }
     public required string Moeda { get; set; }
     public DateOnly Vencimento { get; set; }

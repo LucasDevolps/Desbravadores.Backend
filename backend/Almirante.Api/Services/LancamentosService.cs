@@ -77,7 +77,10 @@ public class LancamentosService(AlmiranteDbContext db)
         LancamentoValidacao.ValidateTipo(request.Tipo);
         LancamentoValidacao.ValidateCategoria(request.Categoria);
         LancamentoValidacao.ValidateStatus(request.Status);
+        LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
+        LancamentoValidacao.ValidateValor(request.Valor);
         var vencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
+        LancamentoValidacao.ValidateVencimentoNaoPassado(vencimento);
 
         var lancamento = new Lancamento
         {
@@ -87,6 +90,7 @@ public class LancamentosService(AlmiranteDbContext db)
             Tipo = request.Tipo,
             Descricao = request.Descricao,
             Categoria = request.Categoria,
+            TipoFluxo = request.TipoFluxo,
             Valor = request.Valor,
             Moeda = string.IsNullOrWhiteSpace(request.Moeda) ? "BRL" : request.Moeda,
             Vencimento = vencimento,
@@ -135,6 +139,12 @@ public class LancamentosService(AlmiranteDbContext db)
             lancamento.Categoria = request.Categoria;
         }
 
+        if (request.TipoFluxo is not null)
+        {
+            LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
+            lancamento.TipoFluxo = request.TipoFluxo;
+        }
+
         if (request.Valor.HasValue)
         {
             LancamentoValidacao.ValidateValor(request.Valor.Value);
@@ -148,7 +158,9 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Vencimento is not null)
         {
-            lancamento.Vencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
+            var novoVencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
+            LancamentoValidacao.ValidateVencimentoNaoPassado(novoVencimento);
+            lancamento.Vencimento = novoVencimento;
         }
 
         if (request.Status is not null)
@@ -189,5 +201,6 @@ public class LancamentosService(AlmiranteDbContext db)
         Moeda = lancamento.Moeda,
         Vencimento = lancamento.Vencimento.ToString(DateFormat, CultureInfo.InvariantCulture),
         Status = lancamento.Status,
+        TipoFluxo = lancamento.TipoFluxo,
     };
 }

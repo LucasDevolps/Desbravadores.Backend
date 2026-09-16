@@ -38,6 +38,7 @@ public class LancamentosGeraisAuditoriaSqlServerTests : IClassFixture<Lancamento
     {
         tipo = "Mensalidade",
         categoria = "Clube",
+        tipoFluxo = "Entrada",
         valor = 25.00m,
         vencimento = DateTime.UtcNow.ToString("yyyy-MM-dd"),
     };
@@ -281,6 +282,7 @@ public class LancamentosGeraisAuditoriaSqlServerTests : IClassFixture<Lancamento
             membroNome = "Membro CRUD Genérico",
             tipo = "Outros",
             categoria = "Clube",
+            tipoFluxo = "Despesa",
             valor = 10m,
             vencimento = "2026-12-01",
             status = "Pendente",

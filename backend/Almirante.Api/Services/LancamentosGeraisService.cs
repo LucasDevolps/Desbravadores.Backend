@@ -46,10 +46,12 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
     {
         LancamentoValidacao.ValidateTipo(request.Tipo);
         LancamentoValidacao.ValidateCategoria(request.Categoria);
+        LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
         LancamentoValidacao.ValidateValor(request.Valor);
         var vencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
+        LancamentoValidacao.ValidateVencimentoNaoPassado(vencimento);
 
-        var requestHash = ComputeRequestHash(request.Tipo, request.Categoria, request.Valor, vencimento);
+        var requestHash = ComputeRequestHash(request.Tipo, request.Categoria, request.TipoFluxo, request.Valor, vencimento);
 
         // Fast-path: se a chave já foi usada por uma operação concluída anteriormente (caso comum
         // de reenvio, não concorrente), resolve sem tentar inserir de novo.
@@ -81,6 +83,7 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
             MembroNome = u.Nome,
             Tipo = request.Tipo,
             Categoria = request.Categoria,
+            TipoFluxo = request.TipoFluxo,
             Valor = request.Valor,
             Moeda = "BRL",
             Vencimento = vencimento,
@@ -97,6 +100,7 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
             RequestHash = requestHash,
             Tipo = request.Tipo,
             Categoria = request.Categoria,
+            TipoFluxo = request.TipoFluxo,
             Valor = request.Valor,
             Vencimento = vencimento,
             UsuariosProcessados = usuarios.Count,
@@ -333,12 +337,13 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
         return new LancamentoGeralCreateResult(LancamentoGeralCreateOutcome.Reutilizado, ToResponse(existente));
     }
 
-    private static string ComputeRequestHash(string tipo, string categoria, decimal valor, DateOnly vencimento)
+    private static string ComputeRequestHash(string tipo, string categoria, string tipoFluxo, decimal valor, DateOnly vencimento)
     {
         var canonical = string.Join(
             '|',
             tipo,
             categoria,
+            tipoFluxo,
             valor.ToString("F2", CultureInfo.InvariantCulture),
             vencimento.ToString(DateFormat, CultureInfo.InvariantCulture));
 
@@ -366,5 +371,6 @@ public class LancamentosGeraisService(AlmiranteDbContext db, ILogger<Lancamentos
         Moeda = lancamento.Moeda,
         Vencimento = lancamento.Vencimento.ToString(DateFormat, CultureInfo.InvariantCulture),
         Status = lancamento.Status,
+        TipoFluxo = lancamento.TipoFluxo,
     };
 }

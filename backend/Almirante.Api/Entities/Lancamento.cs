@@ -33,6 +33,17 @@ public static class LancamentoStatuses
     public static readonly IReadOnlyCollection<string> Todos = [Pago, Pendente, Atrasado];
 }
 
+// Direção do fluxo de caixa: dinheiro entrando (mensalidade, doação, taxa de evento) ou saindo
+// (despesa do clube). Usado para o cálculo real do resumo financeiro (ResumoFinanceiroDto) quando
+// ele deixar de ser provisório — ver LancamentosGeraisService.ResumoFixoProvisorio.
+public static class LancamentoTiposFluxo
+{
+    public const string Entrada = "Entrada";
+    public const string Despesa = "Despesa";
+
+    public static readonly IReadOnlyCollection<string> Todos = [Entrada, Despesa];
+}
+
 public class Lancamento
 {
     public Guid Id { get; set; }
@@ -45,6 +56,9 @@ public class Lancamento
     public string Moeda { get; set; } = "BRL";
     public DateOnly Vencimento { get; set; }
     public required string Status { get; set; }
+
+    // Entrada (dinheiro chegando) ou Despesa (dinheiro saindo) — ver LancamentoTiposFluxo.
+    public required string TipoFluxo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public DateTime? DataAtualizacao { get; set; }
 

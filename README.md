@@ -296,6 +296,7 @@ Com exceção do login, do Swagger e dos health checks, todos os endpoints exige
 | `POST` | `/api/Lancamentos` | cria um lançamento |
 | `PUT` | `/api/Lancamentos/{id}` | atualiza os campos enviados de um lançamento |
 | `DELETE` | `/api/Lancamentos/{id}` | exclui (fisicamente) um lançamento |
+| `POST` | `/api/Lancamentos/Registrar` | lançamento flexível: um membro específico, anônimo/despesa do clube, ou todos os usuários cadastrados — ver [Lançamento flexível](#lançamento-flexível-registrar) |
 | `POST` | `/api/Lancamentos/Geral` | lançamento geral: cria o mesmo lançamento para todos os usuários elegíveis (idempotente) — ver [Lançamento geral](#lançamento-geral) |
 | `GET` | `/api/Lancamentos/Geral` | lista os lançamentos ativos criados por lançamento geral, com filtro de período e resumo financeiro |
 | `DELETE` | `/api/Lancamentos/Geral/{id}` | exclui logicamente (nunca fisicamente) um lançamento do escopo do lançamento geral, com motivo obrigatório e auditoria |
@@ -331,15 +332,22 @@ Na criação, são obrigatórios:
 - `membroNome`;
 - `tipo`;
 - `categoria`;
+- `tipoFluxo`;
 - `vencimento`;
 - `status`.
 
-`membroId`, `descricao` e `moeda` são opcionais. Quando a moeda não é informada, a API utiliza `BRL`. O valor não pode ser negativo.
+`membroId`, `descricao` e `moeda` são opcionais. Quando a moeda não é informada, a API utiliza `BRL`.
+
+Validado em toda criação e em toda atualização que altere o campo (`LancamentosService`/`LancamentosGeraisService`, via `LancamentoValidacao`):
+
+- **valor**: deve ser maior que zero (nem negativo, nem `0`);
+- **vencimento**: não pode ser uma data já passada (comparação por dia, UTC do servidor — hoje é permitido).
 
 Valores aceitos:
 
 - tipos: `Mensalidade`, `Campori`, `Acampamento`, `Uniflash`, `Doação`, `Evento` e `Outros`;
 - categorias: `Clube` e `Evento`;
+- tipo de fluxo (`tipoFluxo`): `Entrada` (dinheiro entrando — mensalidade, doação, taxa de evento) ou `Despesa` (dinheiro saindo — compra de material, aluguel etc.); usado para o cálculo real do resumo financeiro quando ele deixar de ser provisório (ver [Lançamento geral](#lançamento-geral));
 - status: `Pago`, `Pendente` e `Atrasado`;
 - vencimento: formato `yyyy-MM-dd`.
 
@@ -354,9 +362,64 @@ curl --request POST http://localhost:8090/api/Lancamentos \
     "tipo": "Mensalidade",
     "descricao": "Mensalidade do clube",
     "categoria": "Clube",
+    "tipoFluxo": "Entrada",
     "valor": 25.00,
     "moeda": "BRL",
     "vencimento": "2026-08-10",
+    "status": "Pendente"
+  }'
+```
+
+## Lançamento flexível (`Registrar`)
+
+`POST /api/Lancamentos/Registrar` cobre, num único endpoint, os três destinos possíveis de um
+lançamento — pensado para despesas do clube e contribuições avulsas (ex.: doação de um empresário
+ou fiel da igreja) além do caso já coberto pelo CRUD genérico acima:
+
+1. **Membro específico**: informe `membroId` (o `membroNome` cadastrado é usado, mesmo que outro
+   valor seja enviado no corpo).
+2. **Anônimo / despesa do clube**: não informe `membroId`; `membroNome` é obrigatório e descreve a
+   origem/destino (ex.: `"Doação de empresário local"`, `"Compra de material de escritório"`).
+3. **Todos os membros**: `aplicarATodosOsMembros: true` — `membroId` não pode ser informado junto
+   (erro `400`). Reaproveita exatamente o mecanismo do [lançamento geral](#lançamento-geral): exige
+   header `Idempotency-Key`, e a resposta é a mesma forma (`operacaoId`, `usuariosProcessados`,
+   `lancamentosCriados`, `dataHoraUtc`, `200 OK`) em vez do lançamento único (`201 Created`).
+
+Exige as mesmas roles do lançamento geral (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`) nos três modos — com
+a mesma resposta `401 "ACESSO NEGADO!"` para falta de autenticação ou de role — diferente dos
+demais endpoints de `LancamentosController`, que só exigem autenticação.
+
+Exemplo — despesa do clube:
+
+```bash
+curl --request POST http://localhost:8090/api/Lancamentos/Registrar \
+  --header 'Authorization: Bearer SEU_TOKEN' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "membroNome": "Compra de material de escritório",
+    "tipo": "Outros",
+    "categoria": "Clube",
+    "tipoFluxo": "Despesa",
+    "valor": 150.00,
+    "vencimento": "2026-12-10",
+    "status": "Pendente"
+  }'
+```
+
+Exemplo — aplicar a todos os membros:
+
+```bash
+curl --request POST http://localhost:8090/api/Lancamentos/Registrar \
+  --header 'Authorization: Bearer SEU_TOKEN' \
+  --header 'Idempotency-Key: 5b1f7e2a-9c3d-4e51-8b7a-1234567890ab' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "aplicarATodosOsMembros": true,
+    "tipo": "Mensalidade",
+    "categoria": "Clube",
+    "tipoFluxo": "Entrada",
+    "valor": 25.00,
+    "vencimento": "2026-12-10",
     "status": "Pendente"
   }'
 ```
@@ -396,6 +459,7 @@ curl --request POST http://localhost:8090/api/Lancamentos/Geral \
   --data '{
     "tipo": "Mensalidade",
     "categoria": "Clube",
+    "tipoFluxo": "Entrada",
     "valor": 25.00,
     "vencimento": "2026-12-10"
   }'
@@ -419,11 +483,13 @@ Resposta (`200 OK`):
   regra diferente (ex.: restringir ao cargo `DS`).
 - **Idempotência**: reenviar a mesma `Idempotency-Key` com o mesmo corpo devolve `200` com a
   mesma resposta original, sem criar novos lançamentos. A mesma chave com corpo diferente (tipo,
-  categoria, valor ou vencimento) devolve `409 Conflict`. A garantia é persistida (tabela
-  `LancamentosOperacoes`, chave única) e vale sob concorrência real (não apenas no mesmo processo).
+  categoria, tipo de fluxo, valor ou vencimento) devolve `409 Conflict`. A garantia é persistida
+  (tabela `LancamentosOperacoes`, chave única) e vale sob concorrência real (não apenas no mesmo
+  processo).
 - **Consistência**: a operação inteira (registro de idempotência + todos os lançamentos) é
   persistida em uma única transação — todos os lançamentos são criados, ou nenhum é.
-- Lançamentos criados entram com `status: "Pendente"`, `moeda: "BRL"` e `ativo: true`.
+- Lançamentos criados entram com `status: "Pendente"`, `moeda: "BRL"` e `ativo: true`; `tipoFluxo`
+  é o informado na requisição.
 
 ### Listar (`GET /api/Lancamentos/Geral`)
 

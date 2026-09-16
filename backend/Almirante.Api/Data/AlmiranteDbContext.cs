@@ -46,6 +46,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(l => l.Tipo).HasMaxLength(50).IsRequired();
             entity.Property(l => l.Descricao).HasMaxLength(500);
             entity.Property(l => l.Categoria).HasMaxLength(50).IsRequired();
+            entity.Property(l => l.TipoFluxo).HasMaxLength(20).IsRequired();
             entity.Property(l => l.Valor).HasColumnType("decimal(18,2)");
             entity.Property(l => l.Moeda).HasMaxLength(3).IsRequired();
             entity.Property(l => l.Status).HasMaxLength(20).IsRequired();
@@ -67,6 +68,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(o => o.RequestHash).HasMaxLength(64).IsRequired();
             entity.Property(o => o.Tipo).HasMaxLength(50).IsRequired();
             entity.Property(o => o.Categoria).HasMaxLength(50).IsRequired();
+            entity.Property(o => o.TipoFluxo).HasMaxLength(20).IsRequired();
             entity.Property(o => o.Valor).HasColumnType("decimal(18,2)");
 
             entity.HasIndex(o => o.IdempotencyKey).IsUnique();
@@ -86,6 +88,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(d => d.MembroNome).HasMaxLength(200).IsRequired();
             entity.Property(d => d.Tipo).HasMaxLength(50).IsRequired();
             entity.Property(d => d.Categoria).HasMaxLength(50).IsRequired();
+            entity.Property(d => d.TipoFluxo).HasMaxLength(20).IsRequired();
             entity.Property(d => d.Valor).HasColumnType("decimal(18,2)");
             entity.Property(d => d.Moeda).HasMaxLength(3).IsRequired();
             entity.Property(d => d.Status).HasMaxLength(20).IsRequired();

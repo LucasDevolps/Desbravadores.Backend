@@ -35,6 +35,7 @@ Content-Type: application/json
   "membroNome": "Novo Membro",
   "tipo": "Doação",
   "categoria": "Clube",
+  "tipoFluxo": "Entrada",
   "valor": 42.5,
   "vencimento": "2026-12-01",
   "status": "Pendente"
@@ -66,6 +67,7 @@ Content-Type: application/json
 {
   "tipo": "Mensalidade",
   "categoria": "Clube",
+  "tipoFluxo": "Entrada",
   "valor": 25.00,
   "vencimento": "2026-12-10"
 }
@@ -85,4 +87,35 @@ Content-Type: application/json
 
 {
   "motivo": "Lançamento cadastrado incorretamente."
+}
+
+### 14. Lançamento flexível: despesa do clube / doação anônima (exige role ADM/DIR/DIRA/SEC/TES)
+POST {{baseUrl}}/api/Lancamentos/Registrar
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "membroNome": "Doação de empresário local",
+  "tipo": "Doação",
+  "categoria": "Clube",
+  "tipoFluxo": "Entrada",
+  "valor": 300.00,
+  "vencimento": "2026-12-10",
+  "status": "Pendente"
+}
+
+### 15. Lançamento flexível: aplicar a todos os membros (exige Idempotency-Key)
+POST {{baseUrl}}/api/Lancamentos/Registrar
+Authorization: Bearer {{token}}
+Idempotency-Key: cole-aqui-um-identificador-unico-da-requisicao
+Content-Type: application/json
+
+{
+  "aplicarATodosOsMembros": true,
+  "tipo": "Mensalidade",
+  "categoria": "Clube",
+  "tipoFluxo": "Entrada",
+  "valor": 25.00,
+  "vencimento": "2026-12-10",
+  "status": "Pendente"
 }

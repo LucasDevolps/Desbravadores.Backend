@@ -34,11 +34,21 @@ public static class LancamentoValidacao
         }
     }
 
+    public static void ValidateTipoFluxo(string tipoFluxo)
+    {
+        if (!LancamentoTiposFluxo.Todos.Contains(tipoFluxo))
+        {
+            throw new LancamentoValidationException($"Tipo de fluxo inválido: {tipoFluxo}. Use \"Entrada\" ou \"Despesa\".");
+        }
+    }
+
+    // Valor deve ser estritamente positivo: nem negativo, nem zero (um lançamento de R$ 0,00 não
+    // representa nenhuma movimentação financeira real).
     public static void ValidateValor(decimal valor)
     {
-        if (valor < 0)
+        if (valor <= 0)
         {
-            throw new LancamentoValidationException("Valor não pode ser negativo.");
+            throw new LancamentoValidationException("Valor deve ser maior que zero.");
         }
     }
 
@@ -50,5 +60,18 @@ public static class LancamentoValidacao
         }
 
         return parsed;
+    }
+
+    // Vencimento não pode ser uma data já passada (comparação por dia, UTC do servidor — hoje é
+    // permitido, só datas estritamente anteriores são rejeitadas). Chamado separadamente de
+    // ParseVencimento porque UpdateLancamentoRequest só deve validar isso quando o vencimento está
+    // de fato sendo alterado, não em toda atualização.
+    public static void ValidateVencimentoNaoPassado(DateOnly vencimento)
+    {
+        var hoje = DateOnly.FromDateTime(DateTime.UtcNow);
+        if (vencimento < hoje)
+        {
+            throw new LancamentoValidationException("Vencimento não pode ser uma data no passado.");
+        }
     }
 }
