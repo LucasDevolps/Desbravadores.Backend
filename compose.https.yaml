@@ -1,0 +1,19 @@
+# HTTPS local, opt-in: prepare nginx/certs conforme docs/local-login.md e execute:
+# docker compose -f compose.yaml -f compose.https.yaml up -d --build
+services:
+  nginx:
+    ports:
+      - "127.0.0.1:${API_HTTPS_HOST_PORT:-8443}:443"
+    volumes:
+      - type: bind
+        source: ./nginx/https.conf
+        target: /etc/nginx/tls/https.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nginx/certs
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          create_host_path: false
