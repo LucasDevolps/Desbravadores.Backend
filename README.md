@@ -78,9 +78,9 @@ Altere no `.env`, no mínimo, os valores de:
 
 - `SQL_SA_PASSWORD`;
 - `JWT_KEY_V1` (Base64 de no mínimo 32 bytes) e `JWT_ACTIVE_KEY_ID`;
-- `SEED_ADMIN_SENHA`.
+- `SEED_ADMIN_SENHA` (política: 12–128 caracteres, não trivial; ver [`docs/authentication-security.md`](docs/authentication-security.md)).
 
-O arquivo `.env` contém segredos locais e não deve ser versionado.
+Todo valor `DEFINA_...` do `.env.example` é um placeholder: a API recusa iniciar com a chave JWT placeholder e recusa criar o admin inicial com senha placeholder ou fraca. Gere a chave com `openssl rand -base64 32`. O arquivo `.env` contém segredos locais e não deve ser versionado.
 
 ### Inicialização
 
@@ -150,6 +150,7 @@ aplicado pelo Nginx, configurado em `nginx/nginx.conf`:
 
   com `Content-Type: application/problem+json` e o header `Retry-After: 60` (só nessa resposta);
 - passado o período de recuperação (~60s), novas tentativas voltam a ser permitidas;
+- além do Nginx, a própria API limita o login por IP (padrão 5 tentativas/60 s, `429` com `Retry-After`) e bloqueia temporariamente a conta após falhas consecutivas de senha (padrão 10 em 15 min, bloqueio de 15 min) — ver [`docs/authentication-security.md`](docs/authentication-security.md);
 - nenhum outro endpoint (`/api/Auth/Me`, `/api/Usuarios`, `/api/Lancamentos`, `/health`, `/alive`,
   Swagger etc.) é afetado por esse limite.
 
@@ -233,12 +234,16 @@ O AppHost:
 - aguarda o banco ficar disponível;
 - inicia a API e exibe os endereços dos recursos no painel do Aspire.
 
-As configurações de desenvolvimento incluem credenciais locais para o administrador inicial:
+Nenhuma credencial fica versionada. Antes da primeira execução, defina os segredos locais fora do Git:
 
-- e-mail: `admin@local.dev`;
-- senha: `senha`.
+```bash
+dotnet user-secrets set "Parameters:sql-password" "<senha do SQL Server>" --project backend/Almirante.AppHost
+dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project backend/Almirante.Api
+dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project backend/Almirante.Api
+dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project backend/Almirante.Api
+```
 
-Esses valores são exclusivos para desenvolvimento e devem ser substituídos em qualquer outro ambiente.
+O e-mail do administrador inicial é `admin@local.dev`. Se o volume `almirante-sqlserver-data` já existir, use a senha do SQL Server com que ele foi criado.
 
 ## Variáveis de ambiente
 
@@ -258,6 +263,8 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `JWT_ACCESS_TOKEN_MINUTES` | duração máxima do access token | `10` |
 | `AUTH_SESSION_DAYS` | limite absoluto da sessão | `7` |
 | `AUTH_REFRESH_INACTIVITY_HOURS` | inatividade máxima entre login/refresh | `24` |
+| `LOGIN_RATE_LIMIT_PERMITS` / `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | tentativas de login por IP na janela da API | `5` / `60` |
+| `LOGIN_LOCKOUT_MAX_FAILURES` / `LOGIN_LOCKOUT_FAILURE_WINDOW_MINUTES` / `LOGIN_LOCKOUT_MINUTES` | lockout temporário por conta | `10` / `15` / `15` |
 | `SEED_ADMIN_NOME` | nome do administrador inicial | `Administrador` |
 | `SEED_ADMIN_EMAIL` | e-mail do administrador inicial | `admin@local.dev` |
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
@@ -275,7 +282,7 @@ Faça login com o administrador criado pelo seed:
 curl --request POST https://localhost:8090/api/Auth/login \
   --header 'X-CSRF-TOKEN: TOKEN_OBTIDO_EM_/api/Auth/csrf' \
   --header 'Content-Type: application/json' \
-  --data '{"email":"admin@local.dev","senha":"senha"}'
+  --data '{"email":"admin@local.dev","senha":"SUA_SENHA_DO_SEED"}'
 ```
 
 A resposta contém somente `token.accessToken` e `token.expiresAtUtc`; consulte o perfil atual em `/api/Auth/Me`. Nos endpoints protegidos, envie:
@@ -294,15 +301,16 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `POST` | `/api/Auth/login` | valida credenciais, cria sessão e retorna somente o access token |
 | `POST` | `/api/Auth/refresh` | rotaciona o refresh cookie e retorna novo access token |
 | `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
-| `GET` | `/api/Auth/Me` | retorna o usuário autenticado |
-| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome |
+| `GET` | `/api/Auth/Me` | retorna o perfil do usuário autenticado (qualquer cargo) |
+| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC, TES) |
+| `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC, TES) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
 ## Lançamentos
 
 O agregado financeiro possui um único fluxo de criação, protegido pelas roles `ADM`, `DIR`,
-`DIRA`, `SEC` e `TES`.
+`DIRA`, `SEC` e `TES`. Sem autenticação válida a resposta é `401`; autenticado com outro cargo, `403`.
 
 | Método | Rota | Finalidade |
 |---|---|---|
@@ -354,7 +362,17 @@ dotnet test backend/Almirante.slnx
 ```
 
 A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
-conflito de chave e soft delete.
+conflito de chave, soft delete, contrato de login/`/Me`, validação do JWT (assinatura, emissor,
+audiência, algoritmo, expiração, tamanho), matriz RBAC (401/403/sucesso por cargo), rate limiting e
+lockout, forwarded headers, segredos/política de senha, cabeçalhos de segurança e descoberta das
+migrations.
+
+Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
+lockout concorrente e auditoria por trigger). Cada teste cria e remove um banco `almirante_test_<guid>`:
+
+```bash
+ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx --filter Category=RequiresSqlServer
+```
 
 ### Cenários manuais do rate limit do Nginx
 
@@ -400,12 +418,11 @@ O pipeline utiliza o SDK .NET 10 já instalado no runner e executa:
 ```bash
 dotnet restore backend/Almirante.slnx
 dotnet build backend/Almirante.slnx --configuration Release --no-restore
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker"
+dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
 ```
 
-A execução atual realiza validação de compilação e testes. O filtro exclui
-`LancamentosGeraisAuditoriaSqlServerTests` (exige Docker, indisponível neste runner) — ver
-[Testes contra SQL Server real](#testes-contra-sql-server-real-lancamentosgeraisauditoriasqlservertests).
+A execução atual realiza validação de compilação e testes. O filtro exclui os testes que exigem
+Docker ou SQL Server real, indisponíveis neste runner (ver [Testes](#testes)).
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 
@@ -427,8 +444,10 @@ As requisições aos health checks são excluídas dos traces.
 
 O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
 
-Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
+O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
 
-## Segurança da autenticação (issue #29)
+## Segurança (issues #29, #31, #33, #34 e #35)
+
+Resumo: RBAC por policies com `401`/`403` distintos; rate limiting e lockout do login na própria API; segredos fora do Git com validação no startup e política de senha; `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP e HSTS (fora de Development, em HTTPS) em todas as respostas. **A autenticação exige TLS** (cookies `Secure`): em HTTP puro, `csrf`/`login` respondem `500`. Detalhes, decisões, rotação de segredos expostos e pendências em [`docs/authentication-security.md`](docs/authentication-security.md).
 
 O login agora retorna somente o envelope `token`; o perfil atual vem de `GET /api/Auth/Me`. Sessões e hashes de refresh tokens são persistidos no SQL Server, refresh é rotativo por cookie seguro e logout revoga a sessão apresentada. O fluxo de frontend, configuração Base64/kid, rotação, migração, TLS e riscos residuais estão em [`docs/authentication-security.md`](docs/authentication-security.md). Tokens emitidos antes desta mudança não têm `sid` e exigem novo login.

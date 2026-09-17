@@ -8,14 +8,15 @@ namespace Almirante.Api.Controllers;
 
 [ApiController]
 [Route("api/Lancamentos")]
-[AutorizarRoles(Roles.Admin, Roles.Diretor, Roles.DiretorAssociado, Roles.Secretario, Roles.Tesoureiro)]
+[Authorize(Policy = Policies.GestaoFinanceira)]
+[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
 
     [HttpGet]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<LancamentosResponse>> List(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10,
@@ -35,17 +36,16 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<LancamentoGeralResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Registrar(
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         [FromBody] RegistrarLancamentoRequest request,
         CancellationToken cancellationToken)
     {
-        var autenticado = User.TentarObterUsuarioId(out var usuarioSolicitanteId);
-        if (request.AplicarATodosOsMembros && !autenticado)
+        // O responsável (auditoria de CriadoPorUsuarioId) vem sempre da identidade autenticada.
+        if (!User.TentarObterUsuarioId(out var usuarioSolicitanteId))
         {
-            return AcessoNegado();
+            return IdentidadeInvalida();
         }
 
         request.IdempotencyKey = idempotencyKey;
@@ -88,7 +88,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid id, [FromBody] DeleteLancamentoRequest request, CancellationToken cancellationToken)
     {
-        if (!User.TentarObterUsuarioId(out var usuarioId)) return AcessoNegado();
+        if (!User.TentarObterUsuarioId(out var usuarioId)) return IdentidadeInvalida();
         request.Id = id;
         request.UsuarioResponsavelId = usuarioId;
         request.IpResponsavel = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "0.0.0.0";
@@ -96,9 +96,10 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         return deleted ? NoContent() : NotFound();
     }
 
-    private UnauthorizedObjectResult AcessoNegado() => Unauthorized(new ProblemDetails
+    // Inalcançável com o pipeline atual (OnTokenValidated exige sub GUID), mantido como defesa.
+    private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails
     {
-        Title = "ACESSO NEGADO!",
+        Title = "Identidade autenticada inválida.",
         Status = StatusCodes.Status401Unauthorized,
     });
 }

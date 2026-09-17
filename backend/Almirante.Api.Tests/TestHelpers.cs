@@ -12,7 +12,9 @@ namespace Almirante.Api.Tests;
 
 public static class TestHelpers
 {
-    private const string SenhaPadraoTeste = "senha123";
+    // Gravada diretamente como hash (sem passar pela política de senha): representa credenciais
+    // pré-existentes, que devem continuar autenticando mesmo sem cumprir a política atual.
+    public const string SenhaPadraoTeste = "senha123";
 
     public static async Task<string> LoginAsAdminAsync(HttpClient client)
     {
@@ -37,7 +39,18 @@ public static class TestHelpers
         client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", json.GetProperty("csrfToken").GetString());
     }
 
-    public static async Task<HttpClient> CreateAuthenticatedClientAsync(AlmiranteApiFactory factory)
+    // Envia uma tentativa de login (com CSRF válido já presente no client) e devolve a resposta crua.
+    public static Task<HttpResponseMessage> PostLoginAsync(HttpClient client, string email, string senha,
+        string? remoteIp = null, string? xForwardedFor = null, string? xForwardedProto = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/Auth/login") { Content = JsonContent.Create(new { email, senha }) };
+        if (remoteIp is not null) request.Headers.Add(AlmiranteApiFactory.TestRemoteIpHeader, remoteIp);
+        if (xForwardedFor is not null) request.Headers.Add("X-Forwarded-For", xForwardedFor);
+        if (xForwardedProto is not null) request.Headers.Add("X-Forwarded-Proto", xForwardedProto);
+        return client.SendAsync(request);
+    }
+
+    public static async Task<HttpClient> CreateAuthenticatedClientAsync(WebApplicationFactory<Program> factory)
     {
         var client = factory.CreateClient();
         var token = await LoginAsAdminAsync(client);
@@ -49,36 +62,15 @@ public static class TestHelpers
     }
 
     // Cria (via seed de Cargos já existente, ver DbSeeder.SeedCargosAsync) um usuário de teste
-    // com o Role informado e devolve um HttpClient autenticado como esse usuário. Usado pelos
-    // testes de autorização do lançamento geral, que exigem cobrir as 5 roles permitidas
-    // (ADM, DIR, DIRA, SEC, TES) e ao menos uma role sem permissão.
+    // com o Role informado e devolve um HttpClient autenticado como esse usuário.
     public static async Task<(HttpClient Client, Guid UsuarioId)> CreateAuthenticatedClientForRoleAsync(
         WebApplicationFactory<Program> factory, string role)
     {
-        using var scope = factory.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
-        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<Usuario>>();
-
-        var cargoId = await db.Cargos.Where(c => c.Role == role).Select(c => c.Id).SingleAsync();
-
-        var email = $"teste-{role.ToLowerInvariant()}-{Guid.NewGuid():N}@local.dev";
-        var usuario = new Usuario
-        {
-            Id = Guid.NewGuid(),
-            Nome = $"Usuário Teste {role}",
-            Email = email,
-            EmailNormalizado = email.ToUpperInvariant(),
-            SenhaHash = string.Empty,
-            CargoId = cargoId,
-        };
-        usuario.SenhaHash = hasher.HashPassword(usuario, SenhaPadraoTeste);
-
-        db.Usuarios.Add(usuario);
-        await db.SaveChangesAsync();
+        var usuario = await AddUsuarioAsync(factory, $"Usuário Teste {role}", role);
 
         var client = factory.CreateClient();
         await AddCsrfAsync(client);
-        var response = await client.PostAsJsonAsync("/api/Auth/login", new { email, senha = SenhaPadraoTeste });
+        var response = await client.PostAsJsonAsync("/api/Auth/login", new { email = usuario.Email, senha = SenhaPadraoTeste });
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<LoginResponse>();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", body!.Token.AccessToken);
@@ -86,8 +78,7 @@ public static class TestHelpers
         return (client, usuario.Id);
     }
 
-    // Adiciona um usuário "comum" (sem login usado nos testes) diretamente no banco, só para
-    // testes que precisam de mais de um usuário elegível para o lançamento geral.
+    // Adiciona um usuário diretamente no banco com a senha SenhaPadraoTeste.
     public static async Task<Usuario> AddUsuarioAsync(WebApplicationFactory<Program> factory, string nome, string role)
     {
         using var scope = factory.Services.CreateScope();
@@ -111,5 +102,19 @@ public static class TestHelpers
         db.Usuarios.Add(usuario);
         await db.SaveChangesAsync();
         return usuario;
+    }
+
+    public static async Task<T> WithDbAsync<T>(WebApplicationFactory<Program> factory, Func<AlmiranteDbContext, Task<T>> action)
+    {
+        using var scope = factory.Services.CreateScope();
+        return await action(scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>());
+    }
+
+    // Remove campos que variam por requisição (traceId) para comparar corpos de erro.
+    public static async Task<string> NormalizedProblemAsync(HttpResponseMessage response)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsObject();
+        node.Remove("traceId");
+        return node.ToJsonString();
     }
 }

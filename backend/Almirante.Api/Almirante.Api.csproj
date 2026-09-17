@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Segredos locais de desenvolvimento (Jwt:Keys, SeedAdmin:Senha) ficam fora do repositório: dotnet user-secrets. -->
+    <UserSecretsId>almirante-api-2f7c1e0a-5b8d-4c6e-9a31-d4b7e8f2c105</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

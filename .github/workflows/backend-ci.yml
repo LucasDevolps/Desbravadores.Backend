@@ -32,4 +32,4 @@ jobs:
         run: dotnet build backend/Almirante.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker"
+        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"

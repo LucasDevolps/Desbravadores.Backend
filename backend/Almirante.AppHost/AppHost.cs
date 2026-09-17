@@ -1,8 +1,10 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-// MVP: default dev-only password. Override via `dotnet user-secrets set Parameters:sql-password ...`
-// or the Parameters__sql-password environment variable for anything beyond local development.
-var sqlPassword = builder.AddParameter("sql-password", "Almirante_Dev_2026!", secret: true);
+// Sem valor padrão versionado: defina fora do Git antes de executar, por exemplo
+//   dotnet user-secrets set "Parameters:sql-password" "<senha forte>" --project backend/Almirante.AppHost
+// ou a variável de ambiente Parameters__sql-password. Se o volume almirante-sqlserver-data já
+// existir, use a mesma senha com que ele foi criado (ou recrie o volume).
+var sqlPassword = builder.AddParameter("sql-password", secret: true);
 
 var sql = builder.AddSqlServer("sql", password: sqlPassword)
     .WithLifetime(ContainerLifetime.Persistent)

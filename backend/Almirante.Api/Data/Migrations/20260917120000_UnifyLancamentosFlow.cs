@@ -1,8 +1,12 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 namespace Almirante.Api.Data.Migrations;
 
+// [DbContext] é obrigatório: sem ele o EF Core não associa a migration ao AlmiranteDbContext e a
+// ignora silenciosamente (MigrateAsync nunca a aplicava em SQL Server real).
+[DbContext(typeof(AlmiranteDbContext))]
 [Migration("20260917120000_UnifyLancamentosFlow")]
 public partial class UnifyLancamentosFlow : Migration
 {
