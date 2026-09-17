@@ -46,6 +46,13 @@ public static class JwtKeySet
         byte[] bytes;
         try { bytes = Convert.FromBase64String(encoded); } catch (FormatException) { throw new OptionsValidationException(JwtOptions.SectionName, typeof(JwtOptions), ["Chave JWT não é Base64 válida."]); }
         if (bytes.Length < 32) throw new OptionsValidationException(JwtOptions.SectionName, typeof(JwtOptions), ["Chave JWT deve possuir ao menos 32 bytes."]);
+        if (!LooksRandom(bytes)) throw new OptionsValidationException(JwtOptions.SectionName, typeof(JwtOptions), ["Chave JWT deve ser composta por bytes aleatórios (CSPRNG), não por texto, placeholder ou padrão repetido."]);
         return new SymmetricSecurityKey(bytes) { KeyId = kid };
     }
+
+    // Comprimento não é entropia. Recusa os casos que indicam chave não gerada por CSPRNG: texto
+    // legível (32+ bytes aleatórios serem todos ASCII imprimível tem probabilidade ~1e-14) e bytes
+    // repetidos (ex.: zeros). Não substitui gerar a chave com `openssl rand -base64 32`.
+    private static bool LooksRandom(byte[] bytes) =>
+        bytes.Distinct().Count() >= 16 && !bytes.All(b => b is >= 0x20 and <= 0x7E);
 }

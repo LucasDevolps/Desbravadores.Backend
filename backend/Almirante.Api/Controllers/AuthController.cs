@@ -30,8 +30,7 @@ public sealed class AuthController(AuthService authService, CookieCsrfProtection
     public async Task<ActionResult<LoginResponse>> Refresh(CancellationToken ct)
     {
         if (!Request.Cookies.TryGetValue(RefreshCookie, out var raw)) return InvalidCredentials();
-        AuthResult? result;
-        try { result = await authService.RefreshAsync(raw, ct); } catch (FormatException) { result = null; }
+        var result = await authService.RefreshAsync(raw, ct);
         if (result is null) { DeleteRefreshCookie(); return InvalidCredentials(); }
         SetRefreshCookie(result.RefreshToken, result.RefreshExpiresAtUtc);
         return Ok(result.Response);
@@ -57,8 +56,8 @@ public sealed class AuthController(AuthService authService, CookieCsrfProtection
     }
 
     private ObjectResult InvalidCredentials() => Unauthorized(new ProblemDetails { Title = "Credenciais inválidas.", Status = 401 });
-    private void SetRefreshCookie(string value, DateTime expires) => Response.Cookies.Append(RefreshCookie, value,
-        new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/", Expires = expires });
+    private void SetRefreshCookie(string value, DateTime expiresUtc) => Response.Cookies.Append(RefreshCookie, value,
+        new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/", Expires = new DateTimeOffset(expiresUtc, TimeSpan.Zero) });
     private void DeleteRefreshCookie() => Response.Cookies.Delete(RefreshCookie,
         new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Strict, Path = "/" });
 }

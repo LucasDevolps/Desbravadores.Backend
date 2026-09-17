@@ -11,20 +11,31 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Services;
 
+// RefreshExpiresAtUtc tem Kind=Utc e é o prazo real da credencial (vira o Expires do cookie).
 public sealed record AuthResult(LoginResponse Response, string RefreshToken, DateTime RefreshExpiresAtUtc);
 
 public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher,
-    JwtTokenService tokenService, IOptions<JwtOptions> options, TimeProvider clock)
+    JwtTokenService tokenService, IOptions<JwtOptions> options, TimeProvider clock, ILogger<AuthService> logger)
 {
     private readonly JwtOptions _options = options.Value;
+
+    // Hash de uma senha descartável, verificado quando o e-mail não existe ou o cargo está inativo:
+    // todas as tentativas de login fazem o mesmo trabalho de PBKDF2, sem atraso artificial.
+    private static readonly Usuario DummyUser = new() { Nome = "", Email = "", EmailNormalizado = "", SenhaHash = "" };
+    private static readonly string DummyHash = new PasswordHasher<Usuario>().HashPassword(DummyUser, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
 
     public async Task<AuthResult?> LoginAsync(string email, string senha, CancellationToken ct)
     {
         var normalized = email.Trim().ToUpperInvariant();
         var user = await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct);
-        if (user is null || user.Cargo is null || !user.Cargo.Ativo) return null;
-        var verified = passwordHasher.VerifyHashedPassword(user, user.SenhaHash, senha);
-        if (verified == PasswordVerificationResult.Failed) return null;
+        var verified = user is null
+            ? passwordHasher.VerifyHashedPassword(DummyUser, DummyHash, senha)
+            : passwordHasher.VerifyHashedPassword(user, user.SenhaHash, senha);
+        if (user?.Cargo is null || !user.Cargo.Ativo || verified == PasswordVerificationResult.Failed)
+        {
+            AuthLog.LoginFalhou(logger);
+            return null;
+        }
         if (verified == PasswordVerificationResult.SuccessRehashNeeded)
             user.SenhaHash = passwordHasher.HashPassword(user, senha);
 
@@ -35,12 +46,13 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         var refresh = NewRefresh(session.Id, raw, now, session.AbsoluteExpiresAtUtc);
         db.AddRange(session, refresh);
         await db.SaveChangesAsync(ct);
+        AuthLog.LoginRealizado(logger, user.Id, session.Id);
         return Issue(user.Id, user.Cargo.Role, session, raw, refresh.ExpiresAtUtc);
     }
 
     public async Task<AuthResult?> RefreshAsync(string rawToken, CancellationToken ct)
     {
-        var hash = SHA256.HashData(Base64UrlTextEncoder.Decode(rawToken));
+        if (!TryHashRefreshToken(rawToken, out var hash)) return null;
         var token = await db.RefreshTokens.Include(x => x.Session)!.ThenInclude(x => x!.Usuario)!.ThenInclude(x => x!.Cargo)
             .SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
         if (token?.Session is null) return null;
@@ -49,13 +61,18 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
 
         if (token.ConsumedAtUtc is not null)
         {
+            AuthLog.ReusoDeRefreshDetectado(logger, session.Id, session.UsuarioId);
             await RevokeSessionAsync(session.Id, "refresh-token-reuse");
             return null;
         }
         var user = session.Usuario;
         if (token.RevokedAtUtc is not null || session.RevokedAtUtc is not null || token.ExpiresAtUtc <= now ||
             session.AbsoluteExpiresAtUtc <= now || session.LastRenewedAtUtc.AddHours(_options.RefreshInactivityHours) <= now ||
-            user?.Cargo is null || !user.Cargo.Ativo || user.SecurityVersion != session.SecurityVersion) return null;
+            user?.Cargo is null || !user.Cargo.Ativo || user.SecurityVersion != session.SecurityVersion)
+        {
+            AuthLog.RefreshRecusado(logger, session.Id);
+            return null;
+        }
 
         var raw = CreateRefreshToken();
         var successor = NewRefresh(session.Id, raw, now, session.AbsoluteExpiresAtUtc);
@@ -68,6 +85,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         {
             // Outra renovação ou um logout alterou a sessão depois da leitura: política estrita,
             // nenhuma credencial é entregue e a família é revogada (se ainda não estiver).
+            AuthLog.RenovacaoConcorrente(logger, session.Id);
             await RevokeSessionAsync(session.Id, "concurrent-refresh");
             return null;
         }
@@ -100,6 +118,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
             try
             {
                 await db.SaveChangesAsync(CancellationToken.None);
+                AuthLog.SessaoRevogada(logger, sessionId, reason);
                 return;
             }
             catch (DbUpdateConcurrencyException) when (attempt < maxAttempts) { }
@@ -121,9 +140,42 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
     private AuthResult Issue(Guid userId, string role, AuthSession session, string raw, DateTime refreshExpiry)
     {
         var jwt = tokenService.GenerateToken(userId, role, session.Id, session.AbsoluteExpiresAtUtc);
-        return new(new LoginResponse { Token = new TokenDto { AccessToken = jwt.AccessToken, ExpiresAtUtc = jwt.ExpiresAtUtc } }, raw, refreshExpiry);
+        return new(new LoginResponse { Token = new TokenDto { AccessToken = jwt.AccessToken, ExpiresAtUtc = jwt.ExpiresAtUtc } },
+            raw, DateTime.SpecifyKind(refreshExpiry, DateTimeKind.Utc));
     }
     private static string CreateRefreshToken() => WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-    private static RefreshToken NewRefresh(Guid sid, string raw, DateTime now, DateTime absolute) => new()
-    { Id = Guid.NewGuid(), SessionId = sid, TokenHash = SHA256.HashData(Base64UrlTextEncoder.Decode(raw)), CreatedAtUtc = now, ExpiresAtUtc = absolute };
+
+    // Cada refresh vale até a janela de inatividade, limitada pelo prazo absoluto da sessão: a rotação
+    // desliza a inatividade, mas nunca estende os 7 dias. Datas lidas do SQL vêm com Kind=Unspecified.
+    private RefreshToken NewRefresh(Guid sid, string raw, DateTime now, DateTime absolute)
+    {
+        var inactivityLimit = now.AddHours(_options.RefreshInactivityHours);
+        return new()
+        {
+            Id = Guid.NewGuid(), SessionId = sid, TokenHash = SHA256.HashData(Base64UrlTextEncoder.Decode(raw)), CreatedAtUtc = now,
+            ExpiresAtUtc = DateTime.SpecifyKind(absolute < inactivityLimit ? absolute : inactivityLimit, DateTimeKind.Utc),
+        };
+    }
+}
+
+// Eventos de segurança da autenticação. Nunca registram senha, tokens, cookies ou e-mail informado.
+internal static partial class AuthLog
+{
+    [LoggerMessage(EventId = 1001, EventName = "LoginFalhou", Level = LogLevel.Information, Message = "Login recusado: credenciais inválidas ou acesso inativo.")]
+    public static partial void LoginFalhou(ILogger logger);
+
+    [LoggerMessage(EventId = 1002, EventName = "LoginRealizado", Level = LogLevel.Information, Message = "Login realizado. Usuario {UsuarioId}, sessão {SessionId}.")]
+    public static partial void LoginRealizado(ILogger logger, Guid usuarioId, Guid sessionId);
+
+    [LoggerMessage(EventId = 1003, EventName = "RefreshRecusado", Level = LogLevel.Information, Message = "Refresh recusado para a sessão {SessionId} (expirada, revogada ou acesso alterado).")]
+    public static partial void RefreshRecusado(ILogger logger, Guid sessionId);
+
+    [LoggerMessage(EventId = 1004, EventName = "ReusoDeRefreshDetectado", Level = LogLevel.Warning, Message = "Reuso de refresh token consumido na sessão {SessionId} do usuário {UsuarioId}; a família será revogada.")]
+    public static partial void ReusoDeRefreshDetectado(ILogger logger, Guid sessionId, Guid usuarioId);
+
+    [LoggerMessage(EventId = 1005, EventName = "RenovacaoConcorrente", Level = LogLevel.Warning, Message = "Renovação concorrente na sessão {SessionId}; a família será revogada.")]
+    public static partial void RenovacaoConcorrente(ILogger logger, Guid sessionId);
+
+    [LoggerMessage(EventId = 1006, EventName = "SessaoRevogada", Level = LogLevel.Information, Message = "Sessão {SessionId} revogada. Motivo: {Motivo}.")]
+    public static partial void SessaoRevogada(ILogger logger, Guid sessionId, string motivo);
 }
