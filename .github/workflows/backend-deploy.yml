@@ -39,6 +39,14 @@ jobs:
       - name: Build e subir containers
         run: docker compose up -d --build
 
+      # Quando o passo acima falha porque um container ficou unhealthy (ex.: API
+      # derrubando na inicialização), o compose não mostra o motivo — só "dependency
+      # failed to start". Sem este passo, a única forma de ver a exceção real seria
+      # entrar na máquina do runner manualmente.
+      - name: Logs da API em caso de falha ao subir
+        if: failure()
+        run: docker compose logs --no-color --tail=200 api
+
       # A aplicação roda as migrations pendentes automaticamente na
       # inicialização (Program.cs chama DbSeeder.SeedAsync antes de aceitar
       # tráfego). Esse passo espera o container subir e só reporta sucesso
