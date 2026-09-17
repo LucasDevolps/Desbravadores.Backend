@@ -55,7 +55,7 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
-builder.Services.AddScoped<LancamentosGeraisService>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<CargosService>();
 
 // MediatR: os DTOs de request em Dtos/LancamentoDtos.cs implementam IRequest<T> diretamente (sem

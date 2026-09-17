@@ -7,7 +7,7 @@ namespace Almirante.Api.Infrastructure;
 // Converte FluentValidation.ValidationException (lançada por ValidationBehavior antes de qualquer
 // Handler rodar) em 400 ValidationProblemDetails — substitui os blocos
 // "catch (LancamentoValidationException ex) { return ValidationProblem(...); }" hoje repetidos em
-// cada action de LancamentosController/LancamentosGeraisController.
+// cada action de LancamentosController.
 public sealed class ValidationExceptionHandler : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
