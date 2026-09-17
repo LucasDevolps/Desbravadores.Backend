@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Almirante.Api.Dtos;
+using Almirante.Api.Entities;
 
 namespace Almirante.Api.Tests;
 
@@ -80,7 +81,7 @@ public class LancamentosRegistrarTests
         Assert.NotNull(created);
         Assert.Null(created!.MembroId);
         Assert.Equal("Doação de empresário local", created.MembroNome);
-        Assert.Equal("Entrada", created.TipoFluxo);
+        Assert.Equal(TipoFluxoLancamento.Entrada, created.TipoFluxo);
     }
 
     [Fact]
@@ -129,7 +130,7 @@ public class LancamentosRegistrarTests
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await response.Content.ReadFromJsonAsync<LancamentoDto>();
-        Assert.Equal("Despesa", created!.TipoFluxo);
+        Assert.Equal(TipoFluxoLancamento.Despesa, created!.TipoFluxo);
     }
 
     [Fact]

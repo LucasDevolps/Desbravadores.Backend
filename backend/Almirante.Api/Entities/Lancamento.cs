@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Almirante.Api.Entities;
 
 public static class LancamentoTipos
@@ -33,15 +35,22 @@ public static class LancamentoStatuses
     public static readonly IReadOnlyCollection<string> Todos = [Pago, Pendente, Atrasado];
 }
 
-// Direção do fluxo de caixa: dinheiro entrando (mensalidade, doação, taxa de evento) ou saindo
-// (despesa do clube). Usado para o cálculo real do resumo financeiro (ResumoFinanceiroDto) quando
-// ele deixar de ser provisório — ver LancamentosGeraisService.ResumoFixoProvisorio.
-public static class LancamentoTiposFluxo
+/// <summary>
+/// Direção do fluxo de caixa de um lançamento: dinheiro entrando no clube (<see cref="Entrada"/>)
+/// ou saindo (<see cref="Despesa"/>). Usado para o cálculo real do resumo financeiro
+/// (ResumoFinanceiroDto) quando ele deixar de ser provisório — ver
+/// LancamentosGeraisService.ResumoFixoProvisorio.
+/// </summary>
+// O [JsonConverter] no tipo garante que o JSON continua serializando/desserializando como texto
+// ("Entrada"/"Despesa"), preservando o contrato de API mesmo com o campo agora fortemente tipado.
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum TipoFluxoLancamento
 {
-    public const string Entrada = "Entrada";
-    public const string Despesa = "Despesa";
+    /// <summary>Entrada: dinheiro chegando (mensalidade, doação, taxa de evento).</summary>
+    Entrada,
 
-    public static readonly IReadOnlyCollection<string> Todos = [Entrada, Despesa];
+    /// <summary>Despesa (saída): dinheiro saindo do caixa do clube.</summary>
+    Despesa,
 }
 
 public class Lancamento
@@ -57,8 +66,7 @@ public class Lancamento
     public DateOnly Vencimento { get; set; }
     public required string Status { get; set; }
 
-    // Entrada (dinheiro chegando) ou Despesa (dinheiro saindo) — ver LancamentoTiposFluxo.
-    public required string TipoFluxo { get; set; }
+    public required TipoFluxoLancamento TipoFluxo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public DateTime? DataAtualizacao { get; set; }
 

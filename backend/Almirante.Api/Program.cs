@@ -1,9 +1,12 @@
 using System.Text;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
+using Almirante.Api.Infrastructure;
 using Almirante.Api.Options;
 using Almirante.Api.Security;
 using Almirante.Api.Services;
+using Almirante.Api.Validation;
+using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -55,12 +58,24 @@ builder.Services.AddScoped<LancamentosService>();
 builder.Services.AddScoped<LancamentosGeraisService>();
 builder.Services.AddScoped<CargosService>();
 
+// MediatR: os DTOs de request em Dtos/LancamentoDtos.cs implementam IRequest<T> diretamente (sem
+// uma camada paralela de "Command"). ValidationBehavior roda todo IValidator<TRequest> registrado
+// (AddValidatorsFromAssemblyContaining abaixo) antes do Handler, rejeitando entrada inválida com
+// FluentValidation.ValidationException — tratada globalmente por ValidationExceptionHandler.
+builder.Services.AddMediatR(cfg =>
+{
+    cfg.RegisterServicesFromAssemblyContaining<Program>();
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+});
+builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
     // ASP.NET Core já usa camelCase por padrão; mantido explícito para clareza.
     options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
 });
 
+builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -85,19 +100,12 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization(options =>
-{
-    // Escopo do lançamento geral (LancamentosGeraisController): ver
-    // Security/LancamentoGeralAuthorization.cs e o handler abaixo, que transforma qualquer falha
-    // desta policy (sem token, token inválido/expirado, ou role insuficiente) em 401
-    // "ACESSO NEGADO!" — sem afetar o comportamento padrão dos demais endpoints.
-    options.AddPolicy(LancamentoGeralAuthorization.PolicyName, policy =>
-        policy.RequireRole(LancamentoGeralAuthorization.RolesPermitidas));
-});
+builder.Services.AddAuthorization();
 
-// Único IAuthorizationMiddlewareResultHandler da aplicação. Delega para o comportamento padrão
-// em todos os endpoints, exceto os que carregam a policy LancamentoGeralAuthorization.PolicyName
-// (ver o handler para o porquê de não usar [Authorize(Roles=...)] simples aqui).
+// Único IAuthorizationMiddlewareResultHandler da aplicação. Delega para o comportamento padrão em
+// todos os endpoints, exceto os restritos por role ([AutorizarRoles] ou [Authorize(Roles=...)]),
+// onde qualquer falha de autorização vira 401 "ACESSO NEGADO!" (ver o handler para detalhes) — não
+// precisa registrar nada aqui por controller/policy, funciona para qualquer um que use o atributo.
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 
 const string LocalCorsPolicy = "LocalFrontend";
