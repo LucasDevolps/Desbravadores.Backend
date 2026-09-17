@@ -1,5 +1,5 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
 using Almirante.Api.Infrastructure;
@@ -106,8 +106,9 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         var jwt = jwtOptions.Value;
         bearerOptions.MapInboundClaims = false;
         bearerOptions.SaveToken = false;
-        bearerOptions.SecurityTokenValidators.Clear();
-        bearerOptions.SecurityTokenValidators.Add(new JwtSecurityTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = 8192 });
+        // TokenHandlers é o pipeline usado pelo JwtBearer desde o .NET 8 (SecurityTokenValidators é ignorado).
+        bearerOptions.TokenHandlers.Clear();
+        bearerOptions.TokenHandlers.Add(new JsonWebTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = JwtProfile.MaximumTokenSizeInBytes });
         bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -120,9 +121,9 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             RequireSignedTokens = true,
             RequireExpirationTime = true,
             ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
-            ValidTypes = ["at+jwt"],
+            ValidTypes = [JwtProfile.TokenType],
             NameClaimType = JwtRegisteredClaimNames.Sub,
-            RoleClaimType = "role",
+            RoleClaimType = JwtProfile.RoleClaim,
             ClockSkew = TimeSpan.FromSeconds(30),
         };
         bearerOptions.Events = new JwtBearerEvents
@@ -130,8 +131,8 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             OnTokenValidated = async context =>
             {
                 var principal = context.Principal!;
-                var required = new[] { "sub", "role", "iat", "nbf", "exp", "jti", "sid" };
-                if (required.Any(type => principal.FindAll(type).Count() != 1) ||
+                if (context.SecurityToken is not JsonWebToken jwt || !JwtProfile.HasUnambiguousPayload(jwt) ||
+                    JwtProfile.RequiredClaims.Any(type => principal.FindAll(type).Count() != 1) ||
                     !Guid.TryParse(principal.FindFirstValue("sub"), out var uid) ||
                     !Guid.TryParse(principal.FindFirstValue("sid"), out var sid) ||
                     !long.TryParse(principal.FindFirstValue("iat"), out var iat) ||

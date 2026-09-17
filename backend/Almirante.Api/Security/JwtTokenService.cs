@@ -15,8 +15,11 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider c
     public IssuedToken GenerateToken(Guid userId, string role, Guid sessionId, DateTime absoluteExpiry)
     {
         var now = clock.GetUtcNow();
-        var expires = new DateTimeOffset(absoluteExpiry, TimeSpan.Zero) < now.AddMinutes(_options.AccessTokenMinutes)
-            ? new DateTimeOffset(absoluteExpiry, TimeSpan.Zero) : now.AddMinutes(_options.AccessTokenMinutes);
+        // exp é NumericDate em segundos: arredonda para baixo para que expiresAtUtc seja exatamente o
+        // exp emitido e o token nunca ultrapasse o limite absoluto da sessão.
+        var absolute = new DateTimeOffset(DateTime.SpecifyKind(absoluteExpiry, DateTimeKind.Utc));
+        var expires = DateTimeOffset.FromUnixTimeSeconds(Math.Min(
+            absolute.ToUnixTimeSeconds(), now.AddMinutes(_options.AccessTokenMinutes).ToUnixTimeSeconds()));
         var key = JwtKeySet.GetKey(_options, _options.ActiveKeyId);
         var descriptor = new SecurityTokenDescriptor
         {
