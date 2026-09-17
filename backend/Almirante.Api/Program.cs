@@ -27,6 +27,13 @@ builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<JwtO
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
 builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection(ReverseProxyOptions.SectionName));
 
+// Falha clara no startup em Production com TrustServerCertificate=True ou Encrypt=False na connection
+// string do SQL Server (ver SqlServerConnectionSecurityValidator); Development continua permitindo
+// certificado autoassinado.
+builder.Services.AddOptions<ConnectionStringsOptions>().Bind(builder.Configuration.GetSection(ConnectionStringsOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ConnectionStringsOptions>, SqlServerConnectionSecurityValidator>();
+
 // Só confia nos headers X-Forwarded-For/X-Forwarded-Proto quando ReverseProxy:TrustedNetworkCidr
 // estiver configurado (Docker/nginx). Sem essa configuração, ForwardedHeaders permanece "None"
 // (padrão) e o middleware não faz nada — preserva o comportamento atual fora do Docker (ex.: IIS),

@@ -1,6 +1,6 @@
 # Autenticação, autorização e implantação segura
 
-Este documento cobre as issues #29 (login/perfil/JWT), #31 (RBAC), #33 (força bruta), #34 (segredos e política de senha) e #35 (cabeçalhos HTTP). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
+Este documento cobre as issues #29 (login/perfil/JWT), #31 (RBAC), #33 (força bruta), #34 (segredos e política de senha), #35 (cabeçalhos HTTP) e #36 (TLS do SQL Server em produção). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
 
 ## Login, perfil e JWT (#29)
 
@@ -85,6 +85,15 @@ Esta entrega corrige o código; ela não comprova rotação em nenhum ambiente.
 - CSP de `/swagger`: `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. `unsafe-inline` só em estilos, porque o swagger-ui injeta estilo em runtime (verificado no navegador: sem violações com esta política).
 - HSTS `max-age=31536000` (seção `Hsts`), somente fora de Development, somente em requisições HTTPS (considerando `X-Forwarded-Proto` apenas de proxy confiável) e nunca para `localhost`/`127.0.0.1`/`[::1]`. `includeSubDomains` e `preload` ficam desligados até confirmar que todos os subdomínios servem HTTPS. Emitido pelo middleware (e não por `UseHsts`) para sobreviver às respostas de erro.
 - O nginx não adiciona esses cabeçalhos às respostas da API (evita duplicidade); só às respostas que ele mesmo gera (`429` do login).
+
+## TLS do SQL Server em produção (#36)
+
+- Development: `Encrypt=True;TrustServerCertificate=True` é permitido — o SQL Server do container (`compose.yaml`) e o do `AlmiranteDbContextFactory` (design-time, `dotnet ef`) usam certificado autoassinado e não há PKI própria do projeto. Controlado por `SQL_TRUST_SERVER_CERTIFICATE` no `.env` (padrão `True` no `.env.example`, documentado como exclusivo de dev).
+- Production: a connection string deve usar `Encrypt=True;TrustServerCertificate=False`, com o SQL Server apresentando um certificado confiável (dentro da validade, chave privada protegida no servidor, SAN compatível com o host da connection string, fora do Git). A aplicação não valida esse certificado por conta própria — quem faz isso é o driver (`Microsoft.Data.SqlClient`) ao abrir a conexão.
+- `SqlServerConnectionSecurityValidator` (`Infrastructure/SqlServerConnectionSecurityValidator.cs`), registrado via `IValidateOptions<ConnectionStringsOptions>` com `ValidateOnStart()`, falha o startup em `Production` (`IHostEnvironment.IsProduction()`) se `ConnectionStrings:almirante` tiver `TrustServerCertificate=True` ou `Encrypt=False` — mesmo padrão de "falha clara, sem vazar segredo" usado por `JwtOptionsValidator`: a mensagem cita só os nomes das opções, nunca a connection string. Fora de Production, ou sem essa connection string configurada, a validação não faz nada.
+- `compose.yaml` não fixa mais `TrustServerCertificate=True`: o valor vem de `SQL_TRUST_SERVER_CERTIFICATE` (padrão `False`, seguro). Um deploy de produção que reutilize esse Compose com `ASPNETCORE_ENVIRONMENT=Production` e essa variável setada como `True` por engano faz a API recusar iniciar, em vez de subir com TLS mal configurado.
+- `AlmiranteDbContextFactory` continua restrito a design-time (`dotnet ef`): a senha nele é só um placeholder, não uma credencial real, e `ALMIRANTE_DESIGN_TIME_CONNECTION` permite apontar para outra instância local sem editar o arquivo. Esse caminho não passa pelo validador acima (não usa `ConnectionStrings:almirante`/DI) nem precisa passar — não é usado para servir tráfego.
+- Fora de escopo: PKI própria do projeto, desabilitar TLS em dev, versionar certificados/chaves privadas, trocar de SGBD.
 
 ## Contrato da SPA e CSRF
 

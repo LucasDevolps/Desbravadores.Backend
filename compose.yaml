@@ -46,7 +46,11 @@ services:
         condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
-      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};TrustServerCertificate=True
+      # TrustServerCertificate padrão False (produção): o SQL Server do container usa certificado
+      # autoassinado, então desenvolvimento local precisa definir SQL_TRUST_SERVER_CERTIFICATE=True no
+      # .env (ver .env.example). Em Production, True aqui faz a API recusar iniciar
+      # (SqlServerConnectionSecurityValidator) em vez de aceitar TLS sem validação de identidade.
+      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
       Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
       Jwt__Audience: ${JWT_AUDIENCE:-Almirante.Frontend}
       Jwt__ActiveKeyId: ${JWT_ACTIVE_KEY_ID:-v1}
