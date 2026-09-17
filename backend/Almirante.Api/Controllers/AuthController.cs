@@ -1,4 +1,3 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Almirante.Api.Dtos;
 using Almirante.Api.Security;
@@ -6,6 +5,7 @@ using Almirante.Api.Services;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Almirante.Api.Controllers;
 
@@ -18,7 +18,14 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     [HttpGet("csrf"), AllowAnonymous]
     public IActionResult Csrf() => Ok(new { csrfToken = antiforgery.GetAndStoreTokens(HttpContext).RequestToken });
 
+    // Contrato: 200 somente {"token":{"accessToken","expiresAtUtc"}}. 401 genérico idêntico para
+    // e-mail inexistente, senha incorreta, conta bloqueada ou cargo inativo. 429 pelo rate limit.
     [HttpPost("login"), AllowAnonymous, ValidateAntiForgeryToken]
+    [EnableRateLimiting(LoginRateLimiting.PolicyName)]
+    [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
         var result = await authService.LoginAsync(request.Email, request.Senha, ct);
@@ -28,6 +35,8 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     }
 
     [HttpPost("refresh"), AllowAnonymous, ValidateAntiForgeryToken]
+    [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<LoginResponse>> Refresh(CancellationToken ct)
     {
         if (!Request.Cookies.TryGetValue(RefreshCookie, out var raw)) return InvalidCredentials();
@@ -39,6 +48,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     }
 
     [HttpPost("logout"), AllowAnonymous, ValidateAntiForgeryToken]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         Request.Cookies.TryGetValue(RefreshCookie, out var raw);
@@ -49,7 +59,11 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         return NoContent();
     }
 
+    // O usuário é determinado exclusivamente pela identidade autenticada (sub -> NameIdentifier);
+    // não há parâmetro de rota/query que permita escolher outro perfil.
     [HttpGet("Me"), Authorize]
+    [ProducesResponseType<MeDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<MeDto>> Me(CancellationToken ct)
     {
         if (!User.TentarObterUsuarioId(out var id)) return Unauthorized();

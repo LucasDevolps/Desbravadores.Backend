@@ -24,7 +24,7 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized,
             (await anonymous.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(Guid.NewGuid(), false))).StatusCode);
         var (unauthorizedRole, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DS");
-        Assert.Equal(HttpStatusCode.Unauthorized,
+        Assert.Equal(HttpStatusCode.Forbidden,
             (await unauthorizedRole.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(Guid.NewGuid(), false))).StatusCode);
     }
 

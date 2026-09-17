@@ -11,5 +11,11 @@ public class Usuario
     public Cargo? Cargo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public long SecurityVersion { get; set; }
+
+    // Bloqueio temporário por conta contra força bruta distribuída (ver Services/LoginLockout.cs).
+    // Persistido no SQL Server, portanto compartilhado entre instâncias da API.
+    public int FalhasLoginConsecutivas { get; set; }
+    public DateTime? UltimaFalhaLoginUtc { get; set; }
+    public DateTime? LoginBloqueadoAteUtc { get; set; }
     public ICollection<Lancamento> Lancamentos { get; set; } = [];
 }

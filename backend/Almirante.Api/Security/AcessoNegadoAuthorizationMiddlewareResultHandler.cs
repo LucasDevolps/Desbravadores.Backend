@@ -8,13 +8,11 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Security;
 
-// Único IAuthorizationMiddlewareResultHandler registrado na aplicação (substitui o handler
-// padrão do framework). Para a maioria dos endpoints, delega 100% para o comportamento padrão
-// (_default) — nada muda. Só intercepta quando o endpoint restringe por role ([AutorizarRoles] ou
-// um [Authorize(Roles = "...")] cru), caso em que qualquer falha de autorização (sem token, token
-// inválido/expirado, ou autenticado sem uma das roles permitidas) vira 401 com a mensagem exata
-// "ACESSO NEGADO!", em vez do 401 "silencioso" (sem token) ou 403 (sem role) padrão — válido para
-// qualquer controller que use [AutorizarRoles], não só Lançamentos.
+// Único IAuthorizationMiddlewareResultHandler registrado na aplicação.
+// - Sem autenticação válida (sem token, token inválido/expirado, sessão revogada): comportamento
+//   padrão -> challenge do JwtBearer, 401 com WWW-Authenticate.
+// - Autenticado sem permissão (policy/role não satisfeita): 403 Problem Details "ACESSO NEGADO!".
+//   Não usar 401 aqui: o cliente trataria como sessão inválida e descartaria a autenticação.
 public class AcessoNegadoAuthorizationMiddlewareResultHandler : IAuthorizationMiddlewareResultHandler
 {
     private const string MensagemAcessoNegado = "ACESSO NEGADO!";
@@ -27,31 +25,16 @@ public class AcessoNegadoAuthorizationMiddlewareResultHandler : IAuthorizationMi
         AuthorizationPolicy policy,
         PolicyAuthorizationResult authorizeResult)
     {
-        if (!authorizeResult.Succeeded && RestringePorRole(context))
+        if (authorizeResult.Forbidden)
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.ContentType = "application/problem+json";
-            await context.Response.WriteAsJsonAsync(new ProblemDetails
-            {
-                Title = MensagemAcessoNegado,
-                Status = StatusCodes.Status401Unauthorized,
-            });
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(
+                new ProblemDetails { Title = MensagemAcessoNegado, Status = StatusCodes.Status403Forbidden },
+                options: null,
+                contentType: "application/problem+json");
             return;
         }
 
         await _default.HandleAsync(next, context, policy, authorizeResult);
-    }
-
-    private static bool RestringePorRole(HttpContext context)
-    {
-        var endpoint = context.GetEndpoint();
-        if (endpoint is null)
-        {
-            return false;
-        }
-
-        return endpoint.Metadata
-            .GetOrderedMetadata<IAuthorizeData>()
-            .Any(a => !string.IsNullOrEmpty(a.Roles));
     }
 }
