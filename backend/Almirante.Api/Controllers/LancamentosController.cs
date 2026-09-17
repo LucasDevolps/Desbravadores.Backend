@@ -78,7 +78,15 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<LancamentoDto>> Update(Guid id, [FromBody] UpdateLancamentoRequest request, CancellationToken cancellationToken)
     {
+        // O responsável (auditoria de AtualizadoPorUsuarioId) vem sempre da identidade autenticada,
+        // nunca do body — mesmo padrão de Registrar/Delete acima.
+        if (!User.TentarObterUsuarioId(out var usuarioResponsavelId))
+        {
+            return IdentidadeInvalida();
+        }
+
         request.Id = id;
+        request.UsuarioResponsavelId = usuarioResponsavelId;
         var updated = await mediator.Send(request, cancellationToken);
         return updated is null ? NotFound() : Ok(updated);
     }

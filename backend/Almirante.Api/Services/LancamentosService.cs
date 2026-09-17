@@ -87,6 +87,9 @@ public sealed class LancamentosService(AlmiranteDbContext db, TimeProvider clock
         if (request.Vencimento.HasValue) entity.Vencimento = request.Vencimento.Value;
         if (request.Status is not null) entity.Status = request.Status;
         entity.DataAtualizacao = clock.GetUtcNow().UtcDateTime;
+        // Já validado como GUID de sessão ativa pelo pipeline de autenticação (OnTokenValidated) antes
+        // de chegar aqui — não é preciso buscar o usuário no banco só para gravar este id (issue #50).
+        entity.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
         await db.SaveChangesAsync(ct);
         return ToDto(entity, entity.Membro!.Nome);
     }
