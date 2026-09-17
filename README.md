@@ -258,6 +258,7 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | --- | --- | --- |
 | `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server | obrigatória |
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
+| `SQL_TRUST_SERVER_CERTIFICATE` | aceita o certificado autoassinado do SQL Server do container; **só para desenvolvimento** — `True` em `Production` faz a API recusar iniciar (#36) | `False` |
 | `API_HOST_PORT` | porta HTTP publicada no host pelo nginx (reverse proxy da API) | `8090` |
 | `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.https.yaml` | `8443` |
 | `API_TRUSTED_PROXY_CIDR` | rede (CIDR) confiável para os headers X-Forwarded-For/X-Forwarded-Proto enviados pelo nginx; deve corresponder à subnet de `almirante-net` no `compose.yaml` | `172.30.0.0/24` |
@@ -445,8 +446,8 @@ O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive qu
 
 O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
 
-## Segurança (issues #29, #31, #33, #34 e #35)
+## Segurança (issues #29, #31, #33, #34, #35 e #36)
 
-Resumo: RBAC por policies com `401`/`403` distintos; rate limiting e lockout do login na própria API; segredos fora do Git com validação no startup e política de senha; `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP e HSTS (fora de Development, em HTTPS) em todas as respostas. **A autenticação exige TLS** (cookies `Secure`): em HTTP puro, `csrf`/`login` respondem `500`. Detalhes, decisões, rotação de segredos expostos e pendências em [`docs/authentication-security.md`](docs/authentication-security.md).
+Resumo: RBAC por policies com `401`/`403` distintos; rate limiting e lockout do login na própria API; segredos fora do Git com validação no startup e política de senha; `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP e HSTS (fora de Development, em HTTPS) em todas as respostas. **A autenticação exige TLS** (cookies `Secure`): em HTTP puro, `csrf`/`login` respondem `500`. A API também recusa iniciar em `Production` se a connection string do SQL Server tiver `TrustServerCertificate=True` ou `Encrypt=False` (#36). Detalhes, decisões, rotação de segredos expostos e pendências em [`docs/authentication-security.md`](docs/authentication-security.md).
 
 O login agora retorna somente o envelope `token`; o perfil atual vem de `GET /api/Auth/Me`. Sessões e hashes de refresh tokens são persistidos no SQL Server, refresh é rotativo por cookie seguro e logout revoga a sessão apresentada. O fluxo de frontend, configuração Base64/kid, rotação, migração, TLS e riscos residuais estão em [`docs/authentication-security.md`](docs/authentication-security.md). Tokens emitidos antes desta mudança não têm `sid` e exigem novo login.
