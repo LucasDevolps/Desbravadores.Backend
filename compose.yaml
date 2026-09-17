@@ -1,5 +1,5 @@
 name: almirante
-# (commit de teste: valida TrustServerCertificate/ASPNETCORE_ENVIRONMENT no .env do runner popos-lucas)
+# (commit de teste: revalida apos SQL_TRUST_SERVER_CERTIFICATE=True no .env do runner popos-lucas)
 
 # Rede dedicada com subnet fixa: é o que permite ao ASP.NET Core (ReverseProxy__TrustedNetworkCidr,
 # ver api.environment abaixo) confiar apenas no nginx para os headers X-Forwarded-For/X-Forwarded-Proto,
