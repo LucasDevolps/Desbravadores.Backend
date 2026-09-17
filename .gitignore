@@ -64,6 +64,9 @@ node_modules/
 dist/
 .angular/
 
+# graphify (local code-graph tool) generated cache/output - not source, not meant to be versioned
+graphify-out/
+
 # Secrets and certificates - never commit real credentials
 *.env
 !.env.example
@@ -71,5 +74,6 @@ dist/
 *.p12
 *.key
 *.pem
+*.crt
 secrets.json
 appsettings.*.local.json
