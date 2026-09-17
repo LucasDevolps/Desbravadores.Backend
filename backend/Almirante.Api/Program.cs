@@ -1,5 +1,5 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
 using Almirante.Api.Infrastructure;
@@ -64,6 +64,7 @@ builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<CargosService>();
+builder.Services.AddScoped<AuthSessionCleanup>();
 builder.Services.AddHostedService<AuthSessionCleanupService>();
 
 // MediatR: os DTOs de request em Dtos/LancamentoDtos.cs implementam IRequest<T> diretamente (sem
@@ -77,9 +78,7 @@ builder.Services.AddMediatR(cfg =>
 });
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-// AddControllersWithViews (em vez de AddControllers) registra ValidateAntiforgeryTokenAuthorizationFilter,
-// exigido pelo [ValidateAntiForgeryToken] do AuthController; não há Views/Razor pages neste projeto.
-builder.Services.AddControllersWithViews().AddJsonOptions(options =>
+builder.Services.AddControllers().AddJsonOptions(options =>
 {
     // ASP.NET Core já usa camelCase por padrão; mantido explícito para clareza.
     options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
@@ -95,6 +94,7 @@ if (!string.IsNullOrWhiteSpace(dataProtectionPath))
         .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath));
 }
 builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.Name = "__Host-almirante-csrf"; o.Cookie.HttpOnly = true; o.Cookie.SecurePolicy = CookieSecurePolicy.Always; o.Cookie.SameSite = SameSiteMode.Strict; o.Cookie.Path = "/"; });
+builder.Services.AddSingleton<CookieCsrfProtection>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
@@ -107,8 +107,9 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         var jwt = jwtOptions.Value;
         bearerOptions.MapInboundClaims = false;
         bearerOptions.SaveToken = false;
-        bearerOptions.SecurityTokenValidators.Clear();
-        bearerOptions.SecurityTokenValidators.Add(new JwtSecurityTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = 8192 });
+        // TokenHandlers é o pipeline usado pelo JwtBearer desde o .NET 8 (SecurityTokenValidators é ignorado).
+        bearerOptions.TokenHandlers.Clear();
+        bearerOptions.TokenHandlers.Add(new JsonWebTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = JwtProfile.MaximumTokenSizeInBytes });
         bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -121,9 +122,9 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             RequireSignedTokens = true,
             RequireExpirationTime = true,
             ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
-            ValidTypes = ["at+jwt"],
+            ValidTypes = [JwtProfile.TokenType],
             NameClaimType = JwtRegisteredClaimNames.Sub,
-            RoleClaimType = "role",
+            RoleClaimType = JwtProfile.RoleClaim,
             ClockSkew = TimeSpan.FromSeconds(30),
         };
         bearerOptions.Events = new JwtBearerEvents
@@ -131,8 +132,8 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             OnTokenValidated = async context =>
             {
                 var principal = context.Principal!;
-                var required = new[] { "sub", "role", "iat", "nbf", "exp", "jti", "sid" };
-                if (required.Any(type => principal.FindAll(type).Count() != 1) ||
+                if (context.SecurityToken is not JsonWebToken jwt || !JwtProfile.HasUnambiguousPayload(jwt) ||
+                    JwtProfile.RequiredClaims.Any(type => principal.FindAll(type).Count() != 1) ||
                     !Guid.TryParse(principal.FindFirstValue("sub"), out var uid) ||
                     !Guid.TryParse(principal.FindFirstValue("sid"), out var sid) ||
                     !long.TryParse(principal.FindFirstValue("iat"), out var iat) ||
@@ -162,7 +163,7 @@ builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegad
 
 const string LocalCorsPolicy = "LocalFrontend";
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? ["http://localhost:4200", "http://localhost:4201"];
+    ?? ["https://localhost:4200", "https://localhost:4201"];
 
 builder.Services.AddCors(options =>
 {
@@ -193,6 +194,8 @@ builder.Services.AddSwaggerGen(options =>
         In = Microsoft.OpenApi.ParameterLocation.Header,
         Description = "Informe: Bearer {seu token}",
     });
+
+    options.OperationFilter<CsrfHeaderOperationFilter>();
 
     options.AddSecurityRequirement(_ => new Microsoft.OpenApi.OpenApiSecurityRequirement
     {

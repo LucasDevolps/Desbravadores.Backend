@@ -5,6 +5,7 @@ on:
     branches: [develop]
     paths:
       - "backend/**"
+      - "nginx/**"
       - "compose.yaml"
       - ".github/workflows/backend-deploy.yml"
 
@@ -35,6 +36,20 @@ jobs:
 
       - name: Copiar .env fixo da máquina
         run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
+
+      # O nginx do compose termina TLS e não sobe sem tls.crt/tls.key. Falha antes de recriar os
+      # containers, com instrução, em vez de deixar o nginx em loop de restart.
+      - name: Verificar certificado TLS do nginx
+        run: |
+          set -a
+          source .env
+          set +a
+          certs="${NGINX_CERTS_DIR:-./nginx/certs}"
+          if [ ! -s "$certs/tls.crt" ] || [ ! -s "$certs/tls.key" ]; then
+            echo "Certificado TLS ausente: defina NGINX_CERTS_DIR no .env da máquina apontando para um diretório com tls.crt e tls.key (PEM)." >&2
+            exit 1
+          fi
+          docker compose config --quiet
 
       - name: Build e subir containers
         run: docker compose up -d --build
@@ -85,6 +100,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # A API recusa subir sem Jwt:ActiveKeyId e Jwt:Keys válidos (ValidateOnStart). Verificar antes de
+      # tirar o site do ar evita trocar uma versão funcionando por uma que não inicia. Não imprime
+      # valores; a chave é provisionada fora do CI (ver docs/authentication-security.md).
+      - name: Verificar configuração JWT do site (sem imprimir segredos)
+        shell: pwsh
+        run: |
+          $path = "${{ env.SITE_PATH }}\appsettings.Production.json"
+          if (-not (Test-Path $path)) { throw "appsettings.Production.json não encontrado em $path." }
+          $jwt = (Get-Content $path -Raw | ConvertFrom-Json).Jwt
+          $active = $jwt.ActiveKeyId
+          $keys = $jwt.Keys
+          if ([string]::IsNullOrWhiteSpace($active) -or -not $keys -or -not $keys.PSObject.Properties[$active]) {
+            throw "Configure Jwt:ActiveKeyId e Jwt:Keys:<kid> (Base64 de 32 bytes aleatórios) em appsettings.Production.json antes do deploy."
+          }
+          $bytes = [Convert]::FromBase64String($keys.PSObject.Properties[$active].Value)
+          if ($bytes.Length -lt 32) { throw "A chave JWT ativa tem menos de 32 bytes." }
+          Write-Host "Configuração JWT presente (kid ativo: $active)."
 
       - name: Publish
         run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
@@ -168,6 +201,31 @@ jobs:
             Write-Host "Nginx já instalado em C:\nginx"
           }
 
+      # Login/refresh/logout exigem HTTPS (cookies __Host-). Na primeira execução gera um certificado
+      # autoassinado para localhost/127.0.0.1 (RSA 3072, 1 ano) usado pelo nginx.windows.conf; depois só
+      # reaproveita. Substitua os arquivos por um certificado confiável se o site sair do loopback.
+      - name: Gerar certificado TLS local do Nginx, se ainda não existir
+        shell: pwsh
+        run: |
+          $dir = "C:\nginx\certs"
+          if ((Test-Path "$dir\almirante.crt") -and (Test-Path "$dir\almirante.key")) {
+            Write-Host "Certificado TLS do nginx já existe."
+            exit 0
+          }
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          $rsa = [System.Security.Cryptography.RSA]::Create(3072)
+          $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            "CN=localhost", $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          $san = [System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new()
+          $san.AddDnsName("localhost")
+          $san.AddIpAddress([System.Net.IPAddress]::Loopback)
+          $request.CertificateExtensions.Add($san.Build())
+          $cert = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-5), [DateTimeOffset]::UtcNow.AddYears(1))
+          Set-Content -Path "$dir\almirante.crt" -Value $cert.ExportCertificatePem() -NoNewline
+          Set-Content -Path "$dir\almirante.key" -Value $rsa.ExportPkcs8PrivateKeyPem() -NoNewline
+          Write-Host "Certificado TLS autoassinado gerado em $dir."
+
       # nginx/nginx.windows.conf (versionado no repo) é a fonte da verdade; este passo só
       # substitui o placeholder da porta pela porta real descoberta acima e recarrega.
       - name: Publicar config do Nginx e (re)carregar
@@ -234,4 +292,4 @@ jobs:
         run: |
           $uri = "http://127.0.0.1:8090/health"
           $agora = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
-          Write-Host "::notice::Consulte a URL $uri (via nginx, com rate limit de login) — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."
+          Write-Host "::notice::Consulte a URL $uri (health via nginx; a API é servida em https://127.0.0.1:8443) — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."

@@ -13,8 +13,17 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     public const string AdminEmail = "admin@local.dev";
     public const string AdminSenha = "senha123";
+    public const string JwtIssuer = "Almirante.Api.Tests";
+    public const string JwtAudience = "Almirante.Api.Tests";
+    public const string JwtKeyId = "test-v1";
+    // Somente para testes: 32 bytes aleatórios (CSPRNG) em Base64, no mesmo formato de produção.
+    public const string JwtKeyBase64 = "G66fed02cU3xa0os0mFnvIWqOY3LtEw2IJ+EnMDGJRk=";
 
     public AlmiranteApiFactory() => ClientOptions.BaseAddress = new Uri("https://localhost");
+
+    // Cliente sem CookieContainer, para os testes que controlam cookies explicitamente (CookieJar).
+    public HttpClient CreateManualCookieClient(string baseAddress = "https://localhost") =>
+        CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false, BaseAddress = new Uri(baseAddress) });
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -25,10 +34,10 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:almirante"] = "Server=localhost;Database=ignored;Trusted_Connection=True;",
-                ["Jwt:Issuer"] = "Almirante.Api.Tests",
-                ["Jwt:Audience"] = "Almirante.Api.Tests",
-                ["Jwt:ActiveKeyId"] = "test-v1",
-                ["Jwt:Keys:test-v1"] = "dGVzdC1vbmx5LXNpZ25pbmcta2V5LTEyMzQ1Njc4OTAtYWJjZGVm",
+                ["Jwt:Issuer"] = JwtIssuer,
+                ["Jwt:Audience"] = JwtAudience,
+                ["Jwt:ActiveKeyId"] = JwtKeyId,
+                [$"Jwt:Keys:{JwtKeyId}"] = JwtKeyBase64,
                 ["Jwt:AccessTokenMinutes"] = "10",
                 ["SeedAdmin:Nome"] = "Administrador",
                 ["SeedAdmin:Email"] = AdminEmail,

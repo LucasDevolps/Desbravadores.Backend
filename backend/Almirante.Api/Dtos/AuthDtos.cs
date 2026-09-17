@@ -7,6 +7,7 @@ public sealed class LoginRequest
     [Required, EmailAddress] public required string Email { get; set; }
     [Required] public required string Senha { get; set; }
 }
+public sealed record CsrfTokenResponse(string CsrfToken);
 public sealed class TokenDto { public required string AccessToken { get; set; } public DateTime ExpiresAtUtc { get; set; } }
 public sealed class LoginResponse { public required TokenDto Token { get; set; } }
 public sealed class MeCargoDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Role { get; set; } }

@@ -1,4 +1,5 @@
-@baseUrl = https://localhost:8090
+# Entrada HTTPS do nginx no Docker Compose (API_HTTPS_HOST_PORT). Com Aspire: https://localhost:7206.
+@baseUrl = https://localhost:8443
 @token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
 @csrf = COLE_AQUI_O_CSRF_TOKEN
 @membroId = COLE_AQUI_O_MEMBRO
@@ -20,19 +21,13 @@ X-CSRF-TOKEN: {{csrf}}
 GET {{baseUrl}}/api/Auth/Me
 Authorization: Bearer {{token}}
 
-### 2.1 Obter novo CSRF (necessário só se for enviar Authorization: Bearer no logout/refresh — o
-### antiforgery vincula o token ao usuário autenticado no momento da emissão; reaproveitar o {{csrf}}
-### do passo 0 causa 400 "meant for a different claims-based user")
-GET {{baseUrl}}/api/Auth/csrf
-Authorization: Bearer {{token}}
-
-### 3. Logout
-POST {{baseUrl}}/api/Auth/logout
-Authorization: Bearer {{token}}
+### 3. Renovar (usa o cookie HttpOnly e o mesmo {{csrf}}; não exige Bearer, que pode estar expirado)
+POST {{baseUrl}}/api/Auth/refresh
 X-CSRF-TOKEN: {{csrf}}
 
-### 3.1 Renovar (usa cookie HttpOnly; não exige Bearer)
-POST {{baseUrl}}/api/Auth/refresh
+### 3.1 Logout (cookie e/ou Bearer da sessão; o mesmo {{csrf}} continua válido)
+POST {{baseUrl}}/api/Auth/logout
+Authorization: Bearer {{token}}
 X-CSRF-TOKEN: {{csrf}}
 
 ### 4. Listar usuários

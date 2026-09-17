@@ -20,7 +20,7 @@ O backend está em fase de **MVP funcional** e possui:
 - Swagger/OpenAPI com suporte a Bearer Token, disponível em todos os ambientes;
 - health checks de prontidão e atividade;
 - telemetria com OpenTelemetry por meio do Service Defaults do Aspire;
-- Nginx como reverse proxy no Docker Compose, com rate limit no login e encaminhamento do IP real do cliente;
+- Nginx como reverse proxy no Docker Compose, com terminação TLS, rate limit no login/refresh e encaminhamento do IP real do cliente;
 - execução local com Docker Compose ou .NET Aspire;
 - testes de integração da autenticação, dos lançamentos e do encaminhamento de IP real;
 - integração contínua com GitHub Actions em runner self-hosted.
@@ -53,8 +53,13 @@ O backend está em fase de **MVP funcional** e possui:
 │   ├── Almirante.AppHost/          # orquestração local com Aspire
 │   ├── Almirante.ServiceDefaults/  # health checks, telemetria e service discovery
 │   └── Almirante.slnx
+├── docs/
+│   └── authentication-security.md  # autenticação, sessões, chaves, TLS, frontend e implantação
 ├── nginx/
-│   └── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
+│   ├── nginx.conf                  # TLS, reverse proxy e rate limit (Docker Compose)
+│   └── nginx.windows.conf          # mesma função no deploy Windows/IIS
+├── scripts/
+│   └── e2e/compose-smoke.sh        # smoke test da stack Compose em execução
 ├── compose.yaml
 ├── .env.example
 └── README.md
@@ -77,10 +82,19 @@ cp .env.example .env
 Altere no `.env`, no mínimo, os valores de:
 
 - `SQL_SA_PASSWORD`;
-- `JWT_KEY_V1` (Base64 de no mínimo 32 bytes) e `JWT_ACTIVE_KEY_ID`;
+- `JWT_KEY_V1` (gere com `openssl rand -base64 32`) e `JWT_ACTIVE_KEY_ID`;
 - `SEED_ADMIN_SENHA`.
 
 O arquivo `.env` contém segredos locais e não deve ser versionado.
+
+O nginx termina TLS e precisa de `tls.crt` e `tls.key` (PEM) em `NGINX_CERTS_DIR` (padrão
+`./nginx/certs`, ignorado pelo Git). Em desenvolvimento, exporte o certificado de dev do .NET, já
+confiável na máquina:
+
+```bash
+dotnet dev-certs https --trust
+dotnet dev-certs https --export-path nginx/certs/tls.crt --format PEM --no-password
+```
 
 ### Inicialização
 
@@ -90,13 +104,19 @@ docker compose up --build
 
 Com os valores do `.env.example`, os serviços ficam disponíveis em:
 
-- API: `http://localhost:8090`;
-- Swagger: `http://localhost:8090/swagger`;
-- readiness: `http://localhost:8090/health`;
+- API: `https://localhost:8443`;
+- Swagger: `https://localhost:8443/swagger`;
+- readiness: `http://localhost:8090/health` (a porta HTTP só atende health checks e redireciona o resto para HTTPS);
 - liveness: `http://localhost:8090/alive`;
 - SQL Server: `localhost,14330`.
 
-O Compose utiliza o volume nomeado `almirante-sqlserver-data` para persistir os dados do SQL Server.
+O Compose utiliza os volumes nomeados `almirante-sqlserver-data` (dados do SQL Server) e
+`almirante-dataprotection` (chaves do antiforgery). Os nomes podem ser alterados com
+`SQL_DATA_VOLUME` e `DATAPROTECTION_VOLUME`.
+
+Com a stack em execução, `scripts/e2e/compose-smoke.sh` valida TLS, redirecionamento, CSRF,
+login/refresh/logout, gravação das chaves no volume, confiança restrita ao nginx, rate limit e
+conexões persistentes sob carga.
 
 Para encerrar os contêineres sem apagar os dados:
 
@@ -112,13 +132,13 @@ docker compose down -v
 
 ## Arquitetura com Nginx (Docker Compose)
 
-No Docker Compose, o Nginx atua como reverse proxy e único ponto de entrada HTTP externo:
+No Docker Compose, o Nginx atua como reverse proxy, terminador TLS e único ponto de entrada externo:
 
 ```text
 Cliente
   |
   v
-Nginx (:8090 -> :80)
+Nginx (HTTPS :8443 -> :443; HTTP :8090 -> :80 só para /health, /alive e redirecionamento)
   |
   v
 API (rede interna, :8080)
@@ -127,10 +147,11 @@ API (rede interna, :8080)
 SQL Server
 ```
 
-A API deixou de publicar porta diretamente no host (não existe mais `ports: 8090:8080` no serviço
-`api`); ela só é alcançável pela rede interna do Compose (`almirante-net`), pelo nginx. Isso evita
-que alguém acesse a API diretamente e contorne o rate limit do login. A porta externa continua
-sendo `8090` (variável `API_HOST_PORT`), agora publicada pelo nginx.
+A API não publica porta no host; ela só é alcançável pela rede interna do Compose
+(`almirante-net`), pelo nginx. Login, refresh e logout usam cookies `__Host-` e só são aceitos por
+HTTPS: o nginx informa o esquema real com `X-Forwarded-Proto: https`, e a API só confia nesse header
+quando ele vem do IP fixo do nginx. Uma chamada direta à API (do host Docker ou de outro container)
+recebe `400 HTTPS obrigatório.` nessas rotas e não consegue contornar o rate limit do login.
 
 ### Rate limit do login
 
@@ -150,8 +171,14 @@ aplicado pelo Nginx, configurado em `nginx/nginx.conf`:
 
   com `Content-Type: application/problem+json` e o header `Retry-After: 60` (só nessa resposta);
 - passado o período de recuperação (~60s), novas tentativas voltam a ser permitidas;
+- requisições `OPTIONS` (preflight de CORS) não contam no limite;
+- `POST /api/Auth/refresh` tem limite próprio (30/min por IP, burst de 10) com `429` em Problem
+  Details e `Retry-After: 10`;
 - nenhum outro endpoint (`/api/Auth/Me`, `/api/Usuarios`, `/api/Lancamentos`, `/health`, `/alive`,
-  Swagger etc.) é afetado por esse limite.
+  Swagger etc.) é afetado por esses limites.
+
+Os contadores são locais a cada instância do nginx. Atrás de outro proxy ou balanceador, todos os
+clientes chegam com o IP desse proxy e compartilham o mesmo contador.
 
 Para alterar o limite ou a janela, edite as diretivas `rate=` (na `limit_req_zone`) e `burst=` (no
 `location` do login) em `nginx/nginx.conf` — os comentários no próprio arquivo explicam a relação
@@ -167,9 +194,9 @@ representar o IP real do cliente — disponível para uso futuro em auditoria, b
 
 Esse encaminhamento só é confiável porque a API não aceita `X-Forwarded-For`/`X-Forwarded-Proto`
 de qualquer origem: a configuração (`ReverseProxy:TrustedNetworkCidr`, variável de ambiente
-`API_TRUSTED_PROXY_CIDR`, padrão `172.30.0.0/24` — a subnet da rede `almirante-net`) restringe a
-confiança apenas à conexão que vem dessa rede interna (o próprio container do nginx), com
-`ForwardLimit = 1`. Na prática:
+`API_TRUSTED_PROXY_CIDR`, padrão `172.30.0.10/32`) restringe a confiança ao IP fixo do container do
+nginx (`NGINX_IPV4`), com `ForwardLimit = 1`. Confiar na subnet inteira incluiria o gateway da rede
+(o host Docker) e qualquer outro container. Na prática:
 
 - um cliente que envia `X-Forwarded-For: 1.2.3.4` diretamente para o Nginx **não consegue** fazer a
   API acreditar que esse é o IP dele: o Nginx anexa o IP real observado por ele ao final do header
@@ -189,7 +216,7 @@ Agendada do Windows para iniciar sozinho com a máquina.
 Cliente
   |
   v
-Nginx (127.0.0.1:8090)
+Nginx (HTTPS 127.0.0.1:8443; HTTP 127.0.0.1:8090 só para /health, /alive e redirecionamento)
   |
   v
 IIS (127.0.0.1:<porta do site>, loopback)
@@ -198,16 +225,19 @@ IIS (127.0.0.1:<porta do site>, loopback)
 Diferenças em relação ao Docker Compose:
 
 - o nginx roda como processo nativo (`nginx.exe`), não em container; a config fica em
-  `nginx/nginx.windows.conf` no repositório (mesmo rate limit de login do `nginx/nginx.conf`), com
+  `nginx/nginx.windows.conf` no repositório (mesmos TLS e rate limits do `nginx/nginx.conf`), com
   um placeholder `__IIS_PORT__` substituído pelo workflow pela porta real do site no IIS (descoberta
   dinamicamente a cada deploy — essa porta já mudou no passado, ver comentários no workflow);
+- na primeira execução o workflow gera um certificado autoassinado para `localhost`/`127.0.0.1` em
+  `C:\nginx\certs`; substitua-o por um certificado confiável se o site sair do loopback;
+- antes de tirar o site do ar, o workflow confere se `appsettings.Production.json` tem
+  `Jwt:ActiveKeyId` e a chave correspondente em `Jwt:Keys` (sem imprimir valores);
 - o binding do site no IIS é só em `127.0.0.1` (loopback): não é alcançável de fora desta máquina
   diretamente, só através do nginx. Esse deploy Windows é usado apenas localmente/rede interna — o
   deploy público de fato é o Linux (Docker Compose);
 - `ReverseProxy:TrustedNetworkCidr` é configurado como `127.0.0.1/32` em
   `appsettings.Production.json` (arquivo local ao servidor, fora do controle de versão, preservado
-  entre deploys), já que aqui o nginx e a API rodam na mesma máquina — diferente do Docker, onde a
-  confiança é numa subnet inteira.
+  entre deploys), já que aqui o nginx e a API rodam na mesma máquina.
 
 O `.NET Aspire` (seção abaixo) continua executando a API diretamente, sem Nginx, em desenvolvimento
 local — a proteção de rate limit só se aplica aos dois caminhos de deploy (Docker Compose e IIS).
@@ -219,11 +249,16 @@ local — a proteção de rate limit só se aplica aos dois caminhos de deploy (
 - SDK do .NET 10;
 - runtime de contêiner compatível com o Aspire.
 
-Execute o AppHost:
+Defina a chave de assinatura do JWT uma vez por máquina (fica nos User Secrets do AppHost, fora do
+Git) e execute o AppHost:
 
 ```bash
+dotnet user-secrets set "Parameters:jwt-key-v1" "$(openssl rand -base64 32)" --project backend/Almirante.AppHost
 dotnet run --project backend/Almirante.AppHost
 ```
+
+A API é iniciada com o perfil `https` (`https://localhost:7206`), porque login, refresh e logout só
+são aceitos por HTTPS.
 
 O AppHost:
 
@@ -248,8 +283,13 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | --- | --- | --- |
 | `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server | obrigatória |
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
-| `API_HOST_PORT` | porta HTTP publicada no host pelo nginx (reverse proxy da API) | `8090` |
-| `API_TRUSTED_PROXY_CIDR` | rede (CIDR) confiável para os headers X-Forwarded-For/X-Forwarded-Proto enviados pelo nginx; deve corresponder à subnet de `almirante-net` no `compose.yaml` | `172.30.0.0/24` |
+| `SQL_DATA_VOLUME` / `DATAPROTECTION_VOLUME` | nomes dos volumes do SQL Server e das chaves do antiforgery | `almirante-sqlserver-data` / `almirante-dataprotection` |
+| `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx (entrada da API) | `8443` |
+| `API_HOST_PORT` | porta HTTP publicada pelo nginx (health checks e redirecionamento) | `8090` |
+| `NGINX_CERTS_DIR` | diretório com `tls.crt` e `tls.key` (PEM) do nginx | `./nginx/certs` |
+| `ALMIRANTE_SUBNET` | subnet da rede `almirante-net` | `172.30.0.0/24` |
+| `NGINX_IPV4` | IP fixo do nginx nessa rede | `172.30.0.10` |
+| `API_TRUSTED_PROXY_CIDR` | origem confiável para X-Forwarded-For/X-Forwarded-Proto: somente o nginx | `172.30.0.10/32` |
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
 | `JWT_AUDIENCE` | audiência do token JWT | `Almirante.Frontend` |
@@ -261,19 +301,24 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `SEED_ADMIN_NOME` | nome do administrador inicial | `Administrador` |
 | `SEED_ADMIN_EMAIL` | e-mail do administrador inicial | `admin@local.dev` |
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
-| `CORS_ORIGIN_1` | primeira origem permitida pelo CORS | `http://localhost:4200` |
-| `CORS_ORIGIN_2` | segunda origem permitida pelo CORS | `http://localhost:4201` |
+| `CORS_ORIGIN_1` | primeira origem permitida pelo CORS (HTTPS) | `https://localhost:4200` |
+| `CORS_ORIGIN_2` | segunda origem permitida pelo CORS (HTTPS) | `https://localhost:4201` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint opcional para exportação OTLP | não definido |
 
-A chave decodificada deve possuir pelo menos 32 bytes aleatórios e ser diferente em cada ambiente.
+A chave decodificada deve ter pelo menos 32 bytes aleatórios e ser diferente em cada ambiente. A API
+não sobe com chave ausente, curta, em texto legível ou placeholder. As origens CORS precisam ser
+HTTPS: o cookie de refresh é `SameSite=Strict`, e uma página em `http://` é considerada outro site
+pelo navegador, que não envia o cookie.
 
 ## Autenticação
 
-Faça login com o administrador criado pelo seed:
+Faça login com o administrador criado pelo seed (o `cookies.txt` guarda os cookies HttpOnly entre as
+chamadas; `-k` só para certificado de desenvolvimento não confiável):
 
 ```bash
-curl --request POST https://localhost:8090/api/Auth/login \
-  --header 'X-CSRF-TOKEN: TOKEN_OBTIDO_EM_/api/Auth/csrf' \
+csrf=$(curl -sk -c cookies.txt https://localhost:8443/api/Auth/csrf | sed -E 's/.*"csrfToken":"([^"]+)".*/\1/')
+curl -sk -b cookies.txt -c cookies.txt --request POST https://localhost:8443/api/Auth/login \
+  --header "X-CSRF-TOKEN: $csrf" \
   --header 'Content-Type: application/json' \
   --data '{"email":"admin@local.dev","senha":"senha"}'
 ```
@@ -286,7 +331,7 @@ Authorization: Bearer SEU_TOKEN
 
 O logout revoga persistentemente a sessão apresentada (tabela `AuthSession` no SQL Server); o refresh cookie é removido e um novo login é exigido.
 
-O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento em que ele foi emitido. Se o cliente envia `Authorization: Bearer` em toda requisição, peça um novo `GET /api/Auth/csrf` depois do login antes de chamar `refresh`/`logout` com esse header — reaproveitar o CSRF obtido antes do login resulta em `400` (ver [`docs/authentication-security.md`](docs/authentication-security.md)).
+O token CSRF protege as operações com cookie (`login`, `refresh`, `logout`) e não depende do bearer: o mesmo token vale com ou sem `Authorization`, inclusive com o access token expirado. Essas operações só são aceitas por HTTPS; em HTTP respondem `400` (ver [`docs/authentication-security.md`](docs/authentication-security.md)).
 
 | Método | Rota | Comportamento |
 | --- | --- | --- |
@@ -350,17 +395,42 @@ o trigger de auditoria sem apagar o histórico de migrations.
 ## Testes
 
 ```bash
-dotnet test backend/Almirante.slnx
+dotnet test backend/Almirante.Api.Tests --filter "Category!=RequiresDocker"
 ```
 
-A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
-conflito de chave e soft delete.
+A suíte padrão (a mesma do CI) cobre contrato e validação dos lançamentos e, na autenticação: contrato
+de login/refresh/`/Me`, a matriz de validação do JWT (assinatura, `alg`, `typ`, `kid`, claims
+obrigatórias, duplicadas e datas, ClockSkew, tamanho), CSRF com e sem bearer, HTTPS obrigatório,
+prazos de refresh com relógio controlável, enumeração de contas, validação das chaves, eventos de
+segurança sem segredos, OpenAPI e descoberta das migrations.
+
+### Testes contra SQL Server real
+
+Os cenários que dependem de rowversion, transações e duas instâncias da API sobre o mesmo banco
+(refresh e logout concorrentes, reuso de refresh, limpeza de sessões, migrations em banco novo)
+ficam na categoria `RequiresDocker`, fora do CI:
+
+```bash
+# com Docker disponível (Testcontainers sobe o SQL Server)
+dotnet test backend/Almirante.Api.Tests --filter "Category=RequiresDocker"
+
+# ou contra um SQL Server já existente (cria e remove um banco com nome único)
+ALMIRANTE_TESTS_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" \
+  dotnet test backend/Almirante.Api.Tests --filter "Category=RequiresDocker"
+```
+
+### Smoke test da stack Compose
+
+Com a stack em execução, `scripts/e2e/compose-smoke.sh` (ou `ENV_FILE=... COMPOSE_PROJECT=...`)
+valida o que só existe na topologia real: TLS, redirecionamento, chaves do Data Protection no volume,
+confiança restrita ao nginx, rate limit (inclusive preflight) e ausência de erros de upstream sob
+carga.
 
 ### Cenários manuais do rate limit do Nginx
 
-O rate limit em si (`limit_req` do Nginx) não é coberto pela suíte automatizada acima — ela roda
-sobre `WebApplicationFactory`, sem o Nginx. Depois de `docker compose up --build`, valide
-manualmente contra `http://localhost:8090` (ajuste para o valor de `API_HOST_PORT` se alterado):
+Além do smoke test, os cenários abaixo podem ser validados manualmente contra
+`https://localhost:8443` (ajuste para o valor de `API_HTTPS_HOST_PORT` se alterado). O login exige o
+token CSRF de `GET /api/Auth/csrf` e o cookie correspondente:
 
 1. **Login válido** — 1ª tentativa com credenciais corretas → `200 OK` e token JWT.
 2. **Credenciais inválidas** — 1ª tentativa incorreta → `401 Unauthorized` (nunca `429`).
@@ -380,9 +450,11 @@ manualmente contra `http://localhost:8090` (ajuste para o valor de `API_HOST_POR
 Exemplo de execução dos cenários 3 e 4:
 
 ```bash
+csrf=$(curl -sk -c cookies.txt https://localhost:8443/api/Auth/csrf | sed -E 's/.*"csrfToken":"([^"]+)".*/\1/')
 for i in 1 2 3 4; do
-  curl -s -o /dev/null -w "tentativa $i: %{http_code}\n" \
-    --request POST http://localhost:8090/api/Auth/login \
+  curl -sk -b cookies.txt -o /dev/null -w "tentativa $i: %{http_code}\n" \
+    --request POST https://localhost:8443/api/Auth/login \
+    --header "X-CSRF-TOKEN: $csrf" \
     --header 'Content-Type: application/json' \
     --data '{"email":"admin@local.dev","senha":"senha-errada"}'
 done
@@ -403,9 +475,8 @@ dotnet build backend/Almirante.slnx --configuration Release --no-restore
 dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker"
 ```
 
-A execução atual realiza validação de compilação e testes. O filtro exclui
-`LancamentosGeraisAuditoriaSqlServerTests` (exige Docker, indisponível neste runner) — ver
-[Testes contra SQL Server real](#testes-contra-sql-server-real-lancamentosgeraisauditoriasqlservertests).
+A execução atual realiza validação de compilação e testes. O filtro exclui a categoria
+`RequiresDocker` (testes contra SQL Server real) — ver [Testes contra SQL Server real](#testes-contra-sql-server-real).
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 
@@ -431,4 +502,4 @@ Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP
 
 ## Segurança da autenticação (issue #29)
 
-O login agora retorna somente o envelope `token`; o perfil atual vem de `GET /api/Auth/Me`. Sessões e hashes de refresh tokens são persistidos no SQL Server, refresh é rotativo por cookie seguro e logout revoga a sessão apresentada. O fluxo de frontend, configuração Base64/kid, rotação, migração, TLS e riscos residuais estão em [`docs/authentication-security.md`](docs/authentication-security.md). Tokens emitidos antes desta mudança não têm `sid` e exigem novo login.
+O login agora retorna somente o envelope `token`; o perfil atual vem de `GET /api/Auth/Me`. Sessões e hashes de refresh tokens são persistidos no SQL Server, refresh é rotativo por cookie seguro e logout revoga a sessão apresentada. O fluxo de frontend (com exemplos), configuração Base64/kid, rotação, TLS, implantação por ambiente, migração/rollback, medições e riscos residuais estão em [`docs/authentication-security.md`](docs/authentication-security.md). Tokens emitidos antes desta mudança não têm `sid` e exigem novo login.

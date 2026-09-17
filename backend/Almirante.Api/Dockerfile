@@ -18,6 +18,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Key ring do Data Protection (volume em compose.yaml). Sem este diretório na imagem, o volume nomeado
+# nasce root:root 755 e o usuário "app" não consegue gravar a chave: o antiforgery falha (500). Um
+# volume novo herda dono e permissão daqui.
+RUN mkdir -p /var/lib/almirante/dataprotection \
+    && chown app:app /var/lib/almirante/dataprotection \
+    && chmod 700 /var/lib/almirante/dataprotection
+
 USER app
 
 COPY --from=build /app/publish .
