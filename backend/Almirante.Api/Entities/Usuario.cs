@@ -11,4 +11,5 @@ public class Usuario
     public Cargo? Cargo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public long SecurityVersion { get; set; }
+    public ICollection<Lancamento> Lancamentos { get; set; } = [];
 }

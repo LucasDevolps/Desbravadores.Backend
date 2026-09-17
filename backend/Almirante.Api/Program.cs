@@ -62,7 +62,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
-builder.Services.AddScoped<LancamentosGeraisService>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddHostedService<AuthSessionCleanupService>();
 
@@ -77,7 +77,9 @@ builder.Services.AddMediatR(cfg =>
 });
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-builder.Services.AddControllers().AddJsonOptions(options =>
+// AddControllersWithViews (em vez de AddControllers) registra ValidateAntiforgeryTokenAuthorizationFilter,
+// exigido pelo [ValidateAntiForgeryToken] do AuthController; não há Views/Razor pages neste projeto.
+builder.Services.AddControllersWithViews().AddJsonOptions(options =>
 {
     // ASP.NET Core já usa camelCase por padrão; mantido explícito para clareza.
     options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;

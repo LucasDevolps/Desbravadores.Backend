@@ -16,7 +16,8 @@ Esta entrega amplia expressamente a issue #29: além de separar login e perfil, 
 1. Faça `GET /api/Auth/csrf` com `credentials: "include"`; mantenha `csrfToken` somente em memória.
 2. Envie `X-CSRF-TOKEN` e `credentials: "include"` no login. Guarde o access token somente em memória e chame `/api/Auth/Me` com Bearer. Nunca reconstrua o perfil decodificando JWT.
 3. Após reload, obtenha novo CSRF, chame `POST /api/Auth/refresh`, então `/Me`. Coordene uma única renovação em andamento (inclusive entre abas) sem Web Storage.
-4. Não crie loops de refresh. Após refresh inválido ou logout, apague o estado. Não repita automaticamente escrita que talvez já tenha sido executada.
+4. **Depois do login**, se o cliente anexa o header `Authorization: Bearer` em toda requisição (interceptor global, por exemplo), peça um novo `GET /api/Auth/csrf` antes de chamar `refresh`/`logout` com esse header presente. O antiforgery do ASP.NET Core vincula o token ao usuário autenticado no momento da emissão (`IClaimUidExtractor`); um token emitido anonimamente (passo 1) é rejeitado com 400 ("meant for a different claims-based user") ao ser validado numa chamada em que o Bearer já está anexado. Chamar `refresh`/`logout` sem o header `Authorization` evita o problema sem precisar desse novo CSRF, mas o padrão mais simples é sempre reobter o CSRF após autenticar.
+5. Não crie loops de refresh. Após refresh inválido ou logout, apague o estado. Não repita automaticamente escrita que talvez já tenha sido executada.
 
 Login, refresh e logout exigem antiforgery do ASP.NET Core. CORS usa origens exatas e credenciais. Duas renovações concorrentes são deliberadamente estritas: a reutilização/rejeição revoga a família e exige novo login.
 

@@ -42,6 +42,9 @@ public static class TestHelpers
         var client = factory.CreateClient();
         var token = await LoginAsAdminAsync(client);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        // O antiforgery do ASP.NET Core vincula o token ao usuário autenticado no momento da emissão;
+        // o CSRF obtido antes do login (anônimo) não valida em chamadas autenticadas como o logout.
+        await AddCsrfAsync(client);
         return client;
     }
 
