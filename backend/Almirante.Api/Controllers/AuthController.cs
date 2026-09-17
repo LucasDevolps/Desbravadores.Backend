@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using Almirante.Api.Dtos;
+using Almirante.Api.Security;
 using Almirante.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -39,8 +39,7 @@ public class AuthController(AuthService authService) : ControllerBase
     [Authorize]
     public async Task<ActionResult<UsuarioDto>> Me(CancellationToken cancellationToken)
     {
-        var idClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(idClaim, out var id))
+        if (!User.TentarObterUsuarioId(out var id))
         {
             return Unauthorized();
         }

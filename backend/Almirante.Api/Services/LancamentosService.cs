@@ -6,11 +6,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
 
-public class LancamentoValidationException(string message) : Exception(message);
-
 public class LancamentosService(AlmiranteDbContext db)
 {
-    private const string DateFormat = LancamentoValidacao.DateFormat;
+    private const string DateFormat = "yyyy-MM-dd";
 
     public async Task<LancamentosResponse> ListAsync(
         int page,
@@ -74,13 +72,7 @@ public class LancamentosService(AlmiranteDbContext db)
 
     public async Task<LancamentoDto> CreateAsync(CreateLancamentoRequest request, CancellationToken cancellationToken)
     {
-        LancamentoValidacao.ValidateTipo(request.Tipo);
-        LancamentoValidacao.ValidateCategoria(request.Categoria);
-        LancamentoValidacao.ValidateStatus(request.Status);
-        LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
-        LancamentoValidacao.ValidateValor(request.Valor);
-        var vencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
-        LancamentoValidacao.ValidateVencimentoNaoPassado(vencimento);
+        var vencimento = DateOnly.ParseExact(request.Vencimento, DateFormat, CultureInfo.InvariantCulture);
 
         var lancamento = new Lancamento
         {
@@ -124,7 +116,6 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Tipo is not null)
         {
-            LancamentoValidacao.ValidateTipo(request.Tipo);
             lancamento.Tipo = request.Tipo;
         }
 
@@ -135,19 +126,16 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Categoria is not null)
         {
-            LancamentoValidacao.ValidateCategoria(request.Categoria);
             lancamento.Categoria = request.Categoria;
         }
 
-        if (request.TipoFluxo is not null)
+        if (request.TipoFluxo.HasValue)
         {
-            LancamentoValidacao.ValidateTipoFluxo(request.TipoFluxo);
-            lancamento.TipoFluxo = request.TipoFluxo;
+            lancamento.TipoFluxo = request.TipoFluxo.Value;
         }
 
         if (request.Valor.HasValue)
         {
-            LancamentoValidacao.ValidateValor(request.Valor.Value);
             lancamento.Valor = request.Valor.Value;
         }
 
@@ -158,14 +146,11 @@ public class LancamentosService(AlmiranteDbContext db)
 
         if (request.Vencimento is not null)
         {
-            var novoVencimento = LancamentoValidacao.ParseVencimento(request.Vencimento);
-            LancamentoValidacao.ValidateVencimentoNaoPassado(novoVencimento);
-            lancamento.Vencimento = novoVencimento;
+            lancamento.Vencimento = DateOnly.ParseExact(request.Vencimento, DateFormat, CultureInfo.InvariantCulture);
         }
 
         if (request.Status is not null)
         {
-            LancamentoValidacao.ValidateStatus(request.Status);
             lancamento.Status = request.Status;
         }
 
