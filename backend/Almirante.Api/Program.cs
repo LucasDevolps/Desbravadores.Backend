@@ -195,6 +195,8 @@ builder.Services.AddSwaggerGen(options =>
         Description = "Informe: Bearer {seu token}",
     });
 
+    options.OperationFilter<CsrfHeaderOperationFilter>();
+
     options.AddSecurityRequirement(_ => new Microsoft.OpenApi.OpenApiSecurityRequirement
     {
         {

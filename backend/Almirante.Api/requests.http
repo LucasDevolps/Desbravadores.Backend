@@ -1,4 +1,5 @@
-@baseUrl = https://localhost:8090
+# Entrada HTTPS do nginx no Docker Compose (API_HTTPS_HOST_PORT). Com Aspire: https://localhost:7206.
+@baseUrl = https://localhost:8443
 @token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
 @csrf = COLE_AQUI_O_CSRF_TOKEN
 @membroId = COLE_AQUI_O_MEMBRO
