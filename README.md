@@ -82,19 +82,24 @@ Altere no `.env`, no mínimo, os valores de:
 
 Todo valor `DEFINA_...` do `.env.example` é um placeholder: a API recusa iniciar com a chave JWT placeholder e recusa criar o admin inicial com senha placeholder ou fraca. Gere a chave com `openssl rand -base64 32`. O arquivo `.env` contém segredos locais e não deve ser versionado.
 
+Antes de iniciar com HTTPS local, prepare o [certificado TLS](docs/local-login.md).
+
 ### Inicialização
 
 ```bash
-docker compose up --build
+docker compose -f compose.yaml -f compose.https.yaml up --build
 ```
 
 Com os valores do `.env.example`, os serviços ficam disponíveis em:
 
-- API: `http://localhost:8090`;
+- API (HTTPS, obrigatório para autenticação): `https://localhost:8443`;
+- API (HTTP): `http://localhost:8090`;
 - Swagger: `http://localhost:8090/swagger`;
 - readiness: `http://localhost:8090/health`;
 - liveness: `http://localhost:8090/alive`;
 - SQL Server: `localhost,14330`.
+
+O arquivo `compose.https.yaml` habilita o TLS local. O Compose base continua disponível sem certificados para ambientes que configuram sua própria terminação TLS.
 
 O Compose utiliza o volume nomeado `almirante-sqlserver-data` para persistir os dados do SQL Server.
 
@@ -254,6 +259,7 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server | obrigatória |
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
 | `API_HOST_PORT` | porta HTTP publicada no host pelo nginx (reverse proxy da API) | `8090` |
+| `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.https.yaml` | `8443` |
 | `API_TRUSTED_PROXY_CIDR` | rede (CIDR) confiável para os headers X-Forwarded-For/X-Forwarded-Proto enviados pelo nginx; deve corresponder à subnet de `almirante-net` no `compose.yaml` | `172.30.0.0/24` |
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
@@ -276,14 +282,7 @@ A chave decodificada deve possuir pelo menos 32 bytes aleatórios e ser diferent
 
 ## Autenticação
 
-Faça login com o administrador criado pelo seed:
-
-```bash
-curl --request POST https://localhost:8090/api/Auth/login \
-  --header 'X-CSRF-TOKEN: TOKEN_OBTIDO_EM_/api/Auth/csrf' \
-  --header 'Content-Type: application/json' \
-  --data '{"email":"admin@local.dev","senha":"SUA_SENHA_DO_SEED"}'
-```
+O login exige HTTPS e o par cookie/header CSRF. Veja o [passo a passo de login local](docs/local-login.md), incluindo certificado, cookies e cURL. Com `compose.https.yaml`, a porta HTTPS vem de `API_HTTPS_HOST_PORT` (`8443` por padrão). A porta `API_HOST_PORT` atende HTTP e não deve ser usada para autenticação.
 
 A resposta contém somente `token.accessToken` e `token.expiresAtUtc`; consulte o perfil atual em `/api/Auth/Me`. Nos endpoints protegidos, envie:
 
