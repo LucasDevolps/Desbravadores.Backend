@@ -69,8 +69,9 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
     {
         await TestHelpers.AddUsuarioAsync(factory,"Lote","DS");
         var client=await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var idempotencyKey = $"lote-{Guid.NewGuid():N}";
         async Task<HttpResponseMessage> Send(decimal valor)
-        { var req=new HttpRequestMessage(HttpMethod.Post,"/api/Lancamentos/Registrar") { Content=JsonContent.Create(Body(null,true,valor)) }; req.Headers.Add("Idempotency-Key","lote-1"); return await client.SendAsync(req); }
+        { var req=new HttpRequestMessage(HttpMethod.Post,"/api/Lancamentos/Registrar") { Content=JsonContent.Create(Body(null,true,valor)) }; req.Headers.Add("Idempotency-Key",idempotencyKey); return await client.SendAsync(req); }
         var first=await Send(50); var retry=await Send(50); var conflict=await Send(51);
         Assert.Equal(HttpStatusCode.OK,first.StatusCode); Assert.Equal(HttpStatusCode.OK,retry.StatusCode); Assert.Equal(HttpStatusCode.Conflict,conflict.StatusCode);
         Assert.Equal((await first.Content.ReadFromJsonAsync<LancamentoGeralResponse>())!.OperacaoId,(await retry.Content.ReadFromJsonAsync<LancamentoGeralResponse>())!.OperacaoId);

@@ -9,6 +9,8 @@ public sealed class UpdateLancamentoRequestValidator : AbstractValidator<UpdateL
         RuleFor(x=>x.Categoria!).LancamentoCategoriaValida().When(x=>x.Categoria is not null);
         RuleFor(x=>x.Status!).LancamentoStatusValido().When(x=>x.Status is not null);
         RuleFor(x=>x.Valor!.Value).LancamentoValorValido().When(x=>x.Valor.HasValue);
-        RuleFor(x=>x.Vencimento!.Value).GreaterThanOrEqualTo(_=>DateOnly.FromDateTime(clock.GetLocalNow().DateTime)).When(x=>x.Vencimento.HasValue);
+        RuleFor(x=>x.Vencimento!.Value)
+            .GreaterThanOrEqualTo(_=>DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime))
+            .When(x=>x.Vencimento.HasValue);
     }
 }
