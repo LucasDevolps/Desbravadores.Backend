@@ -92,16 +92,6 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("MembroId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("MembroNome")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Moeda")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("nvarchar(3)");
-
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
@@ -110,7 +100,7 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
-                    b.Property<string>("Tipo")
+                    b.Property<string>("Finalidade")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
@@ -136,13 +126,23 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("Status");
 
-                    b.HasIndex("Tipo");
+                    b.HasIndex("Finalidade");
 
                     b.HasIndex("Vencimento");
 
                     b.ToTable("Lancamentos", (string)null);
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Lancamento", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", "Membro")
+                        .WithMany("Lancamentos")
+                        .HasForeignKey("MembroId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Membro");
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.LancamentoDeletado", b =>
@@ -173,16 +173,6 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("MembroId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("MembroNome")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Moeda")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("nvarchar(3)");
-
                     b.Property<string>("Motivo")
                         .IsRequired()
                         .HasMaxLength(255)
@@ -196,7 +186,7 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
-                    b.Property<string>("Tipo")
+                    b.Property<string>("Finalidade")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
@@ -241,6 +231,10 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid>("CriadoPorUsuarioId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Descricao")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -254,7 +248,7 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<string>("Tipo")
+                    b.Property<string>("Finalidade")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");

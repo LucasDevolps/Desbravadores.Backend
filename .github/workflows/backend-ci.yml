@@ -31,8 +31,5 @@ jobs:
       - name: Build
         run: dotnet build backend/Almirante.slnx --configuration Release --no-restore
 
-      # Exclui LancamentosGeraisAuditoriaSqlServerTests (Testcontainers + SQL Server real, valida
-      # o trigger de auditoria da issue #14): exige Docker, que este runner não tem configurado.
-      # Rodar localmente com: dotnet test backend/Almirante.Api.Tests --filter "Category=RequiresDocker"
       - name: Test
         run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker"

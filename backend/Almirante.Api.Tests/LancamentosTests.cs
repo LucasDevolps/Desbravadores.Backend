@@ -1,250 +1,92 @@
 using System.Net;
 using System.Net.Http.Json;
+using Almirante.Api.Data;
 using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
+using Almirante.Api.Security;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-public class LancamentosTests
+public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
 {
+    private readonly AlmiranteApiFactory factory;
+    public LancamentosTests(AlmiranteApiFactory factory) => this.factory = factory;
+    private static object Body(Guid? id, bool todos, decimal valor=50, DateOnly? vencimento=null) => new
+    { membroId=id, finalidade="Mensalidade", descricao="Outubro", categoria="Clube", tipoFluxo="Entrada", valor,
+      vencimento=(vencimento??DateOnly.FromDateTime(DateTime.UtcNow).AddDays(1)).ToString("yyyy-MM-dd"), aplicarATodosOsMembros=todos };
+
     [Fact]
-    public async Task List_SemToken_Retorna401()
+    public async Task Registrar_ExigeAutenticacaoERoleFinanceira()
     {
-        using var factory = new AlmiranteApiFactory();
-        using var client = factory.CreateClient();
-
-        var response = await client.GetAsync("/api/Lancamentos");
-
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var anonymous = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await anonymous.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(Guid.NewGuid(), false))).StatusCode);
+        var (unauthorizedRole, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DS");
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await unauthorizedRole.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(Guid.NewGuid(), false))).StatusCode);
     }
 
     [Fact]
-    public async Task List_ComPaginacaoPadrao_RetornaEnvelopeComSeedDemonstrativo()
+    public async Task RegistrarIndividual_UsaMembroDoBanco_EStatusPendente()
     {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.GetAsync("/api/Lancamentos");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<LancamentosResponse>();
-        Assert.NotNull(body);
-        Assert.Equal(1, body!.Page);
-        Assert.Equal(10, body.PageSize);
-        Assert.True(body.Total >= 20);
-        Assert.True(body.TotalPages >= 1);
-        Assert.Equal(10, body.Items.Count);
+        var membro = await TestHelpers.AddUsuarioAsync(factory, "Nome confiável", "DS");
+        var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var response = await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id,false));
+        Assert.Equal(HttpStatusCode.Created,response.StatusCode);
+        var dto=await response.Content.ReadFromJsonAsync<LancamentoDto>();
+        Assert.Equal("Nome confiável",dto!.MembroNome); Assert.Equal("Pendente",dto.Status); Assert.Equal(membro.Id,dto.MembroId);
     }
 
     [Fact]
-    public async Task List_FiltrandoPorTipoECategoria_RetornaApenasCorrespondentes()
+    public async Task RegistrarIndividual_RejeitaIdAusente_EInexistente()
     {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var client=await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(null,false))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,(await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(Guid.NewGuid(),false))).StatusCode);
+    }
 
-        var response = await client.GetAsync("/api/Lancamentos?tipo=Campori&pageSize=100");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<LancamentosResponse>();
-        Assert.NotNull(body);
-        Assert.NotEmpty(body!.Items);
-        Assert.All(body.Items, item => Assert.Equal("Campori", item.Tipo));
+    [Theory]
+    [InlineData(0)] [InlineData(-1)]
+    public async Task Registrar_RejeitaValorNaoPositivo(decimal valor)
+    {
+        var client=await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(Guid.NewGuid(),false,valor))).StatusCode);
     }
 
     [Fact]
-    public async Task List_ComBuscaPorNomeDoMembro_FiltraResultados()
+    public async Task Registrar_RejeitaDataPassada_EAceitaHoje()
     {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.GetAsync("/api/Lancamentos?search=guilherme&pageSize=100");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<LancamentosResponse>();
-        Assert.NotNull(body);
-        Assert.NotEmpty(body!.Items);
-        Assert.All(body.Items, item => Assert.Contains("guilherme", item.MembroNome.ToLower()));
+        var membro=await TestHelpers.AddUsuarioAsync(factory,"Data","DS");
+        var client=await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(membro.Id,false,50,DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1)))).StatusCode);
+        Assert.Equal(HttpStatusCode.Created,(await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(membro.Id,false,50,DateOnly.FromDateTime(DateTime.UtcNow)))).StatusCode);
     }
 
     [Fact]
-    public async Task List_ComPageSizeMaiorQue100_LimitaA100()
+    public async Task RegistrarTodos_EIdempotente_EConflitaPayloadDiferente()
     {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.GetAsync("/api/Lancamentos?pageSize=500");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<LancamentosResponse>();
-        Assert.Equal(100, body!.PageSize);
-    }
-
-    private static string VencimentoFuturo(int diasAPartirDeHoje = 30) =>
-        DateTime.UtcNow.AddDays(diasAPartirDeHoje).ToString("yyyy-MM-dd");
-
-    [Fact]
-    public async Task Create_ComDadosValidos_Retorna201ESemMembroObrigatorio()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
-        {
-            membroNome = "Novo Membro",
-            tipo = "Doação",
-            categoria = "Clube",
-            tipoFluxo = "Entrada",
-            valor = 42.50m,
-            vencimento = VencimentoFuturo(),
-            status = "Pendente",
-        });
-
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var created = await response.Content.ReadFromJsonAsync<LancamentoDto>();
-        Assert.NotNull(created);
-        Assert.Null(created!.MembroId);
-        Assert.Equal("Novo Membro", created.MembroNome);
-        Assert.Equal("BRL", created.Moeda);
-        Assert.Equal(TipoFluxoLancamento.Entrada, created.TipoFluxo);
+        await TestHelpers.AddUsuarioAsync(factory,"Lote","DS");
+        var client=await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var idempotencyKey = $"lote-{Guid.NewGuid():N}";
+        async Task<HttpResponseMessage> Send(decimal valor)
+        { var req=new HttpRequestMessage(HttpMethod.Post,"/api/Lancamentos/Registrar") { Content=JsonContent.Create(Body(null,true,valor)) }; req.Headers.Add("Idempotency-Key",idempotencyKey); return await client.SendAsync(req); }
+        var first=await Send(50); var retry=await Send(50); var conflict=await Send(51);
+        Assert.Equal(HttpStatusCode.OK,first.StatusCode); Assert.Equal(HttpStatusCode.OK,retry.StatusCode); Assert.Equal(HttpStatusCode.Conflict,conflict.StatusCode);
+        Assert.Equal((await first.Content.ReadFromJsonAsync<LancamentoGeralResponse>())!.OperacaoId,(await retry.Content.ReadFromJsonAsync<LancamentoGeralResponse>())!.OperacaoId);
     }
 
     [Fact]
-    public async Task Create_ComValorNegativo_Retorna400()
+    public async Task Delete_EhLogico_EListagemIgnoraInativo()
     {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
-        {
-            membroNome = "Membro",
-            tipo = "Outros",
-            categoria = "Clube",
-            tipoFluxo = "Despesa",
-            valor = -10m,
-            vencimento = VencimentoFuturo(),
-            status = "Pendente",
-        });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Create_ComValorZero_Retorna400()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
-        {
-            membroNome = "Membro",
-            tipo = "Outros",
-            categoria = "Clube",
-            tipoFluxo = "Despesa",
-            valor = 0m,
-            vencimento = VencimentoFuturo(),
-            status = "Pendente",
-        });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Create_ComVencimentoNoPassado_Retorna400()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
-        {
-            membroNome = "Membro",
-            tipo = "Outros",
-            categoria = "Clube",
-            tipoFluxo = "Entrada",
-            valor = 10m,
-            vencimento = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd"),
-            status = "Pendente",
-        });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Create_ComTipoFluxoInvalido_Retorna400()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.PostAsJsonAsync("/api/Lancamentos", new
-        {
-            membroNome = "Membro",
-            tipo = "Outros",
-            categoria = "Clube",
-            tipoFluxo = "Saida",
-            valor = 10m,
-            vencimento = VencimentoFuturo(),
-            status = "Pendente",
-        });
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task FluxoCompleto_CriarAtualizarExcluir_FuncionaDeFimAFim()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var createResponse = await client.PostAsJsonAsync("/api/Lancamentos", new
-        {
-            membroNome = "Membro Fluxo",
-            tipo = "Evento",
-            categoria = "Evento",
-            tipoFluxo = "Entrada",
-            valor = 100m,
-            vencimento = VencimentoFuturo(45),
-            status = "Pendente",
-        });
-        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
-        var created = await createResponse.Content.ReadFromJsonAsync<LancamentoDto>();
-
-        var updateResponse = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new
-        {
-            status = "Pago",
-            valor = 150m,
-        });
-        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
-        var updated = await updateResponse.Content.ReadFromJsonAsync<LancamentoDto>();
-        Assert.Equal("Pago", updated!.Status);
-        Assert.Equal(150m, updated.Valor);
-        Assert.Equal("Membro Fluxo", updated.MembroNome);
-
-        var deleteResponse = await client.DeleteAsync($"/api/Lancamentos/{created.Id}");
-        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
-
-        var getAfterDelete = await client.GetAsync($"/api/Lancamentos?search=Membro Fluxo");
-        var afterDeleteBody = await getAfterDelete.Content.ReadFromJsonAsync<LancamentosResponse>();
-        Assert.DoesNotContain(afterDeleteBody!.Items, item => item.Id == created.Id);
-    }
-
-    [Fact]
-    public async Task Update_RegistroInexistente_Retorna404()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{Guid.NewGuid()}", new { status = "Pago" });
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Delete_RegistroInexistente_Retorna404()
-    {
-        using var factory = new AlmiranteApiFactory();
-        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-
-        var response = await client.DeleteAsync($"/api/Lancamentos/{Guid.NewGuid()}");
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var membro=await TestHelpers.AddUsuarioAsync(factory,"Excluir","DS");
+        var client=await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var created=await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(membro.Id,false))).Content.ReadFromJsonAsync<LancamentoDto>();
+        var req=new HttpRequestMessage(HttpMethod.Delete,$"/api/Lancamentos/{created!.Id}") { Content=JsonContent.Create(new { motivo="correção" }) };
+        Assert.Equal(HttpStatusCode.NoContent,(await client.SendAsync(req)).StatusCode);
+        using var scope=factory.Services.CreateScope(); var db=scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
+        Assert.False((await db.Lancamentos.IgnoreQueryFilters().SingleAsync(x=>x.Id==created.Id)).Ativo);
+        var list=await (await client.GetAsync("/api/Lancamentos?search=Excluir")).Content.ReadFromJsonAsync<LancamentosResponse>(); Assert.Empty(list!.Items);
     }
 }

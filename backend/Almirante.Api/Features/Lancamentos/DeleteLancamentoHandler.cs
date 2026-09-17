@@ -1,11 +1,8 @@
 using Almirante.Api.Dtos;
 using Almirante.Api.Services;
 using MediatR;
-
 namespace Almirante.Api.Features.Lancamentos;
-
-public sealed class DeleteLancamentoHandler(LancamentosService lancamentosService) : IRequestHandler<DeleteLancamentoCommand, bool>
+public sealed class DeleteLancamentoHandler(LancamentosService service) : IRequestHandler<DeleteLancamentoRequest, bool>
 {
-    public Task<bool> Handle(DeleteLancamentoCommand request, CancellationToken cancellationToken) =>
-        lancamentosService.DeleteAsync(request.Id, cancellationToken);
+    public Task<bool> Handle(DeleteLancamentoRequest r, CancellationToken ct) => service.DeleteAsync(r,ct);
 }

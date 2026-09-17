@@ -42,22 +42,21 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             // lógica do lançamento geral, que é SQL bruto e nunca usa OUTPUT).
             entity.ToTable("Lancamentos", tb => tb.UseSqlOutputClause(false));
             entity.HasKey(l => l.Id);
-            entity.Property(l => l.MembroNome).HasMaxLength(200).IsRequired();
-            entity.Property(l => l.Tipo).HasMaxLength(50).IsRequired();
+            entity.Property(l => l.Finalidade).HasMaxLength(50).IsRequired();
             entity.Property(l => l.Descricao).HasMaxLength(500);
             entity.Property(l => l.Categoria).HasMaxLength(50).IsRequired();
             entity.Property(l => l.TipoFluxo).HasConversion<string>().HasMaxLength(20).IsRequired();
             entity.Property(l => l.Valor).HasColumnType("decimal(18,2)");
-            entity.Property(l => l.Moeda).HasMaxLength(3).IsRequired();
             entity.Property(l => l.Status).HasMaxLength(20).IsRequired();
             entity.Property(l => l.Ativo).IsRequired();
 
             entity.HasIndex(l => l.Status);
-            entity.HasIndex(l => l.Tipo);
+            entity.HasIndex(l => l.Finalidade);
             entity.HasIndex(l => l.Vencimento);
             entity.HasIndex(l => l.MembroId);
             entity.HasIndex(l => l.Ativo);
             entity.HasIndex(l => l.OperacaoId);
+            entity.HasOne(l => l.Membro).WithMany(u => u.Lancamentos).HasForeignKey(l => l.MembroId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<LancamentoOperacao>(entity =>
@@ -66,7 +65,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasKey(o => o.Id);
             entity.Property(o => o.IdempotencyKey).HasMaxLength(100).IsRequired();
             entity.Property(o => o.RequestHash).HasMaxLength(64).IsRequired();
-            entity.Property(o => o.Tipo).HasMaxLength(50).IsRequired();
+            entity.Property(o => o.Finalidade).HasMaxLength(50).IsRequired();
+            entity.Property(o => o.Descricao).HasMaxLength(500);
             entity.Property(o => o.Categoria).HasMaxLength(50).IsRequired();
             entity.Property(o => o.TipoFluxo).HasConversion<string>().HasMaxLength(20).IsRequired();
             entity.Property(o => o.Valor).HasColumnType("decimal(18,2)");
@@ -85,12 +85,10 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasKey(d => d.Id);
             entity.Property(d => d.IpResponsavel).HasMaxLength(45).IsRequired();
             entity.Property(d => d.Motivo).HasMaxLength(255).IsRequired();
-            entity.Property(d => d.MembroNome).HasMaxLength(200).IsRequired();
-            entity.Property(d => d.Tipo).HasMaxLength(50).IsRequired();
+            entity.Property(d => d.Finalidade).HasMaxLength(50).IsRequired();
             entity.Property(d => d.Categoria).HasMaxLength(50).IsRequired();
             entity.Property(d => d.TipoFluxo).HasMaxLength(20).IsRequired();
             entity.Property(d => d.Valor).HasColumnType("decimal(18,2)");
-            entity.Property(d => d.Moeda).HasMaxLength(3).IsRequired();
             entity.Property(d => d.Status).HasMaxLength(20).IsRequired();
 
             entity.HasIndex(d => d.LancamentoId);
