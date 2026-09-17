@@ -1,8 +1,53 @@
-@baseUrl = http://localhost:8090
-@token = COLE_AQUI_O_TOKEN
+@baseUrl = https://localhost:8090
+@token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
+@csrf = COLE_AQUI_O_CSRF_TOKEN
 @membroId = COLE_AQUI_O_MEMBRO
 
-### Registrar lançamento individual
+### 0. Obter CSRF (preserve o cookie retornado)
+GET {{baseUrl}}/api/Auth/csrf
+
+### 1. Login (credenciais válidas)
+POST {{baseUrl}}/api/Auth/login
+Content-Type: application/json
+X-CSRF-TOKEN: {{csrf}}
+
+{
+  "email": "admin@local.dev",
+  "senha": "senha"
+}
+
+### 2. Auth/Me
+GET {{baseUrl}}/api/Auth/Me
+Authorization: Bearer {{token}}
+
+### 2.1 Obter novo CSRF (necessário só se for enviar Authorization: Bearer no logout/refresh — o
+### antiforgery vincula o token ao usuário autenticado no momento da emissão; reaproveitar o {{csrf}}
+### do passo 0 causa 400 "meant for a different claims-based user")
+GET {{baseUrl}}/api/Auth/csrf
+Authorization: Bearer {{token}}
+
+### 3. Logout
+POST {{baseUrl}}/api/Auth/logout
+Authorization: Bearer {{token}}
+X-CSRF-TOKEN: {{csrf}}
+
+### 3.1 Renovar (usa cookie HttpOnly; não exige Bearer)
+POST {{baseUrl}}/api/Auth/refresh
+X-CSRF-TOKEN: {{csrf}}
+
+### 4. Listar usuários
+GET {{baseUrl}}/api/Usuarios
+Authorization: Bearer {{token}}
+
+### 5. Listar cargos
+GET {{baseUrl}}/api/Cargos
+Authorization: Bearer {{token}}
+
+### 6. Listar lançamentos (com paginação e filtros)
+GET {{baseUrl}}/api/Lancamentos?page=1&pageSize=10&search=guilherme&status=Pago&tipo=Mensalidade
+Authorization: Bearer {{token}}
+
+### 7. Registrar lançamento individual
 POST {{baseUrl}}/api/Lancamentos/Registrar
 Authorization: Bearer {{token}}
 Content-Type: application/json
@@ -18,7 +63,7 @@ Content-Type: application/json
   "aplicarATodosOsMembros": false
 }
 
-### Registrar para todos (idempotente)
+### 8. Registrar para todos (idempotente)
 POST {{baseUrl}}/api/Lancamentos/Registrar
 Authorization: Bearer {{token}}
 Idempotency-Key: mensalidade-2026-10
@@ -35,7 +80,16 @@ Content-Type: application/json
   "aplicarATodosOsMembros": true
 }
 
-### Exclusão lógica auditada
+### 9. Atualizar lançamento (PUT parcial)
+PUT {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "Pago"
+}
+
+### 10. Exclusão lógica auditada
 DELETE {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
 Authorization: Bearer {{token}}
 Content-Type: application/json

@@ -1,7 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text;
-using Almirante.Api.Entities;
 using Almirante.Api.Options;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -10,35 +8,41 @@ namespace Almirante.Api.Security;
 
 public record IssuedToken(string AccessToken, DateTime ExpiresAtUtc);
 
-public class JwtTokenService(IOptions<JwtOptions> options)
+public sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider clock)
 {
     private readonly JwtOptions _options = options.Value;
 
-    public IssuedToken GenerateToken(Usuario usuario)
+    public IssuedToken GenerateToken(Guid userId, string role, Guid sessionId, DateTime absoluteExpiry)
     {
-        var expiresAtUtc = DateTime.UtcNow.AddMinutes(_options.ExpirationMinutes);
-
-        var claims = new List<Claim>
+        var now = clock.GetUtcNow();
+        var expires = new DateTimeOffset(absoluteExpiry, TimeSpan.Zero) < now.AddMinutes(_options.AccessTokenMinutes)
+            ? new DateTimeOffset(absoluteExpiry, TimeSpan.Zero) : now.AddMinutes(_options.AccessTokenMinutes);
+        var key = JwtKeySet.GetKey(_options, _options.ActiveKeyId);
+        var descriptor = new SecurityTokenDescriptor
         {
-            new(JwtRegisteredClaimNames.Sub, usuario.Id.ToString()),
-            new(JwtRegisteredClaimNames.Email, usuario.Email),
-            new(ClaimTypes.NameIdentifier, usuario.Id.ToString()),
-            new(ClaimTypes.Name, usuario.Nome),
-            new(ClaimTypes.Role, usuario.Cargo!.Role),
+            Issuer = _options.Issuer, Audience = _options.Audience,
+            NotBefore = now.UtcDateTime, IssuedAt = now.UtcDateTime, Expires = expires.UtcDateTime,
+            Subject = new ClaimsIdentity([
+                new(JwtRegisteredClaimNames.Sub, userId.ToString()),
+                new("role", role), new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                new("sid", sessionId.ToString())]),
+            SigningCredentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256),
+            TokenType = "at+jwt",
         };
+        descriptor.SigningCredentials.Key.KeyId = _options.ActiveKeyId;
+        var handler = new JwtSecurityTokenHandler { SetDefaultTimesOnTokenCreation = false };
+        return new(handler.WriteToken(handler.CreateToken(descriptor)), expires.UtcDateTime);
+    }
+}
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.Key));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var token = new JwtSecurityToken(
-            issuer: _options.Issuer,
-            audience: _options.Audience,
-            claims: claims,
-            expires: expiresAtUtc,
-            signingCredentials: credentials);
-
-        var accessToken = new JwtSecurityTokenHandler().WriteToken(token);
-
-        return new IssuedToken(accessToken, expiresAtUtc);
+public static class JwtKeySet
+{
+    public static SymmetricSecurityKey GetKey(JwtOptions options, string kid)
+    {
+        if (!options.Keys.TryGetValue(kid, out var encoded)) throw new SecurityTokenInvalidSigningKeyException("kid desconhecido.");
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(encoded); } catch (FormatException) { throw new OptionsValidationException(JwtOptions.SectionName, typeof(JwtOptions), ["Chave JWT não é Base64 válida."]); }
+        if (bytes.Length < 32) throw new OptionsValidationException(JwtOptions.SectionName, typeof(JwtOptions), ["Chave JWT deve possuir ao menos 32 bytes."]);
+        return new SymmetricSecurityKey(bytes) { KeyId = kid };
     }
 }

@@ -8,7 +8,7 @@ O backend está em fase de **MVP funcional** e possui:
 
 - login com e-mail e senha e emissão de token JWT;
 - consulta dos dados do usuário autenticado;
-- logout stateless — encerra a requisição, mas não revoga o token emitido;
+- sessões persistidas, refresh rotativo e logout com revogação efetiva;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
 - lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
@@ -77,7 +77,7 @@ cp .env.example .env
 Altere no `.env`, no mínimo, os valores de:
 
 - `SQL_SA_PASSWORD`;
-- `JWT_KEY`;
+- `JWT_KEY_V1` (Base64 de no mínimo 32 bytes) e `JWT_ACTIVE_KEY_ID`;
 - `SEED_ADMIN_SENHA`.
 
 O arquivo `.env` contém segredos locais e não deve ser versionado.
@@ -253,8 +253,11 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
 | `JWT_AUDIENCE` | audiência do token JWT | `Almirante.Frontend` |
-| `JWT_KEY` | chave de assinatura e validação do JWT | obrigatória |
-| `JWT_EXPIRATION_MINUTES` | duração do token em minutos | `60` |
+| `JWT_ACTIVE_KEY_ID` | `kid` usado para novas assinaturas | `v1` |
+| `JWT_KEY_V1` | chave HS256 Base64 associada a `v1` | obrigatória |
+| `JWT_ACCESS_TOKEN_MINUTES` | duração máxima do access token | `10` |
+| `AUTH_SESSION_DAYS` | limite absoluto da sessão | `7` |
+| `AUTH_REFRESH_INACTIVITY_HOURS` | inatividade máxima entre login/refresh | `24` |
 | `SEED_ADMIN_NOME` | nome do administrador inicial | `Administrador` |
 | `SEED_ADMIN_EMAIL` | e-mail do administrador inicial | `admin@local.dev` |
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
@@ -262,25 +265,39 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `CORS_ORIGIN_2` | segunda origem permitida pelo CORS | `http://localhost:4201` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint opcional para exportação OTLP | não definido |
 
-A `JWT_KEY` deve possuir pelo menos 32 caracteres e ser diferente em cada ambiente.
+A chave decodificada deve possuir pelo menos 32 bytes aleatórios e ser diferente em cada ambiente.
 
 ## Autenticação
 
 Faça login com o administrador criado pelo seed:
 
 ```bash
-curl --request POST http://localhost:8090/api/Auth/login \
+curl --request POST https://localhost:8090/api/Auth/login \
+  --header 'X-CSRF-TOKEN: TOKEN_OBTIDO_EM_/api/Auth/csrf' \
   --header 'Content-Type: application/json' \
   --data '{"email":"admin@local.dev","senha":"senha"}'
 ```
 
-A resposta contém `token.accessToken`, `token.expiresAtUtc` e os dados do usuário. Nos endpoints protegidos, envie:
+A resposta contém somente `token.accessToken` e `token.expiresAtUtc`; consulte o perfil atual em `/api/Auth/Me`. Nos endpoints protegidos, envie:
 
 ```http
 Authorization: Bearer SEU_TOKEN
 ```
 
-O logout atual não mantém blacklist nem sessão persistida. Portanto, um JWT válido continua utilizável até expirar.
+O logout revoga persistentemente a sessão apresentada (tabela `AuthSession` no SQL Server); o refresh cookie é removido e um novo login é exigido.
+
+O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento em que ele foi emitido. Se o cliente envia `Authorization: Bearer` em toda requisição, peça um novo `GET /api/Auth/csrf` depois do login antes de chamar `refresh`/`logout` com esse header — reaproveitar o CSRF obtido antes do login resulta em `400` (ver [`docs/authentication-security.md`](docs/authentication-security.md)).
+
+| Método | Rota | Comportamento |
+| --- | --- | --- |
+| `GET` | `/api/Auth/csrf` | emite a proteção antiforgery para os fluxos com cookie |
+| `POST` | `/api/Auth/login` | valida credenciais, cria sessão e retorna somente o access token |
+| `POST` | `/api/Auth/refresh` | rotaciona o refresh cookie e retorna novo access token |
+| `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
+| `GET` | `/api/Auth/Me` | retorna o usuário autenticado |
+| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome |
+| `GET` | `/health` | informa a prontidão da aplicação |
+| `GET` | `/alive` | informa se a aplicação está ativa |
 
 ## Lançamentos
 
@@ -411,3 +428,7 @@ As requisições aos health checks são excluídas dos traces.
 O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
 
 Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
+
+## Segurança da autenticação (issue #29)
+
+O login agora retorna somente o envelope `token`; o perfil atual vem de `GET /api/Auth/Me`. Sessões e hashes de refresh tokens são persistidos no SQL Server, refresh é rotativo por cookie seguro e logout revoga a sessão apresentada. O fluxo de frontend, configuração Base64/kid, rotação, migração, TLS e riscos residuais estão em [`docs/authentication-security.md`](docs/authentication-security.md). Tokens emitidos antes desta mudança não têm `sid` e exigem novo login.

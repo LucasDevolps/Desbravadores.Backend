@@ -9,6 +9,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
     public DbSet<Cargo> Cargos => Set<Cargo>();
     public DbSet<LancamentoOperacao> LancamentosOperacoes => Set<LancamentoOperacao>();
+    public DbSet<AuthSession> AuthSessions => Set<AuthSession>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     // Somente leitura pela aplicação: linhas são inseridas exclusivamente pelo trigger de
     // auditoria (ver Entities/LancamentoDeletado.cs).
@@ -30,6 +32,27 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 .WithMany()
                 .HasForeignKey(u => u.CargoId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AuthSession>(entity =>
+        {
+            entity.ToTable("AuthSessions"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.RevocationReason).HasMaxLength(100);
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.HasIndex(x => new { x.UsuarioId, x.AbsoluteExpiresAtUtc });
+            entity.HasIndex(x => x.AbsoluteExpiresAtUtc);
+            entity.HasOne(x => x.Usuario).WithMany().HasForeignKey(x => x.UsuarioId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<RefreshToken>(entity =>
+        {
+            entity.ToTable("RefreshTokens"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.TokenHash).HasColumnType("binary(32)").IsRequired();
+            entity.Property(x => x.RowVersion).IsRowVersion();
+            entity.HasIndex(x => x.TokenHash).IsUnique();
+            entity.HasIndex(x => new { x.SessionId, x.ExpiresAtUtc });
+            entity.HasIndex(x => x.ExpiresAtUtc);
+            entity.HasOne(x => x.Session).WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.ReplacedByToken).WithMany().HasForeignKey(x => x.ReplacedByTokenId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<Lancamento>(entity =>

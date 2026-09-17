@@ -10,7 +10,7 @@ public static class ClaimsPrincipalExtensions
     // cópia deste parse.
     public static bool TentarObterUsuarioId(this ClaimsPrincipal principal, out Guid usuarioId)
     {
-        var idClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        var idClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? principal.FindFirstValue("sub");
         return Guid.TryParse(idClaim, out usuarioId);
     }
 }
