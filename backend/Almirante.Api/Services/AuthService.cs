@@ -49,7 +49,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
 
         if (token.ConsumedAtUtc is not null)
         {
-            if (session.RevokedAtUtc is null) { session.RevokedAtUtc = now; session.RevocationReason = "refresh-token-reuse"; await db.SaveChangesAsync(ct); }
+            await RevokeSessionAsync(session.Id, "refresh-token-reuse");
             return null;
         }
         var user = session.Usuario;
@@ -66,9 +66,9 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateConcurrencyException)
         {
-            db.ChangeTracker.Clear();
-            var raced = await db.AuthSessions.SingleAsync(x => x.Id == session.Id, ct);
-            if (raced.RevokedAtUtc is null) { raced.RevokedAtUtc = now; raced.RevocationReason = "concurrent-refresh"; await db.SaveChangesAsync(ct); }
+            // Outra renovação ou um logout alterou a sessão depois da leitura: política estrita,
+            // nenhuma credencial é entregue e a família é revogada (se ainda não estiver).
+            await RevokeSessionAsync(session.Id, "concurrent-refresh");
             return null;
         }
         return Issue(user.Id, user.Cargo.Role, session, raw, successor.ExpiresAtUtc);
@@ -76,15 +76,42 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
 
     public async Task LogoutAsync(string? rawRefresh, Guid? sessionId, Guid? userId, CancellationToken ct)
     {
-        AuthSession? session = null;
-        if (!string.IsNullOrWhiteSpace(rawRefresh))
+        Guid? target = null;
+        if (TryHashRefreshToken(rawRefresh, out var hash))
+            target = await db.RefreshTokens.AsNoTracking().Where(x => x.TokenHash == hash).Select(x => (Guid?)x.SessionId).SingleOrDefaultAsync(ct);
+        if (target is null && sessionId is not null && userId is not null)
+            target = await db.AuthSessions.AsNoTracking().Where(x => x.Id == sessionId && x.UsuarioId == userId).Select(x => (Guid?)x.Id).SingleOrDefaultAsync(ct);
+        if (target is not null) await RevokeSessionAsync(target.Value, "logout");
+    }
+
+    // Toda revogação passa por aqui. Grava com CancellationToken.None (abortar a requisição não pode
+    // desfazer a revogação) e, em conflito de rowversion com um refresh/logout concorrente, relê a
+    // sessão e reaplica sobre o estado atual — revogar é idempotente.
+    private async Task RevokeSessionAsync(Guid sessionId, string reason)
+    {
+        const int maxAttempts = 5;
+        for (var attempt = 1; ; attempt++)
         {
-            try { var hash = SHA256.HashData(Base64UrlTextEncoder.Decode(rawRefresh)); session = await db.RefreshTokens.Where(x => x.TokenHash == hash).Select(x => x.Session).SingleOrDefaultAsync(ct); }
-            catch (FormatException) { }
+            db.ChangeTracker.Clear();
+            var session = await db.AuthSessions.SingleOrDefaultAsync(x => x.Id == sessionId, CancellationToken.None);
+            if (session is null || session.RevokedAtUtc is not null) return;
+            session.RevokedAtUtc = clock.GetUtcNow().UtcDateTime;
+            session.RevocationReason = reason;
+            try
+            {
+                await db.SaveChangesAsync(CancellationToken.None);
+                return;
+            }
+            catch (DbUpdateConcurrencyException) when (attempt < maxAttempts) { }
         }
-        if (session is null && sessionId is not null && userId is not null)
-            session = await db.AuthSessions.SingleOrDefaultAsync(x => x.Id == sessionId && x.UsuarioId == userId, ct);
-        if (session is not null && session.RevokedAtUtc is null) { session.RevokedAtUtc = clock.GetUtcNow().UtcDateTime; session.RevocationReason = "logout"; await db.SaveChangesAsync(ct); }
+    }
+
+    private static bool TryHashRefreshToken(string? raw, out byte[] hash)
+    {
+        hash = [];
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        try { hash = SHA256.HashData(Base64UrlTextEncoder.Decode(raw)); return true; }
+        catch (FormatException) { return false; }
     }
 
     public Task<MeDto?> GetMeAsync(Guid id, CancellationToken ct) => db.Usuarios.AsNoTracking().Where(x => x.Id == id && x.Cargo != null && x.Cargo.Ativo)
