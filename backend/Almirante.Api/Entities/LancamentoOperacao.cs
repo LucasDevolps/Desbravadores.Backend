@@ -1,11 +1,11 @@
 namespace Almirante.Api.Entities;
 
-// Registro persistido de idempotência para o lançamento geral (POST /api/Lancamentos/Geral).
+// Registro persistido de idempotência para o lançamento geral (POST /api/Lancamentos/Registrar no modo geral).
 // A chave de idempotência (IdempotencyKey, vinda do header Idempotency-Key) é distinta do token
 // JWT do solicitante. Uma linha aqui só existe depois que a operação (esta linha + todos os
 // Lancamentos gerados) foi persistida com sucesso em um único SaveChanges — o índice único em
 // IdempotencyKey garante, mesmo sob concorrência, que apenas uma requisição "vence" para cada
-// chave (ver LancamentosGeraisService.CreateAsync).
+// chave (ver LancamentosService.RegistrarAsync).
 public class LancamentoOperacao
 {
     public Guid Id { get; set; }
@@ -16,7 +16,8 @@ public class LancamentoOperacao
     // diferente indica reuso indevido da chave e deve retornar 409.
     public required string RequestHash { get; set; }
 
-    public required string Tipo { get; set; }
+    public required string Finalidade { get; set; }
+    public string? Descricao { get; set; }
     public required string Categoria { get; set; }
     public required TipoFluxoLancamento TipoFluxo { get; set; }
     public decimal Valor { get; set; }

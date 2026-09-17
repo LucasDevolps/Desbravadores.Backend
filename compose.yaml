@@ -49,14 +49,18 @@ services:
       ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};TrustServerCertificate=True
       Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
       Jwt__Audience: ${JWT_AUDIENCE:-Almirante.Frontend}
-      Jwt__Key: ${JWT_KEY:?defina JWT_KEY no arquivo .env}
-      Jwt__ExpirationMinutes: ${JWT_EXPIRATION_MINUTES:-60}
+      Jwt__ActiveKeyId: ${JWT_ACTIVE_KEY_ID:-v1}
+      Jwt__Keys__v1: ${JWT_KEY_V1:?defina JWT_KEY_V1 Base64 no arquivo .env}
+      Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-10}
+      Jwt__AbsoluteSessionDays: ${AUTH_SESSION_DAYS:-7}
+      Jwt__RefreshInactivityHours: ${AUTH_REFRESH_INACTIVITY_HOURS:-24}
       SeedAdmin__Nome: ${SEED_ADMIN_NOME:-Administrador}
       SeedAdmin__Email: ${SEED_ADMIN_EMAIL:-admin@local.dev}
       SeedAdmin__Senha: ${SEED_ADMIN_SENHA:?defina SEED_ADMIN_SENHA no arquivo .env}
       Cors__AllowedOrigins__0: ${CORS_ORIGIN_1:-http://localhost:4200}
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
       ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
+      DataProtection__KeysPath: /var/lib/almirante/dataprotection
     networks:
       - almirante-net
     # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
@@ -64,6 +68,8 @@ services:
     # acessando a API diretamente.
     expose:
       - "8080"
+    volumes:
+      - almirante-dataprotection:/var/lib/almirante/dataprotection
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -97,3 +103,5 @@ services:
 volumes:
   almirante-sqlserver-data:
     name: almirante-sqlserver-data
+  almirante-dataprotection:
+    name: almirante-dataprotection

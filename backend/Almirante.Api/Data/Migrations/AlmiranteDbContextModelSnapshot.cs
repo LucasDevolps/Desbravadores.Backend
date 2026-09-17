@@ -22,6 +22,49 @@ namespace Almirante.Api.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Almirante.Api.Entities.AuthSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("AbsoluteExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LastRenewedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<long>("SecurityVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("UsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AbsoluteExpiresAtUtc");
+
+                    b.HasIndex("UsuarioId", "AbsoluteExpiresAtUtc");
+
+                    b.ToTable("AuthSessions", (string)null);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.Cargo", b =>
                 {
                     b.Property<Guid>("Id")
@@ -89,18 +132,13 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<string>("Finalidade")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<Guid?>("MembroId")
                         .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("MembroNome")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Moeda")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("nvarchar(3)");
 
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
@@ -109,11 +147,6 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("Tipo")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("TipoFluxo")
                         .IsRequired()
@@ -130,13 +163,13 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("Ativo");
 
+                    b.HasIndex("Finalidade");
+
                     b.HasIndex("MembroId");
 
                     b.HasIndex("OperacaoId");
 
                     b.HasIndex("Status");
-
-                    b.HasIndex("Tipo");
 
                     b.HasIndex("Vencimento");
 
@@ -162,6 +195,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("ExcluidoEmUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("Finalidade")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<string>("IpResponsavel")
                         .IsRequired()
                         .HasMaxLength(45)
@@ -172,16 +210,6 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<Guid?>("MembroId")
                         .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("MembroNome")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Moeda")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("nvarchar(3)");
 
                     b.Property<string>("Motivo")
                         .IsRequired()
@@ -195,11 +223,6 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
-
-                    b.Property<string>("Tipo")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("TipoFluxo")
                         .IsRequired()
@@ -241,6 +264,15 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid>("CriadoPorUsuarioId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Descricao")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Finalidade")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -253,11 +285,6 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
-
-                    b.Property<string>("Tipo")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("TipoFluxo")
                         .IsRequired()
@@ -281,6 +308,54 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("LancamentosOperacoes", (string)null);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ConsumedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ReplacedByTokenId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("binary(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("ReplacedByTokenId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("SessionId", "ExpiresAtUtc");
+
+                    b.ToTable("RefreshTokens", (string)null);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Usuario", b =>
@@ -310,6 +385,9 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<long>("SecurityVersion")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("SenhaHash")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -322,6 +400,27 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Usuarios", (string)null);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.AuthSession", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", "Usuario")
+                        .WithMany()
+                        .HasForeignKey("UsuarioId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Usuario");
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Lancamento", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", "Membro")
+                        .WithMany("Lancamentos")
+                        .HasForeignKey("MembroId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Membro");
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.LancamentoDeletado", b =>
@@ -348,6 +447,24 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.RefreshToken", "ReplacedByToken")
+                        .WithMany()
+                        .HasForeignKey("ReplacedByTokenId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("Almirante.Api.Entities.AuthSession", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ReplacedByToken");
+
+                    b.Navigation("Session");
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.Usuario", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.Cargo", "Cargo")
@@ -357,6 +474,11 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Cargo");
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Usuario", b =>
+                {
+                    b.Navigation("Lancamentos");
                 });
 #pragma warning restore 612, 618
         }

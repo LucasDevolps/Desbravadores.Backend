@@ -1,4 +1,5 @@
-using System.Text;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
 using Almirante.Api.Infrastructure;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -19,6 +21,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.AddOptions<JwtOptions>().Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
+    .ValidateDataAnnotations().Validate(o => o.Keys.ContainsKey(o.ActiveKeyId), "ActiveKeyId deve existir em Keys.")
+    .Validate(o => { try { foreach (var kid in o.Keys.Keys) _ = JwtKeySet.GetKey(o, kid); return true; } catch { return false; } }, "Todas as chaves devem ser Base64 e ter ao menos 32 bytes.")
+    .ValidateOnStart();
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
 builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection(ReverseProxyOptions.SectionName));
 
@@ -52,11 +58,13 @@ builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
 
 builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
 builder.Services.AddSingleton<JwtTokenService>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
-builder.Services.AddScoped<LancamentosGeraisService>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<CargosService>();
+builder.Services.AddHostedService<AuthSessionCleanupService>();
 
 // MediatR: os DTOs de request em Dtos/LancamentoDtos.cs implementam IRequest<T> diretamente (sem
 // uma camada paralela de "Command"). ValidationBehavior roda todo IValidator<TRequest> registrado
@@ -69,7 +77,9 @@ builder.Services.AddMediatR(cfg =>
 });
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-builder.Services.AddControllers().AddJsonOptions(options =>
+// AddControllersWithViews (em vez de AddControllers) registra ValidateAntiforgeryTokenAuthorizationFilter,
+// exigido pelo [ValidateAntiForgeryToken] do AuthController; não há Views/Razor pages neste projeto.
+builder.Services.AddControllersWithViews().AddJsonOptions(options =>
 {
     // ASP.NET Core já usa camelCase por padrão; mantido explícito para clareza.
     options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
@@ -77,6 +87,14 @@ builder.Services.AddControllers().AddJsonOptions(options =>
 
 builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
 builder.Services.AddProblemDetails();
+var dataProtectionPath = builder.Configuration["DataProtection:KeysPath"];
+if (!string.IsNullOrWhiteSpace(dataProtectionPath))
+{
+    Directory.CreateDirectory(dataProtectionPath);
+    builder.Services.AddDataProtection().SetApplicationName($"Almirante:{builder.Environment.EnvironmentName}")
+        .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath));
+}
+builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.Name = "__Host-almirante-csrf"; o.Cookie.HttpOnly = true; o.Cookie.SecurePolicy = CookieSecurePolicy.Always; o.Cookie.SameSite = SameSiteMode.Strict; o.Cookie.Path = "/"; });
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
@@ -87,6 +105,10 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     .Configure<Microsoft.Extensions.Options.IOptions<JwtOptions>>((bearerOptions, jwtOptions) =>
     {
         var jwt = jwtOptions.Value;
+        bearerOptions.MapInboundClaims = false;
+        bearerOptions.SaveToken = false;
+        bearerOptions.SecurityTokenValidators.Clear();
+        bearerOptions.SecurityTokenValidators.Add(new JwtSecurityTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = 8192 });
         bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -94,9 +116,39 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             ValidateAudience = true,
             ValidAudience = jwt.Audience,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
+            IssuerSigningKeyResolver = (_, _, kid, _) => string.IsNullOrWhiteSpace(kid) ? [] : [JwtKeySet.GetKey(jwt, kid)],
             ValidateLifetime = true,
+            RequireSignedTokens = true,
+            RequireExpirationTime = true,
+            ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+            ValidTypes = ["at+jwt"],
+            NameClaimType = JwtRegisteredClaimNames.Sub,
+            RoleClaimType = "role",
             ClockSkew = TimeSpan.FromSeconds(30),
+        };
+        bearerOptions.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var principal = context.Principal!;
+                var required = new[] { "sub", "role", "iat", "nbf", "exp", "jti", "sid" };
+                if (required.Any(type => principal.FindAll(type).Count() != 1) ||
+                    !Guid.TryParse(principal.FindFirstValue("sub"), out var uid) ||
+                    !Guid.TryParse(principal.FindFirstValue("sid"), out var sid) ||
+                    !long.TryParse(principal.FindFirstValue("iat"), out var iat) ||
+                    !long.TryParse(principal.FindFirstValue("nbf"), out var nbf) ||
+                    !long.TryParse(principal.FindFirstValue("exp"), out var exp)) { context.Fail("Perfil de token inválido."); return; }
+                var nowOffset = context.HttpContext.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
+                if (iat > nowOffset.ToUnixTimeSeconds() + 30 || nbf > exp) { context.Fail("Datas do token são incoerentes."); return; }
+                var identity = (ClaimsIdentity)principal.Identity!;
+                identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, uid.ToString()));
+                var db = context.HttpContext.RequestServices.GetRequiredService<AlmiranteDbContext>();
+                var now = nowOffset.UtcDateTime;
+                var valid = await db.AuthSessions.AsNoTracking().AnyAsync(x => x.Id == sid && x.UsuarioId == uid && x.RevokedAtUtc == null &&
+                    x.AbsoluteExpiresAtUtc > now && x.Usuario != null && x.Usuario.SecurityVersion == x.SecurityVersion && x.Usuario.Cargo != null &&
+                    x.Usuario.Cargo.Ativo && x.Usuario.Cargo.Role == principal.FindFirstValue("role"), context.HttpContext.RequestAborted);
+                if (!valid) context.Fail("Sessão inválida.");
+            }
         };
     });
 
@@ -118,7 +170,7 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod().AllowCredentials();
     });
 });
 
@@ -169,6 +221,13 @@ app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 
 app.UseCors(LocalCorsPolicy);
+
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase))
+        context.Response.Headers.CacheControl = "no-store";
+    await next();
+});
 
 app.UseAuthentication();
 app.UseAuthorization();

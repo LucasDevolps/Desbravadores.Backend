@@ -1,9 +1,15 @@
-@baseUrl = http://localhost:8090
+@baseUrl = https://localhost:8090
 @token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
+@csrf = COLE_AQUI_O_CSRF_TOKEN
+@membroId = COLE_AQUI_O_MEMBRO
+
+### 0. Obter CSRF (preserve o cookie retornado)
+GET {{baseUrl}}/api/Auth/csrf
 
 ### 1. Login (credenciais válidas)
 POST {{baseUrl}}/api/Auth/login
 Content-Type: application/json
+X-CSRF-TOKEN: {{csrf}}
 
 {
   "email": "admin@local.dev",
@@ -14,34 +20,67 @@ Content-Type: application/json
 GET {{baseUrl}}/api/Auth/Me
 Authorization: Bearer {{token}}
 
+### 2.1 Obter novo CSRF (necessário só se for enviar Authorization: Bearer no logout/refresh — o
+### antiforgery vincula o token ao usuário autenticado no momento da emissão; reaproveitar o {{csrf}}
+### do passo 0 causa 400 "meant for a different claims-based user")
+GET {{baseUrl}}/api/Auth/csrf
+Authorization: Bearer {{token}}
+
 ### 3. Logout
 POST {{baseUrl}}/api/Auth/logout
 Authorization: Bearer {{token}}
+X-CSRF-TOKEN: {{csrf}}
+
+### 3.1 Renovar (usa cookie HttpOnly; não exige Bearer)
+POST {{baseUrl}}/api/Auth/refresh
+X-CSRF-TOKEN: {{csrf}}
 
 ### 4. Listar usuários
 GET {{baseUrl}}/api/Usuarios
 Authorization: Bearer {{token}}
 
-### 5. Listar lançamentos (com paginação e filtros)
+### 5. Listar cargos
+GET {{baseUrl}}/api/Cargos
+Authorization: Bearer {{token}}
+
+### 6. Listar lançamentos (com paginação e filtros)
 GET {{baseUrl}}/api/Lancamentos?page=1&pageSize=10&search=guilherme&status=Pago&tipo=Mensalidade
 Authorization: Bearer {{token}}
 
-### 6. Criar lançamento
-POST {{baseUrl}}/api/Lancamentos
+### 7. Registrar lançamento individual
+POST {{baseUrl}}/api/Lancamentos/Registrar
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-  "membroNome": "Novo Membro",
-  "tipo": "Doação",
+  "membroId": "{{membroId}}",
+  "finalidade": "Mensalidade",
+  "descricao": "Mensalidade de outubro",
   "categoria": "Clube",
   "tipoFluxo": "Entrada",
-  "valor": 42.5,
-  "vencimento": "2026-12-01",
-  "status": "Pendente"
+  "valor": 50.00,
+  "vencimento": "2026-10-10",
+  "aplicarATodosOsMembros": false
 }
 
-### 7. Atualizar lançamento (PUT parcial)
+### 8. Registrar para todos (idempotente)
+POST {{baseUrl}}/api/Lancamentos/Registrar
+Authorization: Bearer {{token}}
+Idempotency-Key: mensalidade-2026-10
+Content-Type: application/json
+
+{
+  "membroId": null,
+  "finalidade": "Mensalidade",
+  "descricao": "Mensalidade de outubro",
+  "categoria": "Clube",
+  "tipoFluxo": "Entrada",
+  "valor": 50.00,
+  "vencimento": "2026-10-10",
+  "aplicarATodosOsMembros": true
+}
+
+### 9. Atualizar lançamento (PUT parcial)
 PUT {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
 Authorization: Bearer {{token}}
 Content-Type: application/json
@@ -50,72 +89,9 @@ Content-Type: application/json
   "status": "Pago"
 }
 
-### 8. Excluir lançamento
+### 10. Exclusão lógica auditada
 DELETE {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
 Authorization: Bearer {{token}}
-
-### 9. Listar cargos
-GET {{baseUrl}}/api/Cargos
-Authorization: Bearer {{token}}
-
-### 10. Lançamento geral: criar (exige role ADM/DIR/DIRA/SEC/TES e Idempotency-Key)
-POST {{baseUrl}}/api/Lancamentos/Geral
-Authorization: Bearer {{token}}
-Idempotency-Key: cole-aqui-um-identificador-unico-da-requisicao
 Content-Type: application/json
 
-{
-  "tipo": "Mensalidade",
-  "categoria": "Clube",
-  "tipoFluxo": "Entrada",
-  "valor": 25.00,
-  "vencimento": "2026-12-10"
-}
-
-### 11. Lançamento geral: listar (ativos, período padrão = últimos 30 dias)
-GET {{baseUrl}}/api/Lancamentos/Geral
-Authorization: Bearer {{token}}
-
-### 12. Lançamento geral: listar com período personalizado
-GET {{baseUrl}}/api/Lancamentos/Geral?periodo=personalizado&dataInicio=2026-01-01&dataFim=2026-12-31
-Authorization: Bearer {{token}}
-
-### 13. Lançamento geral: excluir (lógico, motivo obrigatório)
-DELETE {{baseUrl}}/api/Lancamentos/Geral/COLE_AQUI_O_ID
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{
-  "motivo": "Lançamento cadastrado incorretamente."
-}
-
-### 14. Lançamento flexível: despesa do clube / doação anônima (exige role ADM/DIR/DIRA/SEC/TES)
-POST {{baseUrl}}/api/Lancamentos/Registrar
-Authorization: Bearer {{token}}
-Content-Type: application/json
-
-{
-  "membroNome": "Doação de empresário local",
-  "tipo": "Doação",
-  "categoria": "Clube",
-  "tipoFluxo": "Entrada",
-  "valor": 300.00,
-  "vencimento": "2026-12-10",
-  "status": "Pendente"
-}
-
-### 15. Lançamento flexível: aplicar a todos os membros (exige Idempotency-Key)
-POST {{baseUrl}}/api/Lancamentos/Registrar
-Authorization: Bearer {{token}}
-Idempotency-Key: cole-aqui-um-identificador-unico-da-requisicao
-Content-Type: application/json
-
-{
-  "aplicarATodosOsMembros": true,
-  "tipo": "Mensalidade",
-  "categoria": "Clube",
-  "tipoFluxo": "Entrada",
-  "valor": 25.00,
-  "vencimento": "2026-12-10",
-  "status": "Pendente"
-}
+{ "motivo": "Correção de cadastro" }

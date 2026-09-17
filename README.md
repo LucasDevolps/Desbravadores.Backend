@@ -8,7 +8,7 @@ O backend está em fase de **MVP funcional** e possui:
 
 - login com e-mail e senha e emissão de token JWT;
 - consulta dos dados do usuário autenticado;
-- logout stateless — encerra a requisição, mas não revoga o token emitido;
+- sessões persistidas, refresh rotativo e logout com revogação efetiva;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
 - lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
@@ -77,7 +77,7 @@ cp .env.example .env
 Altere no `.env`, no mínimo, os valores de:
 
 - `SQL_SA_PASSWORD`;
-- `JWT_KEY`;
+- `JWT_KEY_V1` (Base64 de no mínimo 32 bytes) e `JWT_ACTIVE_KEY_ID`;
 - `SEED_ADMIN_SENHA`.
 
 O arquivo `.env` contém segredos locais e não deve ser versionado.
@@ -253,8 +253,11 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
 | `JWT_AUDIENCE` | audiência do token JWT | `Almirante.Frontend` |
-| `JWT_KEY` | chave de assinatura e validação do JWT | obrigatória |
-| `JWT_EXPIRATION_MINUTES` | duração do token em minutos | `60` |
+| `JWT_ACTIVE_KEY_ID` | `kid` usado para novas assinaturas | `v1` |
+| `JWT_KEY_V1` | chave HS256 Base64 associada a `v1` | obrigatória |
+| `JWT_ACCESS_TOKEN_MINUTES` | duração máxima do access token | `10` |
+| `AUTH_SESSION_DAYS` | limite absoluto da sessão | `7` |
+| `AUTH_REFRESH_INACTIVITY_HOURS` | inatividade máxima entre login/refresh | `24` |
 | `SEED_ADMIN_NOME` | nome do administrador inicial | `Administrador` |
 | `SEED_ADMIN_EMAIL` | e-mail do administrador inicial | `admin@local.dev` |
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
@@ -262,352 +265,96 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `CORS_ORIGIN_2` | segunda origem permitida pelo CORS | `http://localhost:4201` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint opcional para exportação OTLP | não definido |
 
-A `JWT_KEY` deve possuir pelo menos 32 caracteres e ser diferente em cada ambiente.
+A chave decodificada deve possuir pelo menos 32 bytes aleatórios e ser diferente em cada ambiente.
 
 ## Autenticação
 
 Faça login com o administrador criado pelo seed:
 
 ```bash
-curl --request POST http://localhost:8090/api/Auth/login \
+curl --request POST https://localhost:8090/api/Auth/login \
+  --header 'X-CSRF-TOKEN: TOKEN_OBTIDO_EM_/api/Auth/csrf' \
   --header 'Content-Type: application/json' \
   --data '{"email":"admin@local.dev","senha":"senha"}'
 ```
 
-A resposta contém `token.accessToken`, `token.expiresAtUtc` e os dados do usuário. Nos endpoints protegidos, envie:
+A resposta contém somente `token.accessToken` e `token.expiresAtUtc`; consulte o perfil atual em `/api/Auth/Me`. Nos endpoints protegidos, envie:
 
 ```http
 Authorization: Bearer SEU_TOKEN
 ```
 
-O logout atual não mantém blacklist nem sessão persistida. Portanto, um JWT válido continua utilizável até expirar.
+O logout revoga persistentemente a sessão apresentada (tabela `AuthSession` no SQL Server); o refresh cookie é removido e um novo login é exigido.
 
-## Endpoints
-
-Com exceção do login, do Swagger e dos health checks, todos os endpoints exigem um token JWT válido.
+O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento em que ele foi emitido. Se o cliente envia `Authorization: Bearer` em toda requisição, peça um novo `GET /api/Auth/csrf` depois do login antes de chamar `refresh`/`logout` com esse header — reaproveitar o CSRF obtido antes do login resulta em `400` (ver [`docs/authentication-security.md`](docs/authentication-security.md)).
 
 | Método | Rota | Comportamento |
 | --- | --- | --- |
-| `POST` | `/api/Auth/login` | valida e-mail e senha e retorna o token e o usuário; sujeito a rate limit do Nginx no Docker Compose (ver [Arquitetura com Nginx](#arquitetura-com-nginx-docker-compose)) |
-| `POST` | `/api/Auth/logout` | retorna `204 No Content`; não revoga o JWT |
+| `GET` | `/api/Auth/csrf` | emite a proteção antiforgery para os fluxos com cookie |
+| `POST` | `/api/Auth/login` | valida credenciais, cria sessão e retorna somente o access token |
+| `POST` | `/api/Auth/refresh` | rotaciona o refresh cookie e retorna novo access token |
+| `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
 | `GET` | `/api/Auth/Me` | retorna o usuário autenticado |
 | `GET` | `/api/Usuarios` | lista os usuários ordenados por nome |
-| `GET` | `/api/Lancamentos` | lista lançamentos com paginação e filtros |
-| `POST` | `/api/Lancamentos` | cria um lançamento |
-| `PUT` | `/api/Lancamentos/{id}` | atualiza os campos enviados de um lançamento |
-| `DELETE` | `/api/Lancamentos/{id}` | exclui (fisicamente) um lançamento |
-| `POST` | `/api/Lancamentos/Registrar` | lançamento flexível: um membro específico, anônimo/despesa do clube, ou todos os usuários cadastrados — ver [Lançamento flexível](#lançamento-flexível-registrar) |
-| `POST` | `/api/Lancamentos/Geral` | lançamento geral: cria o mesmo lançamento para todos os usuários elegíveis (idempotente) — ver [Lançamento geral](#lançamento-geral) |
-| `GET` | `/api/Lancamentos/Geral` | lista os lançamentos ativos criados por lançamento geral, com filtro de período e resumo financeiro |
-| `DELETE` | `/api/Lancamentos/Geral/{id}` | exclui logicamente (nunca fisicamente) um lançamento do escopo do lançamento geral, com motivo obrigatório e auditoria |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
-### Consulta de lançamentos
+## Lançamentos
 
-`GET /api/Lancamentos` aceita:
+O agregado financeiro possui um único fluxo de criação, protegido pelas roles `ADM`, `DIR`,
+`DIRA`, `SEC` e `TES`.
 
-| Parâmetro | Comportamento |
-| --- | --- |
-| `page` | página solicitada; valores menores que `1` são convertidos para `1` |
-| `pageSize` | quantidade por página; padrão `10` e máximo `100` |
-| `search` | busca em membro, descrição, tipo, categoria e status |
-| `status` | filtra por status; `Todos` não aplica o filtro |
-| `tipo` | filtra por tipo; `Todos` não aplica o filtro |
-| `data` | filtra o vencimento no formato `yyyy-MM-dd` |
+| Método | Rota | Finalidade |
+|---|---|---|
+| `GET` | `/api/Lancamentos` | Lista somente lançamentos ativos, com paginação e filtros |
+| `POST` | `/api/Lancamentos/Registrar` | Registra para um membro ou, atomicamente, para todos |
+| `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos |
+| `DELETE` | `/api/Lancamentos/{id}` | Exclusão lógica auditada, com motivo |
 
-Exemplo:
-
-```bash
-curl 'http://localhost:8090/api/Lancamentos?page=1&pageSize=10&tipo=Campori' \
-  --header 'Authorization: Bearer SEU_TOKEN'
-```
-
-A resposta possui `items`, `total`, `page`, `pageSize` e `totalPages`. Os itens são ordenados pelo vencimento, do mais recente para o mais antigo.
-
-### Dados de lançamentos
-
-Na criação, são obrigatórios:
-
-- `membroNome`;
-- `tipo`;
-- `categoria`;
-- `tipoFluxo`;
-- `vencimento`;
-- `status`.
-
-`membroId`, `descricao` e `moeda` são opcionais. Quando a moeda não é informada, a API utiliza `BRL`.
-
-Validado em toda criação e em toda atualização que altere o campo (`LancamentosService`/`LancamentosGeraisService`, via `LancamentoValidacao`):
-
-- **valor**: deve ser maior que zero (nem negativo, nem `0`);
-- **vencimento**: não pode ser uma data já passada (comparação por dia, UTC do servidor — hoje é permitido).
-
-Valores aceitos:
-
-- tipos: `Mensalidade`, `Campori`, `Acampamento`, `Uniflash`, `Doação`, `Evento` e `Outros`;
-- categorias: `Clube` e `Evento`;
-- tipo de fluxo (`tipoFluxo`): `Entrada` (dinheiro entrando — mensalidade, doação, taxa de evento) ou `Despesa` (dinheiro saindo — compra de material, aluguel etc.); usado para o cálculo real do resumo financeiro quando ele deixar de ser provisório (ver [Lançamento geral](#lançamento-geral));
-- status: `Pago`, `Pendente` e `Atrasado`;
-- vencimento: formato `yyyy-MM-dd`.
-
-Exemplo de criação:
-
-```bash
-curl --request POST http://localhost:8090/api/Lancamentos \
-  --header 'Authorization: Bearer SEU_TOKEN' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "membroNome": "Nome do membro",
-    "tipo": "Mensalidade",
-    "descricao": "Mensalidade do clube",
-    "categoria": "Clube",
-    "tipoFluxo": "Entrada",
-    "valor": 25.00,
-    "moeda": "BRL",
-    "vencimento": "2026-08-10",
-    "status": "Pendente"
-  }'
-```
-
-## Lançamento flexível (`Registrar`)
-
-`POST /api/Lancamentos/Registrar` cobre, num único endpoint, os três destinos possíveis de um
-lançamento — pensado para despesas do clube e contribuições avulsas (ex.: doação de um empresário
-ou fiel da igreja) além do caso já coberto pelo CRUD genérico acima:
-
-1. **Membro específico**: informe `membroId` (o `membroNome` cadastrado é usado, mesmo que outro
-   valor seja enviado no corpo).
-2. **Anônimo / despesa do clube**: não informe `membroId`; `membroNome` é obrigatório e descreve a
-   origem/destino (ex.: `"Doação de empresário local"`, `"Compra de material de escritório"`).
-3. **Todos os membros**: `aplicarATodosOsMembros: true` — `membroId` não pode ser informado junto
-   (erro `400`). Reaproveita exatamente o mecanismo do [lançamento geral](#lançamento-geral): exige
-   header `Idempotency-Key`, e a resposta é a mesma forma (`operacaoId`, `usuariosProcessados`,
-   `lancamentosCriados`, `dataHoraUtc`, `200 OK`) em vez do lançamento único (`201 Created`).
-
-Exige as mesmas roles do lançamento geral (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`) nos três modos — com
-a mesma resposta `401 "ACESSO NEGADO!"` para falta de autenticação ou de role — diferente dos
-demais endpoints de `LancamentosController`, que só exigem autenticação.
-
-Exemplo — despesa do clube:
-
-```bash
-curl --request POST http://localhost:8090/api/Lancamentos/Registrar \
-  --header 'Authorization: Bearer SEU_TOKEN' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "membroNome": "Compra de material de escritório",
-    "tipo": "Outros",
-    "categoria": "Clube",
-    "tipoFluxo": "Despesa",
-    "valor": 150.00,
-    "vencimento": "2026-12-10",
-    "status": "Pendente"
-  }'
-```
-
-Exemplo — aplicar a todos os membros:
-
-```bash
-curl --request POST http://localhost:8090/api/Lancamentos/Registrar \
-  --header 'Authorization: Bearer SEU_TOKEN' \
-  --header 'Idempotency-Key: 5b1f7e2a-9c3d-4e51-8b7a-1234567890ab' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "aplicarATodosOsMembros": true,
-    "tipo": "Mensalidade",
-    "categoria": "Clube",
-    "tipoFluxo": "Entrada",
-    "valor": 25.00,
-    "vencimento": "2026-12-10",
-    "status": "Pendente"
-  }'
-```
-
-## Lançamento geral
-
-Cria, numa única operação consistente, o mesmo lançamento para **todos os usuários cadastrados**
-(`POST /api/Lancamentos/Geral`), lista os lançamentos ativos gerados por essa operação
-(`GET /api/Lancamentos/Geral`) e permite excluir logicamente um item específico desse escopo
-(`DELETE /api/Lancamentos/Geral/{id}`). É um escopo separado do CRUD genérico acima: usa as
-mesmas tabelas (`Lancamentos`), mas nunca mistura os dois — lançamentos criados aqui têm um
-`OperacaoId` preenchido; os criados pelo CRUD genérico, não.
-
-### Autorização
-
-Os três endpoints exigem um token Bearer autenticado com uma das roles `ADM`, `DIR`, `DIRA`,
-`SEC` ou `TES`. Ao contrário do restante da API, qualquer falha de autorização neste escopo — sem
-token, token inválido/expirado, ou autenticado sem uma dessas roles — retorna sempre:
-
-```http
-HTTP/1.1 401 Unauthorized
-Content-Type: application/problem+json
-
-{ "title": "ACESSO NEGADO!", "status": 401 }
-```
-
-### Criar (`POST /api/Lancamentos/Geral`)
-
-Requer o header `Idempotency-Key` (string não vazia, definida pelo cliente, **diferente do token
-JWT**) além do corpo:
-
-```bash
-curl --request POST http://localhost:8090/api/Lancamentos/Geral \
-  --header 'Authorization: Bearer SEU_TOKEN' \
-  --header 'Idempotency-Key: 5b1f7e2a-9c3d-4e51-8b7a-1234567890ab' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "tipo": "Mensalidade",
-    "categoria": "Clube",
-    "tipoFluxo": "Entrada",
-    "valor": 25.00,
-    "vencimento": "2026-12-10"
-  }'
-```
-
-Resposta (`200 OK`):
+O contrato canônico de criação é:
 
 ```json
 {
-  "operacaoId": "9f2c9e10-...",
-  "usuariosProcessados": 42,
-  "lancamentosCriados": 42,
-  "dataHoraUtc": "2026-12-01T12:00:00Z"
+  "membroId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "finalidade": "Mensalidade",
+  "descricao": "Mensalidade de outubro",
+  "categoria": "Clube",
+  "tipoFluxo": "Entrada",
+  "valor": 50.00,
+  "vencimento": "2026-10-10",
+  "aplicarATodosOsMembros": false
 }
 ```
 
-- **Usuários elegíveis**: hoje, todo usuário cadastrado em `Usuarios`. O domínio não define, em
-  nenhum outro lugar do sistema, uma regra de elegibilidade diferente (`Usuario` não tem flag de
-  status/ativo, nem distinção por cargo usada para esse fim) — esta é uma decisão documentada, não
-  um requisito explícito da issue; ajustar em `LancamentosGeraisService.CreateAsync` se surgir uma
-  regra diferente (ex.: restringir ao cargo `DS`).
-- **Idempotência**: reenviar a mesma `Idempotency-Key` com o mesmo corpo devolve `200` com a
-  mesma resposta original, sem criar novos lançamentos. A mesma chave com corpo diferente (tipo,
-  categoria, tipo de fluxo, valor ou vencimento) devolve `409 Conflict`. A garantia é persistida
-  (tabela `LancamentosOperacoes`, chave única) e vale sob concorrência real (não apenas no mesmo
-  processo).
-- **Consistência**: a operação inteira (registro de idempotência + todos os lançamentos) é
-  persistida em uma única transação — todos os lançamentos são criados, ou nenhum é.
-- Lançamentos criados entram com `status: "Pendente"`, `moeda: "BRL"` e `ativo: true`; `tipoFluxo`
-  é o informado na requisição.
+`membroId` é obrigatório no modo individual e deve ser nulo no modo geral. O servidor obtém o
+nome por `Usuarios`, define novos lançamentos como `Pendente` e trabalha exclusivamente em BRL;
+por isso nome, status e moeda não fazem parte do request. `Vencimento` é `DateOnly` e não aceita
+datas passadas.
 
-### Listar (`GET /api/Lancamentos/Geral`)
+No modo geral (`aplicarATodosOsMembros: true`), `Idempotency-Key` é obrigatório. Uma única
+operação carrega os IDs elegíveis, insere o lote com `AddRange`/`SaveChanges` atômico e registra
+`OperacaoId`. Repetir chave e payload devolve a operação existente; mudar o payload resulta em
+`409 Conflict`. O hash inclui finalidade, descrição, categoria, fluxo, valor e vencimento.
 
-Retorna somente lançamentos ativos (`Ativo = 1`) deste escopo, filtrados por vencimento — o
-domínio não define outra data para orientar esta listagem, então **vencimento** foi escolhido por
-representar quando a cobrança é devida. `Vencimento` é `date` (sem hora/fuso), então o dia inicial
-e o final do intervalo entram por completo, sem qualquer perda por causa de horário.
+`DELETE` recebe `{ "motivo": "..." }`, apenas muda `Ativo` para `false` e mantém a auditoria por
+trigger/`SESSION_CONTEXT`. Listagens projetam o nome com JOIN, sem armazená-lo em `Lancamentos` e
+sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Despesa) é a
+direção financeira, portanto ambos permanecem.
 
-| Parâmetro | Comportamento |
-| --- | --- |
-| (nenhum) | equivalente a `periodo=30` |
-| `periodo=30` \| `60` \| `90` | hoje e os N−1 dias anteriores (data UTC do servidor) |
-| `periodo=personalizado&dataInicio=AAAA-MM-DD&dataFim=AAAA-MM-DD` | intervalo informado; as duas datas são obrigatórias e `dataInicio` não pode ser posterior a `dataFim` |
+## Banco de dados e migrations
 
-Período desconhecido, datas em formato inválido, período personalizado sem as duas datas, ou
-`dataInicio` posterior a `dataFim` retornam `400 Bad Request`.
-
-```bash
-curl 'http://localhost:8090/api/Lancamentos/Geral?periodo=90' \
-  --header 'Authorization: Bearer SEU_TOKEN'
-```
-
-```json
-{
-  "lancamentos": [ { "id": "...", "tipo": "Mensalidade", "valor": 25.00, "vencimento": "2026-12-10", "status": "Pendente", "...": "..." } ],
-  "resumo": { "totalDespesas": 800.00, "totalEntradas": 1000.00, "saldoAtual": 200.00 }
-}
-```
-
-`resumo` é **provisório**: valores fixos, sempre os mesmos independentemente do período ou da
-existência de lançamentos (inclusive com `lancamentos: []`). Ver
-`LancamentosGeraisService.ResumoFixoProvisorio` — substituir por um cálculo real quando a regra de
-negócio (o que conta como despesa/entrada) for definida.
-
-### Excluir (`DELETE /api/Lancamentos/Geral/{id}`)
-
-Exclusão **lógica** (`UPDATE ... SET Ativo = 0`), nunca `DELETE` físico. Exige motivo no corpo:
-
-```bash
-curl --request DELETE http://localhost:8090/api/Lancamentos/Geral/COLE_AQUI_O_ID \
-  --header 'Authorization: Bearer SEU_TOKEN' \
-  --header 'Content-Type: application/json' \
-  --data '{ "motivo": "Lançamento cadastrado incorretamente." }'
-```
-
-- `motivo` é obrigatório, validado após `Trim()`, entre 1 e 255 caracteres; vazio, só espaços, ou
-  maior que 255 caracteres retornam `400` (nunca truncado silenciosamente).
-- Lançamento inexistente **ou já inativo** retorna `404 Not Found` — uma segunda tentativa de
-  excluir o mesmo item não gera nova auditoria (o `UPDATE` não afeta nenhuma linha, então o
-  trigger de auditoria, abaixo, nem chega a rodar).
-- Sucesso retorna `204 No Content` e afeta somente o lançamento indicado, nunca o lote inteiro.
-
-#### Auditoria (trigger no banco)
-
-Toda transição `Ativo: true -> false` é auditada pelo trigger
-`TR_Lancamentos_AuditoriaExclusaoLogica` (SQL Server) na tabela `lancamentos_deletados`, com o
-responsável pela exclusão, IP, motivo, data/hora UTC (gerada pelo banco) e um snapshot do
-lançamento antes da exclusão. O usuário responsável e o IP nunca são aceitos do frontend: chegam
-via `SESSION_CONTEXT`, alimentado pela API na mesma conexão/transação do `UPDATE`
-(`LancamentosGeraisService.DeleteAsync`) a partir das claims JWT validadas e do
-`HttpContext.Connection.RemoteIpAddress` (que já respeita `ReverseProxy:TrustedNetworkCidr`, ver
-[Encaminhamento do IP real](#encaminhamento-do-ip-real-e-proteção-contra-spoofing)). Sem esse
-contexto, o próprio trigger rejeita a desativação (a transação inteira é revertida).
-
-Essa auditoria só existe em SQL Server real — o provider EF Core InMemory usado no restante da
-suíte de testes não tem triggers nem `SESSION_CONTEXT` (ver
-[Testes](#testes) sobre `LancamentosGeraisAuditoriaSqlServerTests`).
-
-## Banco de dados e seed
-
-Na inicialização, a API aplica as migrações do Entity Framework Core. Em seguida:
-
-1. cria o administrador configurado, caso ainda não exista um usuário com o mesmo e-mail normalizado;
-2. inclui 20 lançamentos demonstrativos somente quando a tabela de lançamentos está vazia.
-
-O processo é idempotente e pode ser executado novamente sem duplicar o administrador nem os dados demonstrativos já existentes.
+Migrations são aplicadas incrementalmente no startup. `UnifyLancamentosFlow` renomeia `Tipo` para
+`Finalidade`, remove `MembroNome`/`Moeda`, cria a FK restritiva para `Usuarios`, atualiza índices e
+o trigger de auditoria sem apagar o histórico de migrations.
 
 ## Testes
 
-Execute a suíte a partir da raiz (exclui os testes que exigem Docker, ver abaixo):
-
 ```bash
-dotnet test backend/Almirante.slnx --filter "Category!=RequiresDocker"
+dotnet test backend/Almirante.slnx
 ```
 
-A maior parte dos testes utiliza o provedor em memória do Entity Framework Core e cobre:
-
-- login válido, inválido e requisição malformada;
-- autorização dos endpoints protegidos;
-- listagem, paginação e filtros;
-- validação dos lançamentos;
-- criação, atualização e exclusão;
-- lançamento geral (`LancamentosGeraisTests`): autorização (as 5 roles permitidas e a mensagem
-  exata `ACESSO NEGADO!`), idempotência (reenvio, conflito, consistência), filtros de período,
-  resumo fixo e exclusão lógica — tudo o que não depende do trigger/SQL Server real;
-- configuração do `ForwardedHeadersMiddleware` (`ForwardedHeadersTests`): X-Forwarded-For/X-Forwarded-Proto
-  só são aceitos quando a conexão imediata vem da rede confiável configurada, e um valor forjado à
-  esquerda do header (simulando o encadeamento do Nginx) é ignorado;
-- respostas `404 Not Found`.
-
-### Testes contra SQL Server real (`LancamentosGeraisAuditoriaSqlServerTests`)
-
-O provedor EF Core InMemory não tem triggers, `SESSION_CONTEXT` nem impõe índices únicos entre
-instâncias de `DbContext` de forma equivalente ao SQL Server — então o comportamento do trigger de
-auditoria da exclusão lógica do lançamento geral (usuário/IP/motivo/snapshot, atualização de
-múltiplas linhas, rollback sem contexto válido, ausência de vazamento de `SESSION_CONTEXT` entre
-requisições) e a idempotência sob concorrência real só podem ser comprovados contra um banco de
-verdade. `LancamentosGeraisAuditoriaSqlServerTests` sobe um SQL Server 2022 real via
-[Testcontainers](https://dotnet.testcontainers.org/) (a mesma imagem do `compose.yaml`) e roda as
-migrações reais contra ele.
-
-Requer Docker disponível na máquina. Por isso fica marcado com `[Trait("Category",
-"RequiresDocker")]` e é excluído do `dotnet test` acima e do CI (`backend-ci.yml`), que roda num
-runner self-hosted sem Docker configurado. Para rodar localmente:
-
-```bash
-dotnet test backend/Almirante.Api.Tests --filter "Category=RequiresDocker"
-```
+A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
+conflito de chave e soft delete.
 
 ### Cenários manuais do rate limit do Nginx
 
@@ -681,3 +428,7 @@ As requisições aos health checks são excluídas dos traces.
 O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
 
 Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
+
+## Segurança da autenticação (issue #29)
+
+O login agora retorna somente o envelope `token`; o perfil atual vem de `GET /api/Auth/Me`. Sessões e hashes de refresh tokens são persistidos no SQL Server, refresh é rotativo por cookie seguro e logout revoga a sessão apresentada. O fluxo de frontend, configuração Base64/kid, rotação, migração, TLS e riscos residuais estão em [`docs/authentication-security.md`](docs/authentication-security.md). Tokens emitidos antes desta mudança não têm `sid` e exigem novo login.

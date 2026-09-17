@@ -8,12 +8,11 @@ namespace Almirante.Api.Controllers;
 
 [ApiController]
 [Route("api/Lancamentos")]
-[Authorize]
+[AutorizarRoles(Roles.Admin, Roles.Diretor, Roles.DiretorAssociado, Roles.Secretario, Roles.Tesoureiro)]
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
 
     [HttpGet]
-    [AutorizarRoles(Roles.Admin, Roles.Diretor, Roles.DiretorAssociado, Roles.Secretario, Roles.Tesoureiro)]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -22,27 +21,17 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         [FromQuery] int pageSize = 10,
         [FromQuery] string? search = null,
         [FromQuery] string? status = null,
-        [FromQuery] string? tipo = null,
-        [FromQuery] string? data = null,
+        [FromQuery] string? finalidade = null,
+        [FromQuery] DateOnly? vencimento = null,
         CancellationToken cancellationToken = default)
     {
         var response = await mediator.Send(
-            new ListLancamentosQuery(page, pageSize, search, status, tipo, data), cancellationToken
+            new ListLancamentosQuery(page, pageSize, search, status, finalidade, vencimento), cancellationToken
         );
         return Ok(response);
     }
 
-    [HttpPost]
-    [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
-    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<LancamentoDto>> Create([FromBody] CreateLancamentoRequest request, CancellationToken cancellationToken)
-    {
-        var created = await mediator.Send(request, cancellationToken);
-        return CreatedAtAction(nameof(List), new { }, created);
-    }
-
     [HttpPost("Registrar")]
-    [AutorizarRoles(Roles.Admin, Roles.Diretor, Roles.DiretorAssociado, Roles.Secretario, Roles.Tesoureiro)]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<LancamentoGeralResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -75,6 +64,10 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
                 Detail = "O header Idempotency-Key informado já foi usado em uma operação anterior com tipo, categoria, tipo de fluxo, valor ou vencimento diferentes.",
                 Status = StatusCodes.Status409Conflict,
             }),
+            RegistrarLancamentoOutcome.MembroNaoEncontrado => NotFound(new ProblemDetails
+            {
+                Title = "Membro não encontrado.", Status = StatusCodes.Status404NotFound,
+            }),
             _ => throw new InvalidOperationException($"Resultado inesperado: {resultado.Outcome}."),
         };
     }
@@ -93,9 +86,13 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Delete(Guid id, [FromBody] DeleteLancamentoRequest request, CancellationToken cancellationToken)
     {
-        var deleted = await mediator.Send(new DeleteLancamentoCommand(id), cancellationToken);
+        if (!User.TentarObterUsuarioId(out var usuarioId)) return AcessoNegado();
+        request.Id = id;
+        request.UsuarioResponsavelId = usuarioId;
+        request.IpResponsavel = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "0.0.0.0";
+        var deleted = await mediator.Send(request, cancellationToken);
         return deleted ? NoContent() : NotFound();
     }
 
