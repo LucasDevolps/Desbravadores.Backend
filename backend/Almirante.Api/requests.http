@@ -1,4 +1,4 @@
-@baseUrl = https://localhost:8090
+@baseUrl = https://localhost:7206
 @token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
 @csrf = COLE_AQUI_O_CSRF_TOKEN
 @membroId = COLE_AQUI_O_MEMBRO
@@ -13,7 +13,7 @@ X-CSRF-TOKEN: {{csrf}}
 
 {
   "email": "admin@local.dev",
-  "senha": "senha"
+  "senha": "SUA_SENHA_DO_SEED"
 }
 
 ### 2. Auth/Me
@@ -35,11 +35,11 @@ X-CSRF-TOKEN: {{csrf}}
 POST {{baseUrl}}/api/Auth/refresh
 X-CSRF-TOKEN: {{csrf}}
 
-### 4. Listar usuários
+### 4. Listar usuários (ADM, DIR, DIRA, SEC, TES; demais cargos: 403)
 GET {{baseUrl}}/api/Usuarios
 Authorization: Bearer {{token}}
 
-### 5. Listar cargos
+### 5. Listar cargos (ADM, DIR, DIRA, SEC, TES; demais cargos: 403)
 GET {{baseUrl}}/api/Cargos
 Authorization: Bearer {{token}}
 

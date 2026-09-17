@@ -18,6 +18,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Diretório das chaves do Data Protection (DataProtection__KeysPath no compose.yaml). Precisa pertencer
+# ao usuário "app": um volume nomeado vazio herda essa posse ao ser montado. Sem isso o volume nasce
+# como root, a API não grava a chave e todo antiforgery (csrf/login/refresh/logout) responde 500.
+RUN mkdir -p /var/lib/almirante/dataprotection \
+    && chown app:app /var/lib/almirante/dataprotection \
+    && chmod 700 /var/lib/almirante/dataprotection
+
 USER app
 
 COPY --from=build /app/publish .

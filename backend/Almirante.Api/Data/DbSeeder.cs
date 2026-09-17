@@ -53,12 +53,29 @@ public static class DbSeeder
         SeedOptions seedOptions,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(seedOptions.Email))
+        {
+            throw new InvalidOperationException("SeedAdmin:Email é obrigatório.");
+        }
+
         var emailNormalizado = seedOptions.Email.Trim().ToUpperInvariant();
 
+        // Idempotente: um admin existente nunca tem a senha sobrescrita, e a senha configurada só é
+        // exigida/validada quando o bootstrap realmente vai criar o usuário.
         var exists = await db.Usuarios.AnyAsync(u => u.EmailNormalizado == emailNormalizado, cancellationToken);
         if (exists)
         {
             return;
+        }
+
+        var erros = PasswordPolicy.Validate(seedOptions.Senha, seedOptions.Email);
+        if (erros.Count > 0)
+        {
+            // Nunca inclui o valor da senha na mensagem.
+            throw new InvalidOperationException(
+                "SeedAdmin:Senha não atende à política de senha e o administrador inicial não foi criado. " +
+                "Defina-a fora do Git (dotnet user-secrets, variável de ambiente SeedAdmin__Senha/SEED_ADMIN_SENHA ou cofre). " +
+                string.Join(" ", erros));
         }
 
         var cargoAdminId = await db.Cargos

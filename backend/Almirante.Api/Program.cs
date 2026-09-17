@@ -20,11 +20,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
-builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.AddOptions<JwtOptions>().Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
-    .ValidateDataAnnotations().Validate(o => o.Keys.ContainsKey(o.ActiveKeyId), "ActiveKeyId deve existir em Keys.")
-    .Validate(o => { try { foreach (var kid in o.Keys.Keys) _ = JwtKeySet.GetKey(o, kid); return true; } catch { return false; } }, "Todas as chaves devem ser Base64 e ter ao menos 32 bytes.")
-    .ValidateOnStart();
+    .ValidateDataAnnotations().ValidateOnStart();
+// Falha clara no startup para chave ausente, placeholder, Base64 inválido ou < 32 bytes (HS256).
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<JwtOptions>, JwtOptionsValidator>();
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
 builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection(ReverseProxyOptions.SectionName));
 
@@ -60,10 +59,22 @@ builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<LoginLockout>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
-builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<CargosService>();
+builder.Services.AddLoginRateLimiting(builder.Configuration);
+
+// HSTS (emitido por SecurityHeadersMiddleware fora de Development e só em HTTPS). Padrão: 365 dias,
+// sem includeSubDomains/preload — só habilite esses dois após confirmar que TODOS os subdomínios
+// do domínio publicado servem HTTPS (preload é praticamente irreversível).
+builder.Services.AddHsts(options =>
+{
+    var hsts = builder.Configuration.GetSection("Hsts");
+    options.MaxAge = TimeSpan.FromDays(hsts.GetValue("MaxAgeDays", 365));
+    options.IncludeSubDomains = hsts.GetValue("IncludeSubDomains", false);
+    options.Preload = hsts.GetValue("Preload", false);
+});
 builder.Services.AddHostedService<AuthSessionCleanupService>();
 
 // MediatR: os DTOs de request em Dtos/LancamentoDtos.cs implementam IRequest<T> diretamente (sem
@@ -107,8 +118,10 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         var jwt = jwtOptions.Value;
         bearerOptions.MapInboundClaims = false;
         bearerOptions.SaveToken = false;
-        bearerOptions.SecurityTokenValidators.Clear();
-        bearerOptions.SecurityTokenValidators.Add(new JwtSecurityTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = 8192 });
+        // TokenHandlers (e não SecurityTokenValidators, obsoleto e ignorado por padrão desde o .NET 8)
+        // é a coleção efetivamente usada na validação; o limite de tamanho só vale se estiver aqui.
+        bearerOptions.TokenHandlers.Clear();
+        bearerOptions.TokenHandlers.Add(new Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler { MapInboundClaims = false, MaximumTokenSizeInBytes = 8192 });
         bearerOptions.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -152,12 +165,16 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization();
+// RBAC: a role vem da claim "role" (RoleClaimType acima) e, a cada request, OnTokenValidated confere
+// que ela ainda é a role do cargo ativo do usuário no banco. Matriz documentada em Security/Roles.cs.
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(Policies.GestaoFinanceira, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Diretoria));
+    options.AddPolicy(Policies.GestaoCadastros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Diretoria));
+});
 
-// Único IAuthorizationMiddlewareResultHandler da aplicação. Delega para o comportamento padrão em
-// todos os endpoints, exceto os restritos por role ([AutorizarRoles] ou [Authorize(Roles=...)]),
-// onde qualquer falha de autorização vira 401 "ACESSO NEGADO!" (ver o handler para detalhes) — não
-// precisa registrar nada aqui por controller/policy, funciona para qualquer um que use o atributo.
+// Único IAuthorizationMiddlewareResultHandler da aplicação: sem autenticação válida -> 401 (challenge
+// padrão); autenticado sem permissão -> 403 "ACESSO NEGADO!".
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 
 const string LocalCorsPolicy = "LocalFrontend";
@@ -207,27 +224,40 @@ var app = builder.Build();
 
 app.MapDefaultEndpoints();
 
+// Ordem do pipeline (cada item depende dos anteriores):
+// 1. ForwardedHeaders primeiro: IP/esquema reais (só de proxy confiável) antes de HSTS, redirect
+//    HTTPS, rate limiting (partição por IP), auditoria de IP e autenticação.
+app.UseForwardedHeaders();
+
+// 2. Cabeçalhos de segurança antes de tudo que pode gerar resposta (Swagger, erros, 401/403/404/429).
+app.UseMiddleware<SecurityHeadersMiddleware>();
+app.Use((context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase))
+    {
+        // OnStarting: sobrevive ao Response.Clear() do UseExceptionHandler.
+        context.Response.OnStarting(static state =>
+        {
+            ((HttpContext)state).Response.Headers.CacheControl = "no-store";
+            return Task.CompletedTask;
+        }, context);
+    }
+    return next(context);
+});
+
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
-// Precisa vir antes de qualquer middleware que dependa do IP/esquema reais (redirect HTTPS,
-// autenticação, autorização), para que HttpContext.Connection.RemoteIpAddress e Request.Scheme
-// já reflitam o cliente original quando esses middlewares executarem.
-app.UseForwardedHeaders();
-
 app.UseHttpsRedirection();
 
 app.UseCors(LocalCorsPolicy);
 
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase))
-        context.Response.Headers.CacheControl = "no-store";
-    await next();
-});
+// 3. Rate limiting antes da autenticação: requisições rejeitadas não consultam sessão no banco nem
+//    chegam ao antiforgery/controller.
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

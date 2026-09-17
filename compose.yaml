@@ -54,6 +54,11 @@ services:
       Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-10}
       Jwt__AbsoluteSessionDays: ${AUTH_SESSION_DAYS:-7}
       Jwt__RefreshInactivityHours: ${AUTH_REFRESH_INACTIVITY_HOURS:-24}
+      LoginProtection__RateLimit__PermitLimit: ${LOGIN_RATE_LIMIT_PERMITS:-5}
+      LoginProtection__RateLimit__WindowSeconds: ${LOGIN_RATE_LIMIT_WINDOW_SECONDS:-60}
+      LoginProtection__Lockout__MaxFailedAttempts: ${LOGIN_LOCKOUT_MAX_FAILURES:-10}
+      LoginProtection__Lockout__FailureWindowMinutes: ${LOGIN_LOCKOUT_FAILURE_WINDOW_MINUTES:-15}
+      LoginProtection__Lockout__LockoutMinutes: ${LOGIN_LOCKOUT_MINUTES:-15}
       SeedAdmin__Nome: ${SEED_ADMIN_NOME:-Administrador}
       SeedAdmin__Email: ${SEED_ADMIN_EMAIL:-admin@local.dev}
       SeedAdmin__Senha: ${SEED_ADMIN_SENHA:?defina SEED_ADMIN_SENHA no arquivo .env}
@@ -92,8 +97,10 @@ services:
       - "${API_HOST_PORT:-8090}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    # 127.0.0.1 (e não localhost): no Alpine "localhost" resolve primeiro para ::1, mas o nginx só
+    # escuta IPv4 ("listen 80"), e o healthcheck falhava sempre.
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

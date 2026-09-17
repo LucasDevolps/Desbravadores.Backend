@@ -14,21 +14,41 @@ namespace Almirante.Api.Services;
 public sealed record AuthResult(LoginResponse Response, string RefreshToken, DateTime RefreshExpiresAtUtc);
 
 public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher,
-    JwtTokenService tokenService, IOptions<JwtOptions> options, TimeProvider clock)
+    JwtTokenService tokenService, IOptions<JwtOptions> options, TimeProvider clock, LoginLockout lockout)
 {
     private readonly JwtOptions _options = options.Value;
+
+    // Hash de uma senha aleatória, verificado quando o e-mail não existe, para que esse caminho custe
+    // o mesmo PBKDF2 de uma senha errada e o tempo de resposta não revele contas existentes.
+    private static readonly Usuario DummyUser = new() { Nome = "", Email = "", EmailNormalizado = "", SenhaHash = "" };
+    private static string? _dummyHash;
 
     public async Task<AuthResult?> LoginAsync(string email, string senha, CancellationToken ct)
     {
         var normalized = email.Trim().ToUpperInvariant();
         var user = await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct);
-        if (user is null || user.Cargo is null || !user.Cargo.Ativo) return null;
+        var now = clock.GetUtcNow().UtcDateTime;
+        if (user is null)
+        {
+            _dummyHash ??= passwordHasher.HashPassword(DummyUser, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+            passwordHasher.VerifyHashedPassword(DummyUser, _dummyHash, senha);
+            return null;
+        }
+
+        // A senha é sempre verificada (mesmo bloqueada ou com cargo inativo) para manter o custo
+        // constante; a resposta ao chamador é a mesma em todos os casos de falha.
         var verified = passwordHasher.VerifyHashedPassword(user, user.SenhaHash, senha);
-        if (verified == PasswordVerificationResult.Failed) return null;
+        if (LoginLockout.EstaBloqueado(user, now)) return null;
+        if (verified == PasswordVerificationResult.Failed)
+        {
+            await lockout.RegistrarFalhaAsync(user, now, ct);
+            return null;
+        }
+        if (user.Cargo is null || !user.Cargo.Ativo) return null;
+        LoginLockout.RegistrarSucesso(user);
         if (verified == PasswordVerificationResult.SuccessRehashNeeded)
             user.SenhaHash = passwordHasher.HashPassword(user, senha);
 
-        var now = clock.GetUtcNow().UtcDateTime;
         var session = new AuthSession { Id = Guid.NewGuid(), UsuarioId = user.Id, CreatedAtUtc = now,
             LastRenewedAtUtc = now, AbsoluteExpiresAtUtc = now.AddDays(_options.AbsoluteSessionDays), SecurityVersion = user.SecurityVersion };
         var raw = CreateRefreshToken();
