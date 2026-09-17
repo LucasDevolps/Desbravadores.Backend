@@ -229,6 +229,13 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Dispara agora as validações registradas com ValidateOnStart (JwtOptions, ConnectionStringsOptions):
+// por padrão elas só rodam dentro de app.Run() (quando o host efetivamente inicia), o que é DEPOIS do
+// seed/migração do SQL Server logo abaixo. Sem esta chamada explícita, uma connection string insegura
+// em Production (TrustServerCertificate=True/Encrypt=False) chegaria a conectar e migrar o banco antes
+// da falha de startup do SqlServerConnectionSecurityValidator ser lançada.
+app.Services.GetRequiredService<Microsoft.Extensions.Options.IStartupValidator>().Validate();
+
 app.MapDefaultEndpoints();
 
 // Ordem do pipeline (cada item depende dos anteriores):
