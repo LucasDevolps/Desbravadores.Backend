@@ -14,6 +14,8 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
     public const string AdminEmail = "admin@local.dev";
     public const string AdminSenha = "senha123";
 
+    public AlmiranteApiFactory() => ClientOptions.BaseAddress = new Uri("https://localhost");
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
@@ -25,8 +27,9 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
                 ["ConnectionStrings:almirante"] = "Server=localhost;Database=ignored;Trusted_Connection=True;",
                 ["Jwt:Issuer"] = "Almirante.Api.Tests",
                 ["Jwt:Audience"] = "Almirante.Api.Tests",
-                ["Jwt:Key"] = "test-only-signing-key-1234567890-abcdef",
-                ["Jwt:ExpirationMinutes"] = "60",
+                ["Jwt:ActiveKeyId"] = "test-v1",
+                ["Jwt:Keys:test-v1"] = "dGVzdC1vbmx5LXNpZ25pbmcta2V5LTEyMzQ1Njc4OTAtYWJjZGVm",
+                ["Jwt:AccessTokenMinutes"] = "10",
                 ["SeedAdmin:Nome"] = "Administrador",
                 ["SeedAdmin:Email"] = AdminEmail,
                 ["SeedAdmin:Senha"] = AdminSenha,

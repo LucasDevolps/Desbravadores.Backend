@@ -1,9 +1,14 @@
-@baseUrl = http://localhost:8090
+@baseUrl = https://localhost:8090
 @token = COLE_AQUI_O_TOKEN_APOS_O_LOGIN
+@csrf = COLE_AQUI_O_CSRF_TOKEN
+
+### 0. Obter CSRF (preserve o cookie retornado)
+GET {{baseUrl}}/api/Auth/csrf
 
 ### 1. Login (credenciais válidas)
 POST {{baseUrl}}/api/Auth/login
 Content-Type: application/json
+X-CSRF-TOKEN: {{csrf}}
 
 {
   "email": "admin@local.dev",
@@ -17,6 +22,11 @@ Authorization: Bearer {{token}}
 ### 3. Logout
 POST {{baseUrl}}/api/Auth/logout
 Authorization: Bearer {{token}}
+X-CSRF-TOKEN: {{csrf}}
+
+### 3.1 Renovar (usa cookie HttpOnly; não exige Bearer)
+POST {{baseUrl}}/api/Auth/refresh
+X-CSRF-TOKEN: {{csrf}}
 
 ### 4. Listar usuários
 GET {{baseUrl}}/api/Usuarios

@@ -23,6 +23,8 @@ public class SqlServerLancamentosGeraisFactory : WebApplicationFactory<Program>
     public const string AdminEmail = "admin-sql@local.dev";
     public const string AdminSenha = "senha123";
 
+    public SqlServerLancamentosGeraisFactory() => ClientOptions.BaseAddress = new Uri("https://localhost");
+
     // Só afeta variáveis de ambiente (processo inteiro) pelo tempo necessário para construir o
     // host desta fábrica; uma vez construído, o host já capturou sua própria configuração e não
     // volta a ler o ambiente, então é seguro reconfigurar o ambiente para a próxima fábrica logo
@@ -32,8 +34,9 @@ public class SqlServerLancamentosGeraisFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("ConnectionStrings__almirante", connectionString);
         Environment.SetEnvironmentVariable("Jwt__Issuer", "Almirante.Api.Tests.SqlServer");
         Environment.SetEnvironmentVariable("Jwt__Audience", "Almirante.Api.Tests.SqlServer");
-        Environment.SetEnvironmentVariable("Jwt__Key", "test-only-signing-key-1234567890-abcdef");
-        Environment.SetEnvironmentVariable("Jwt__ExpirationMinutes", "60");
+        Environment.SetEnvironmentVariable("Jwt__ActiveKeyId", "test-v1");
+        Environment.SetEnvironmentVariable("Jwt__Keys__test-v1", "dGVzdC1vbmx5LXNpZ25pbmcta2V5LTEyMzQ1Njc4OTAtYWJjZGVm");
+        Environment.SetEnvironmentVariable("Jwt__AccessTokenMinutes", "10");
         Environment.SetEnvironmentVariable("SeedAdmin__Nome", "Administrador");
         Environment.SetEnvironmentVariable("SeedAdmin__Email", AdminEmail);
         Environment.SetEnvironmentVariable("SeedAdmin__Senha", AdminSenha);

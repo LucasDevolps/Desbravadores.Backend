@@ -65,6 +65,7 @@ public class LancamentosGeraisAuditoriaSqlServerTests : IClassFixture<Lancamento
     private async Task<HttpClient> CriarClienteAdminAsync()
     {
         var client = _fixture.Factory.CreateClient();
+        await TestHelpers.AddCsrfAsync(client);
         var response = await client.PostAsJsonAsync("/api/Auth/login", new
         {
             email = SqlServerLancamentosGeraisFactory.AdminEmail,

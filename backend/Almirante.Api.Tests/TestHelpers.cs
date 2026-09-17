@@ -16,6 +16,7 @@ public static class TestHelpers
 
     public static async Task<string> LoginAsAdminAsync(HttpClient client)
     {
+        await AddCsrfAsync(client);
         var response = await client.PostAsJsonAsync("/api/Auth/login", new
         {
             email = AlmiranteApiFactory.AdminEmail,
@@ -25,6 +26,15 @@ public static class TestHelpers
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<LoginResponse>();
         return body!.Token.AccessToken;
+    }
+
+    public static async Task AddCsrfAsync(HttpClient client)
+    {
+        var response = await client.GetAsync("/api/Auth/csrf");
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        client.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
+        client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", json.GetProperty("csrfToken").GetString());
     }
 
     public static async Task<HttpClient> CreateAuthenticatedClientAsync(AlmiranteApiFactory factory)
@@ -64,6 +74,7 @@ public static class TestHelpers
         await db.SaveChangesAsync();
 
         var client = factory.CreateClient();
+        await AddCsrfAsync(client);
         var response = await client.PostAsJsonAsync("/api/Auth/login", new { email, senha = SenhaPadraoTeste });
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<LoginResponse>();
