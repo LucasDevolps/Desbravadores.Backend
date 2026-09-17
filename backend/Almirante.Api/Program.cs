@@ -77,9 +77,7 @@ builder.Services.AddMediatR(cfg =>
 });
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-// AddControllersWithViews (em vez de AddControllers) registra ValidateAntiforgeryTokenAuthorizationFilter,
-// exigido pelo [ValidateAntiForgeryToken] do AuthController; não há Views/Razor pages neste projeto.
-builder.Services.AddControllersWithViews().AddJsonOptions(options =>
+builder.Services.AddControllers().AddJsonOptions(options =>
 {
     // ASP.NET Core já usa camelCase por padrão; mantido explícito para clareza.
     options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
@@ -95,6 +93,7 @@ if (!string.IsNullOrWhiteSpace(dataProtectionPath))
         .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath));
 }
 builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.Name = "__Host-almirante-csrf"; o.Cookie.HttpOnly = true; o.Cookie.SecurePolicy = CookieSecurePolicy.Always; o.Cookie.SameSite = SameSiteMode.Strict; o.Cookie.Path = "/"; });
+builder.Services.AddSingleton<CookieCsrfProtection>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();

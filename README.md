@@ -286,7 +286,7 @@ Authorization: Bearer SEU_TOKEN
 
 O logout revoga persistentemente a sessão apresentada (tabela `AuthSession` no SQL Server); o refresh cookie é removido e um novo login é exigido.
 
-O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento em que ele foi emitido. Se o cliente envia `Authorization: Bearer` em toda requisição, peça um novo `GET /api/Auth/csrf` depois do login antes de chamar `refresh`/`logout` com esse header — reaproveitar o CSRF obtido antes do login resulta em `400` (ver [`docs/authentication-security.md`](docs/authentication-security.md)).
+O token CSRF protege as operações com cookie (`login`, `refresh`, `logout`) e não depende do bearer: o mesmo token vale com ou sem `Authorization`, inclusive com o access token expirado. Essas operações só são aceitas por HTTPS; em HTTP respondem `400` (ver [`docs/authentication-security.md`](docs/authentication-security.md)).
 
 | Método | Rota | Comportamento |
 | --- | --- | --- |

@@ -3,7 +3,6 @@ using System.Security.Claims;
 using Almirante.Api.Dtos;
 using Almirante.Api.Security;
 using Almirante.Api.Services;
-using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,14 +10,14 @@ namespace Almirante.Api.Controllers;
 
 [ApiController, Route("api/Auth")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class AuthController(AuthService authService, IAntiforgery antiforgery) : ControllerBase
+public sealed class AuthController(AuthService authService, CookieCsrfProtection csrf) : ControllerBase
 {
     private const string RefreshCookie = "__Host-almirante-refresh";
 
-    [HttpGet("csrf"), AllowAnonymous]
-    public IActionResult Csrf() => Ok(new { csrfToken = antiforgery.GetAndStoreTokens(HttpContext).RequestToken });
+    [HttpGet("csrf"), AllowAnonymous, OperacaoComCookie]
+    public IActionResult Csrf() => Ok(new { csrfToken = csrf.IssueRequestToken(HttpContext) });
 
-    [HttpPost("login"), AllowAnonymous, ValidateAntiForgeryToken]
+    [HttpPost("login"), AllowAnonymous, OperacaoComCookie(ValidarCsrf = true)]
     public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
         var result = await authService.LoginAsync(request.Email, request.Senha, ct);
@@ -27,7 +26,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         return Ok(result.Response);
     }
 
-    [HttpPost("refresh"), AllowAnonymous, ValidateAntiForgeryToken]
+    [HttpPost("refresh"), AllowAnonymous, OperacaoComCookie(ValidarCsrf = true)]
     public async Task<ActionResult<LoginResponse>> Refresh(CancellationToken ct)
     {
         if (!Request.Cookies.TryGetValue(RefreshCookie, out var raw)) return InvalidCredentials();
@@ -38,7 +37,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         return Ok(result.Response);
     }
 
-    [HttpPost("logout"), AllowAnonymous, ValidateAntiForgeryToken]
+    [HttpPost("logout"), AllowAnonymous, OperacaoComCookie(ValidarCsrf = true)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         Request.Cookies.TryGetValue(RefreshCookie, out var raw);
