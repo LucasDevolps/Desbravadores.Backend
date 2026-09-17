@@ -73,3 +73,6 @@ dist/
 *.pem
 secrets.json
 appsettings.*.local.json
+
+# Certificados TLS locais do nginx (compose)
+nginx/certs/

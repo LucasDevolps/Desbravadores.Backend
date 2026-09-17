@@ -163,7 +163,7 @@ builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegad
 
 const string LocalCorsPolicy = "LocalFrontend";
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? ["http://localhost:4200", "http://localhost:4201"];
+    ?? ["https://localhost:4200", "https://localhost:4201"];
 
 builder.Services.AddCors(options =>
 {

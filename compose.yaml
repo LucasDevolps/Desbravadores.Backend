@@ -1,16 +1,17 @@
 name: almirante
 
-# Rede dedicada com subnet fixa: é o que permite ao ASP.NET Core (ReverseProxy__TrustedNetworkCidr,
-# ver api.environment abaixo) confiar apenas no nginx para os headers X-Forwarded-For/X-Forwarded-Proto,
-# em vez de confiar em qualquer proxy. Se alterar a subnet aqui, ajuste também API_TRUSTED_PROXY_CIDR
-# no .env.
+# Rede dedicada com subnet fixa e IP fixo para o nginx: a API (ReverseProxy__TrustedNetworkCidr, ver
+# api.environment) confia nos headers X-Forwarded-For/X-Forwarded-Proto SOMENTE vindos do nginx
+# (/32), não de qualquer container da rede nem do gateway (o host Docker). Se a subnet padrão
+# conflitar com outra rede da máquina, ajuste ALMIRANTE_SUBNET, NGINX_IPV4 e API_TRUSTED_PROXY_CIDR
+# juntos no .env.
 networks:
   almirante-net:
-    name: almirante-net
+    name: ${ALMIRANTE_NETWORK_NAME:-almirante-net}
     driver: bridge
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${ALMIRANTE_SUBNET:-172.30.0.0/24}
 
 services:
   sqlserver:
@@ -57,18 +58,22 @@ services:
       SeedAdmin__Nome: ${SEED_ADMIN_NOME:-Administrador}
       SeedAdmin__Email: ${SEED_ADMIN_EMAIL:-admin@local.dev}
       SeedAdmin__Senha: ${SEED_ADMIN_SENHA:?defina SEED_ADMIN_SENHA no arquivo .env}
-      Cors__AllowedOrigins__0: ${CORS_ORIGIN_1:-http://localhost:4200}
-      Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
-      ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
+      # Origens HTTPS: o cookie de refresh é SameSite=Strict e uma origem http:// é outro site
+      # (schemeful same-site), então o navegador não o enviaria.
+      Cors__AllowedOrigins__0: ${CORS_ORIGIN_1:-https://localhost:4200}
+      Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-https://localhost:4201}
+      ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.10/32}
       DataProtection__KeysPath: /var/lib/almirante/dataprotection
     networks:
       - almirante-net
     # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
-    # publica HTTP para fora é o nginx, para que o rate limit do login não possa ser contornado
+    # publica para fora é o nginx, para que o rate limit do login não possa ser contornado
     # acessando a API diretamente.
     expose:
       - "8080"
     volumes:
+      # Chaves do Data Protection (antiforgery) persistidas entre reinícios/recriações. O diretório é
+      # criado na imagem com dono "app" e permissão 700, e um volume novo herda essa posse.
       - almirante-dataprotection:/var/lib/almirante/dataprotection
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -85,15 +90,22 @@ services:
       api:
         condition: service_healthy
     networks:
-      - almirante-net
-    # Único ponto de entrada HTTP externo. Mantém a porta 8090 já usada pelo projeto
-    # (documentação, healthchecks e workflows de deploy continuam apontando para ela).
+      almirante-net:
+        ipv4_address: ${NGINX_IPV4:-172.30.0.10}
+    # 8090 (HTTP) continua atendendo /health e /alive para healthchecks e o workflow de deploy; todo
+    # o resto é redirecionado para HTTPS (API_HTTPS_HOST_PORT), onde a API é servida.
     ports:
       - "${API_HOST_PORT:-8090}:80"
+      - "${API_HTTPS_HOST_PORT:-8443}:443"
+    environment:
+      ALMIRANTE_PUBLIC_HTTPS_PORT: ${API_HTTPS_HOST_PORT:-8443}
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      # tls.crt e tls.key (PEM), fora do Git. Ver docs/authentication-security.md.
+      - ${NGINX_CERTS_DIR:-./nginx/certs}:/etc/nginx/certs:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/health || exit 1"]
+      # 127.0.0.1 explícito: "localhost" resolve para ::1 no Alpine e o nginx escuta só IPv4.
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -102,6 +114,6 @@ services:
 
 volumes:
   almirante-sqlserver-data:
-    name: almirante-sqlserver-data
+    name: ${SQL_DATA_VOLUME:-almirante-sqlserver-data}
   almirante-dataprotection:
-    name: almirante-dataprotection
+    name: ${DATAPROTECTION_VOLUME:-almirante-dataprotection}
