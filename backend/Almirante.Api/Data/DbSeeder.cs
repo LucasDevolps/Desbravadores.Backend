@@ -35,7 +35,7 @@ public static class DbSeeder
     // existence check can occasionally race with SQL Server still settling right after a restart
     // and attempt CREATE DATABASE again. Retrying once, now that the database is visible, makes
     // startup idempotent instead of crashing the whole process on an unhandled SqlException.
-    private static async Task MigrateWithRetryAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
+    public static async Task MigrateWithRetryAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
     {
         try
         {

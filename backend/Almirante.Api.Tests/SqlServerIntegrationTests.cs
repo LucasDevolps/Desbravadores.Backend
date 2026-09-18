@@ -17,6 +17,11 @@ public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides 
     public const string EnvironmentVariable = "ALMIRANTE_TEST_SQLSERVER";
     private readonly string _connectionString = BuildConnectionString();
 
+    // Exposta para testes que precisam de um AlmiranteDbContext cru, antes de subir a
+    // WebApplicationFactory (que aplica todas as migrations no boot) — ver LancamentosAuditMigrationTests.
+    // internal (não protected): a classe é sealed, então não há subclasse para herdar o acesso.
+    internal string ConnectionString => _connectionString;
+
     private static string BuildConnectionString()
     {
         var server = Environment.GetEnvironmentVariable(EnvironmentVariable);

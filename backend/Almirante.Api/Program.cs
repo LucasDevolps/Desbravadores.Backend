@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Almirante.Api.Cli;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
 using Almirante.Api.Infrastructure;
@@ -22,6 +23,19 @@ builder.AddServiceDefaults();
 
 builder.Services.AddOptions<JwtOptions>().Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
     .ValidateDataAnnotations().ValidateOnStart();
+// Rotação de chave (issue #50): compose.yaml passa a mapear Jwt__Keys__v1/v2 como opcionais
+// (${JWT_KEY_V1:-}), então uma entrada "não configurada" chega aqui como string vazia em vez de
+// simplesmente ausente do dicionário. Remove essas entradas antes de qualquer validação/uso — sem
+// isso, JwtOptionsValidator (abaixo) recusaria o startup por causa de uma chave que o operador nunca
+// pretendeu configurar. Não muda o suporte existente a múltiplas chaves por "kid": só limpa entradas
+// vazias antes dele agir.
+builder.Services.PostConfigure<JwtOptions>(options =>
+{
+    foreach (var kid in options.Keys.Where(kv => string.IsNullOrWhiteSpace(kv.Value)).Select(kv => kv.Key).ToList())
+    {
+        options.Keys.Remove(kid);
+    }
+});
 // Falha clara no startup para chave ausente, placeholder, Base64 inválido ou < 32 bytes (HS256).
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<JwtOptions>, JwtOptionsValidator>();
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
@@ -60,7 +74,26 @@ builder.Services.AddOptions<ForwardedHeadersOptions>()
         options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(trustedNetworkCidr));
     });
 
-builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
+// Usuário SQL da aplicação com senha rotacionada em execução (ver DbCredentialManager). Só ativa
+// quando DbCredentials:AppUser está definido; caso contrário, comportamento inalterado.
+var dbCredentialOptions = builder.Configuration.GetSection(DbCredentialOptions.SectionName).Get<DbCredentialOptions>() ?? new DbCredentialOptions();
+builder.Services.AddOptions<DbCredentialOptions>().Bind(builder.Configuration.GetSection(DbCredentialOptions.SectionName))
+    .Validate(o => o.RotationHours is >= 1 and <= 720, "DbCredentials:RotationHours deve estar entre 1 e 720.").ValidateOnStart();
+if (dbCredentialOptions.Enabled)
+{
+    var appCredentialProvider = new AppDbCredentialProvider();
+    builder.Services.AddSingleton(appCredentialProvider);
+    builder.Services.AddSingleton<DbCredentialManager>();
+    builder.Services.AddHostedService<DbCredentialRotationService>();
+    builder.Services.AddHealthChecks().AddCheck<DbConnectivityHealthCheck>("almirante-db");
+    builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante",
+        configureSettings: settings => settings.DisableHealthChecks = true,
+        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider)));
+}
+else
+{
+    builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
+}
 
 builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
 builder.Services.AddSingleton<JwtTokenService>();
@@ -229,12 +262,29 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Ferramenta local de rotação de senha do admin (issue #50): roda antes do pipeline HTTP normal e
+// sai em seguida, sem subir o host web. Ver Cli/AdminPasswordResetCli.cs.
+if (args.Length > 0 && string.Equals(args[0], AdminPasswordResetCli.CommandName, StringComparison.OrdinalIgnoreCase))
+{
+    // Com usuário de aplicação rotacionado, a senha só existe dentro do processo da API; a CLI usa a
+    // conexão administrativa (o AppUser tampouco poderia ler/atualizar por ela sem provisionar/rotacionar).
+    var cliConnection = dbCredentialOptions.Enabled ? app.Configuration.GetConnectionString(DbCredentialManager.AdminConnectionName) : null;
+    return await AdminPasswordResetCli.RunAsync(app.Services, args, cliConnection);
+}
+
 // Dispara agora as validações registradas com ValidateOnStart (JwtOptions, ConnectionStringsOptions):
 // por padrão elas só rodam dentro de app.Run() (quando o host efetivamente inicia), o que é DEPOIS do
 // seed/migração do SQL Server logo abaixo. Sem esta chamada explícita, uma connection string insegura
 // em Production (TrustServerCertificate=True/Encrypt=False) chegaria a conectar e migrar o banco antes
 // da falha de startup do SqlServerConnectionSecurityValidator ser lançada.
 app.Services.GetRequiredService<Microsoft.Extensions.Options.IStartupValidator>().Validate();
+
+// Migrations (DDL) pela conexão administrativa e provisionamento/rotação inicial da senha do usuário da
+// aplicação, antes de qualquer acesso do DbContext normal (que só tem SELECT/INSERT/UPDATE).
+if (dbCredentialOptions.Enabled)
+{
+    await app.Services.GetRequiredService<DbCredentialManager>().InitializeAsync();
+}
 
 app.MapDefaultEndpoints();
 
@@ -287,5 +337,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+return 0;
 
 public partial class Program;

@@ -6,6 +6,9 @@ on:
     paths:
       - "backend/**"
       - "compose.yaml"
+      - "compose.tls.yaml"
+      - "compose.https.yaml"
+      - "nginx/**"
       - ".github/workflows/backend-deploy.yml"
 
 jobs:
@@ -36,8 +39,52 @@ jobs:
       - name: Copiar .env fixo da máquina
         run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
 
+      # Escolhe explicitamente os overlays do Compose a partir de DEPLOY_MODE (definido no
+      # .env fixo da máquina; ausente = "http", o comportamento de sempre). Falha aqui, sem
+      # fallback silencioso, se DEPLOY_MODE e NGINX_CONF_FILE estiverem incoerentes — evita
+      # publicar em HTTP achando que está em TLS (ou vice-versa). O mesmo valor "files" é
+      # reusado em todos os passos abaixo (validação, subida, logs, healthcheck), então é
+      # sempre a mesma configuração efetiva.
+      - name: Selecionar modo de deploy (compose overlay)
+        id: compose-mode
+        run: |
+          set -a
+          source .env
+          set +a
+          mode="${DEPLOY_MODE:-http}"
+          case "$mode" in
+            http)
+              if [ -n "${NGINX_CONF_FILE:-}" ] && [ "${NGINX_CONF_FILE}" != "nginx.conf" ]; then
+                echo "DEPLOY_MODE=http mas NGINX_CONF_FILE=${NGINX_CONF_FILE} não é nginx.conf (nem vazio). Ajuste o .env desta máquina." >&2
+                exit 1
+              fi
+              files="-f compose.yaml"
+              ;;
+            tls)
+              if [ "${NGINX_CONF_FILE:-}" != "nginx.tls.conf" ]; then
+                echo "DEPLOY_MODE=tls exige NGINX_CONF_FILE=nginx.tls.conf no .env desta máquina." >&2
+                exit 1
+              fi
+              if [ -z "${TLS_PUBLIC_HOST:-}" ]; then
+                echo "DEPLOY_MODE=tls exige TLS_PUBLIC_HOST (nome DNS do certificado) no .env desta máquina." >&2
+                exit 1
+              fi
+              files="-f compose.yaml -f compose.tls.yaml"
+              ;;
+            *)
+              echo "DEPLOY_MODE inválido: '$mode' (use 'http' ou 'tls')." >&2
+              exit 1
+              ;;
+          esac
+          echo "modo=$mode"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Validar configuração efetiva do Compose
+        run: docker compose ${{ steps.compose-mode.outputs.files }} config --quiet
+
       - name: Build e subir containers
-        run: docker compose up -d --build
+        run: docker compose ${{ steps.compose-mode.outputs.files }} up -d --build
 
       # Quando o passo acima falha porque um container ficou unhealthy (ex.: API
       # derrubando na inicialização), o compose não mostra o motivo — só "dependency
@@ -45,7 +92,7 @@ jobs:
       # entrar na máquina do runner manualmente.
       - name: Logs da API em caso de falha ao subir
         if: failure()
-        run: docker compose logs --no-color --tail=200 api
+        run: docker compose ${{ steps.compose-mode.outputs.files }} logs --no-color --tail=200 api
 
       # A aplicação roda as migrations pendentes automaticamente na
       # inicialização (Program.cs chama DbSeeder.SeedAsync antes de aceitar
@@ -60,16 +107,29 @@ jobs:
           set -a
           source .env
           set +a
-          port="${API_HOST_PORT:-8090}"
+          mode="${{ steps.compose-mode.outputs.mode }}"
+          if [ "$mode" = "tls" ]; then
+            # Modo TLS: exige a borda HTTPS pública de verdade (certificado válido para o
+            # host, resposta final 200). Sem -k/--insecure — um certificado inválido deve
+            # reprovar o deploy, não ser contornado. compose.tls.yaml publica só 443.
+            # O certificado é emitido para o nome público, não para "localhost": usa esse nome na
+            # URL (a verificação de identidade passa) e o --resolve o aponta para esta máquina.
+            url="https://${TLS_PUBLIC_HOST}/health"
+            curl_flags="-fsS --resolve ${TLS_PUBLIC_HOST}:443:127.0.0.1"
+          else
+            port="${API_HOST_PORT:-8090}"
+            url="http://localhost:${port}/health"
+            curl_flags="-sf"
+          fi
           for i in $(seq 1 60); do
-            if curl -sf "http://localhost:${port}/health" > /dev/null; then
-              echo "API saudável em http://localhost:${port}"
+            if curl $curl_flags "$url" > /dev/null; then
+              echo "API saudável em $url"
               exit 0
             fi
             sleep 3
           done
-          echo "API não respondeu em tempo hábil." >&2
-          docker compose logs --tail=100 api
+          echo "API não respondeu em tempo hábil em $url." >&2
+          docker compose ${{ steps.compose-mode.outputs.files }} logs --tail=100 api
           exit 1
 
       - name: Limpar imagens antigas
@@ -174,6 +234,24 @@ jobs:
             Write-Host "Nginx instalado em C:\nginx"
           } else {
             Write-Host "Nginx já instalado em C:\nginx"
+          }
+
+      # nginx/nginx.windows.conf (versionado no repo) é HTTP-only por design (loopback,
+      # nunca exposto à internet — ver o próprio arquivo). Se este host algum dia ganhar TLS
+      # configurado manualmente (fora do repo, ex.: um listener 443/ssl adicionado à mão em
+      # C:\nginx\conf\almirante.conf), o passo abaixo pararia e sobrescreveria com HTTP a
+      # cada deploy. Este guard aborta em vez de sobrescrever nesse caso — não decide por
+      # conta própria como reconciliar; só evita apagar silenciosamente.
+      - name: Verificar se a config atual do Nginx já tem TLS configurado manualmente
+        shell: pwsh
+        run: |
+          $path = "C:\nginx\conf\almirante.conf"
+          if (Test-Path $path) {
+            $atual = Get-Content $path -Raw
+            if ($atual -match '(?im)^\s*listen\s+.*\b443\b' -or $atual -match '(?im)^\s*ssl_certificate\b') {
+              Write-Error "C:\nginx\conf\almirante.conf já tem um listener TLS/443 que não vem de nginx/nginx.windows.conf (que é HTTP-only por design). Abortando para não sobrescrever uma configuração TLS manual deste host. Se essa config TLS não for mais necessária, remova-a manualmente antes de rodar o deploy de novo."
+              exit 1
+            }
           }
 
       # nginx/nginx.windows.conf (versionado no repo) é a fonte da verdade; este passo só
