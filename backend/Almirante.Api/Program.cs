@@ -74,7 +74,26 @@ builder.Services.AddOptions<ForwardedHeadersOptions>()
         options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(trustedNetworkCidr));
     });
 
-builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
+// Usuário SQL da aplicação com senha rotacionada em execução (ver DbCredentialManager). Só ativa
+// quando DbCredentials:AppUser está definido; caso contrário, comportamento inalterado.
+var dbCredentialOptions = builder.Configuration.GetSection(DbCredentialOptions.SectionName).Get<DbCredentialOptions>() ?? new DbCredentialOptions();
+builder.Services.AddOptions<DbCredentialOptions>().Bind(builder.Configuration.GetSection(DbCredentialOptions.SectionName))
+    .Validate(o => o.RotationHours is >= 1 and <= 720, "DbCredentials:RotationHours deve estar entre 1 e 720.").ValidateOnStart();
+if (dbCredentialOptions.Enabled)
+{
+    var appCredentialProvider = new AppDbCredentialProvider();
+    builder.Services.AddSingleton(appCredentialProvider);
+    builder.Services.AddSingleton<DbCredentialManager>();
+    builder.Services.AddHostedService<DbCredentialRotationService>();
+    builder.Services.AddHealthChecks().AddCheck<DbConnectivityHealthCheck>("almirante-db");
+    builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante",
+        configureSettings: settings => settings.DisableHealthChecks = true,
+        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider)));
+}
+else
+{
+    builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
+}
 
 builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
 builder.Services.AddSingleton<JwtTokenService>();
@@ -247,7 +266,10 @@ var app = builder.Build();
 // sai em seguida, sem subir o host web. Ver Cli/AdminPasswordResetCli.cs.
 if (args.Length > 0 && string.Equals(args[0], AdminPasswordResetCli.CommandName, StringComparison.OrdinalIgnoreCase))
 {
-    return await AdminPasswordResetCli.RunAsync(app.Services, args);
+    // Com usuário de aplicação rotacionado, a senha só existe dentro do processo da API; a CLI usa a
+    // conexão administrativa (o AppUser tampouco poderia ler/atualizar por ela sem provisionar/rotacionar).
+    var cliConnection = dbCredentialOptions.Enabled ? app.Configuration.GetConnectionString(DbCredentialManager.AdminConnectionName) : null;
+    return await AdminPasswordResetCli.RunAsync(app.Services, args, cliConnection);
 }
 
 // Dispara agora as validações registradas com ValidateOnStart (JwtOptions, ConnectionStringsOptions):
@@ -256,6 +278,13 @@ if (args.Length > 0 && string.Equals(args[0], AdminPasswordResetCli.CommandName,
 // em Production (TrustServerCertificate=True/Encrypt=False) chegaria a conectar e migrar o banco antes
 // da falha de startup do SqlServerConnectionSecurityValidator ser lançada.
 app.Services.GetRequiredService<Microsoft.Extensions.Options.IStartupValidator>().Validate();
+
+// Migrations (DDL) pela conexão administrativa e provisionamento/rotação inicial da senha do usuário da
+// aplicação, antes de qualquer acesso do DbContext normal (que só tem SELECT/INSERT/UPDATE).
+if (dbCredentialOptions.Enabled)
+{
+    await app.Services.GetRequiredService<DbCredentialManager>().InitializeAsync();
+}
 
 app.MapDefaultEndpoints();
 

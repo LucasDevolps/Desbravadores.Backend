@@ -13,14 +13,16 @@ public sealed class SqlServerConnectionSecurityValidator(IHostEnvironment enviro
 {
     public ValidateOptionsResult Validate(string? name, ConnectionStringsOptions options)
     {
-        var failures = Validate(options.Almirante, environment.IsProduction()).ToList();
+        var failures = Validate(options.Almirante, environment.IsProduction())
+            .Concat(Validate(options.AlmiranteAdmin, environment.IsProduction(), "AlmiranteAdmin"))
+            .ToList();
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 
     // Núcleo testável isoladamente, sem IHostEnvironment. Nunca inclui a connection string (nem
     // trechos dela) nas mensagens de erro — só os nomes das opções problemáticas — para que a falha
     // de startup não vaze usuário/senha em log ou exceção.
-    public static IEnumerable<string> Validate(string? connectionString, bool isProduction)
+    public static IEnumerable<string> Validate(string? connectionString, bool isProduction, string name = "Almirante")
     {
         if (!isProduction || string.IsNullOrWhiteSpace(connectionString)) yield break;
 
@@ -38,7 +40,7 @@ public sealed class SqlServerConnectionSecurityValidator(IHostEnvironment enviro
 
         if (builder.TrustServerCertificate)
         {
-            yield return $"{ConnectionStringsOptions.SectionName}:Almirante: TrustServerCertificate=True não é permitido em Production " +
+            yield return $"{ConnectionStringsOptions.SectionName}:{name}: TrustServerCertificate=True não é permitido em Production " +
                 "(o cliente deixaria de validar a identidade do SQL Server, permitindo MITM). Configure um certificado confiável no " +
                 "SQL Server e use TrustServerCertificate=False.";
         }
@@ -49,7 +51,7 @@ public sealed class SqlServerConnectionSecurityValidator(IHostEnvironment enviro
         bool encrypt = builder.Encrypt;
         if (!encrypt)
         {
-            yield return $"{ConnectionStringsOptions.SectionName}:Almirante: Encrypt=False não é permitido em Production " +
+            yield return $"{ConnectionStringsOptions.SectionName}:{name}: Encrypt=False não é permitido em Production " +
                 "(a conexão com o SQL Server ficaria sem criptografia). Use Encrypt=True.";
         }
     }

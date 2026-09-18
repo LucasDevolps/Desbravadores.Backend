@@ -51,7 +51,13 @@ services:
       # autoassinado, então desenvolvimento local precisa definir SQL_TRUST_SERVER_CERTIFICATE=True no
       # .env (ver .env.example). Em Production, True aqui faz a API recusar iniciar
       # (SqlServerConnectionSecurityValidator) em vez de aceitar TLS sem validação de identidade.
-      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      # Usuário da aplicação (menor privilégio): a connection string "almirante" NÃO leva usuário/senha;
+      # a API cria/rotaciona o login DbCredentials__AppUser (só SELECT/INSERT/UPDATE) e injeta a senha a
+      # cada conexão. "AlmiranteAdmin" (sa) é usada só para migrations e para a rotação da senha.
+      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      ConnectionStrings__AlmiranteAdmin: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      DbCredentials__AppUser: ${SQL_APP_USER:-almirante_user_bd}
+      DbCredentials__RotationHours: ${SQL_APP_PASSWORD_ROTATION_HOURS:-24}
       Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
       Jwt__Audience: ${JWT_AUDIENCE:-Almirante.Frontend}
       Jwt__ActiveKeyId: ${JWT_ACTIVE_KEY_ID:-v1}

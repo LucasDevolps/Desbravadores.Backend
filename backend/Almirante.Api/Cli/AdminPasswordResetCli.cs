@@ -67,7 +67,7 @@ public static class AdminPasswordResetCli
     // Entrada de linha de comando: `dotnet run --project backend/Almirante.Api -- reset-admin-password <email>`.
     // Roda antes do host normal subir (ver Program.cs) e nunca aceita a senha como argumento —
     // só via prompt interativo sem eco, para não sobrar em histórico de shell/log de processo.
-    public static async Task<int> RunAsync(IServiceProvider services, string[] args, CancellationToken cancellationToken = default)
+    public static async Task<int> RunAsync(IServiceProvider services, string[] args, string? connectionStringOverride = null, CancellationToken cancellationToken = default)
     {
         if (args.Length < 2 || string.IsNullOrWhiteSpace(args[1]))
         {
@@ -85,7 +85,9 @@ public static class AdminPasswordResetCli
         }
 
         using var scope = services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
+        await using var overrideDb = connectionStringOverride is null ? null
+            : new AlmiranteDbContext(new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(connectionStringOverride).Options);
+        var db = overrideDb ?? scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
         var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<Usuario>>();
         var clock = scope.ServiceProvider.GetRequiredService<TimeProvider>();
 
