@@ -65,6 +65,10 @@ jobs:
                 echo "DEPLOY_MODE=tls exige NGINX_CONF_FILE=nginx.tls.conf no .env desta máquina." >&2
                 exit 1
               fi
+              if [ -z "${TLS_PUBLIC_HOST:-}" ]; then
+                echo "DEPLOY_MODE=tls exige TLS_PUBLIC_HOST (nome DNS do certificado) no .env desta máquina." >&2
+                exit 1
+              fi
               files="-f compose.yaml -f compose.tls.yaml"
               ;;
             *)
@@ -108,8 +112,10 @@ jobs:
             # Modo TLS: exige a borda HTTPS pública de verdade (certificado válido para o
             # host, resposta final 200). Sem -k/--insecure — um certificado inválido deve
             # reprovar o deploy, não ser contornado. compose.tls.yaml publica só 443.
-            url="https://localhost/health"
-            curl_flags="-fsS"
+            # O certificado é emitido para o nome público, não para "localhost": usa esse nome na
+            # URL (a verificação de identidade passa) e o --resolve o aponta para esta máquina.
+            url="https://${TLS_PUBLIC_HOST}/health"
+            curl_flags="-fsS --resolve ${TLS_PUBLIC_HOST}:443:127.0.0.1"
           else
             port="${API_HOST_PORT:-8090}"
             url="http://localhost:${port}/health"

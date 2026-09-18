@@ -109,6 +109,15 @@ public static class AdminPasswordResetCli
     private static string ReadPasswordFromConsole(string prompt)
     {
         Console.Write(prompt);
+        if (Console.IsInputRedirected)
+        {
+            // Sem TTY (pipe, docker exec sem -it): ReadKey lançaria InvalidOperationException. Lê uma
+            // linha do stdin (não há eco, pois não há terminal); a senha continua fora de argv/log.
+            var line = Console.In.ReadLine();
+            Console.WriteLine();
+            return line ?? "";
+        }
+
         var buffer = new System.Text.StringBuilder();
         ConsoleKeyInfo key;
         while ((key = Console.ReadKey(intercept: true)).Key != ConsoleKey.Enter)
