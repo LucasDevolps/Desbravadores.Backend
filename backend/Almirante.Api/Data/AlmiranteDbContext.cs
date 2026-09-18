@@ -80,6 +80,15 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasIndex(l => l.Ativo);
             entity.HasIndex(l => l.OperacaoId);
             entity.HasOne(l => l.Membro).WithMany(u => u.Lancamentos).HasForeignKey(l => l.MembroId).OnDelete(DeleteBehavior.Restrict);
+
+            // Auditoria mínima do PUT (issue #50): só o último responsável, sem navegação (mesmo padrão
+            // de LancamentoOperacao.CriadoPorUsuarioId/LancamentoDeletado.UsuarioResponsavelId abaixo).
+            // Restrict (não Cascade): excluir um usuário nunca deve apagar o histórico de lançamentos que
+            // ele atualizou.
+            entity.HasOne<Usuario>()
+                .WithMany()
+                .HasForeignKey(l => l.AtualizadoPorUsuarioId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<LancamentoOperacao>(entity =>

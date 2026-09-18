@@ -46,6 +46,9 @@ public sealed class Lancamento
     public TipoFluxoLancamento TipoFluxo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public DateTime? DataAtualizacao { get; set; }
+    // Nullable porque lançamentos históricos foram atualizados antes desta coluna existir (issue #50).
+    // Vem exclusivamente da identidade autenticada (ver LancamentosController.Update); nunca do body da requisição.
+    public Guid? AtualizadoPorUsuarioId { get; set; }
     public bool Ativo { get; set; } = true;
     public Guid? OperacaoId { get; set; }
 }

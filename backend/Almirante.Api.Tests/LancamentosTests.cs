@@ -78,6 +78,72 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
     }
 
     [Fact]
+    public async Task Update_RegistraUsuarioResponsavelAPartirDaIdentidadeAutenticada()
+    {
+        var membro = await TestHelpers.AddUsuarioAsync(factory, "Atualizar", "DS");
+        var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
+        var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
+
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var entity = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.SingleAsync(l => l.Id == created.Id));
+        Assert.Equal(usuarioId, entity.AtualizadoPorUsuarioId);
+        Assert.NotNull(entity.DataAtualizacao);
+    }
+
+    [Fact]
+    public async Task Update_IgnoraUsuarioResponsavelEnviadoNoBody_UsaSempreAIdentidadeAutenticada()
+    {
+        var membro = await TestHelpers.AddUsuarioAsync(factory, "Forjar", "DS");
+        var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
+        var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
+
+        // "usuarioResponsavelId" não existe no DTO público (é [JsonIgnore]); mesmo enviado no body,
+        // não pode substituir a identidade autenticada.
+        var forjado = Guid.NewGuid();
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago", usuarioResponsavelId = forjado });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var entity = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.SingleAsync(l => l.Id == created.Id));
+        Assert.Equal(usuarioId, entity.AtualizadoPorUsuarioId);
+        Assert.NotEqual(forjado, entity.AtualizadoPorUsuarioId);
+    }
+
+    [Fact]
+    public async Task Update_RetornaNotFound_ParaLancamentoInexistente()
+    {
+        var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{Guid.NewGuid()}", new { status = "Pago" });
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Update_RegistroHistoricoComResponsavelNulo_ContinuaValidoEPassaAReceberOResponsavel()
+    {
+        var membro = await TestHelpers.AddUsuarioAsync(factory, "Historico", "DS");
+        var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
+        var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
+
+        // Simula um lançamento anterior a esta coluna existir (nunca atualizado, ou migrado sem o valor).
+        await TestHelpers.WithDbAsync(factory, async db =>
+        {
+            var entity = await db.Lancamentos.SingleAsync(l => l.Id == created!.Id);
+            entity.AtualizadoPorUsuarioId = null;
+            await db.SaveChangesAsync();
+            return true;
+        });
+
+        var list = await (await client.GetAsync("/api/Lancamentos?search=Historico")).Content.ReadFromJsonAsync<LancamentosResponse>();
+        Assert.Single(list!.Items);
+
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var entityAtualizado = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.SingleAsync(l => l.Id == created.Id));
+        Assert.Equal(usuarioId, entityAtualizado.AtualizadoPorUsuarioId);
+    }
+
+    [Fact]
     public async Task Delete_EhLogico_EListagemIgnoraInativo()
     {
         var membro=await TestHelpers.AddUsuarioAsync(factory,"Excluir","DS");

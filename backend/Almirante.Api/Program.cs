@@ -27,6 +27,13 @@ builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<JwtO
 builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
 builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection(ReverseProxyOptions.SectionName));
 
+// Falha clara no startup em Production com TrustServerCertificate=True ou Encrypt=False na connection
+// string do SQL Server (ver SqlServerConnectionSecurityValidator); Development continua permitindo
+// certificado autoassinado.
+builder.Services.AddOptions<ConnectionStringsOptions>().Bind(builder.Configuration.GetSection(ConnectionStringsOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ConnectionStringsOptions>, SqlServerConnectionSecurityValidator>();
+
 // Só confia nos headers X-Forwarded-For/X-Forwarded-Proto quando ReverseProxy:TrustedNetworkCidr
 // estiver configurado (Docker/nginx). Sem essa configuração, ForwardedHeaders permanece "None"
 // (padrão) e o middleware não faz nada — preserva o comportamento atual fora do Docker (ex.: IIS),
@@ -221,6 +228,13 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
+
+// Dispara agora as validações registradas com ValidateOnStart (JwtOptions, ConnectionStringsOptions):
+// por padrão elas só rodam dentro de app.Run() (quando o host efetivamente inicia), o que é DEPOIS do
+// seed/migração do SQL Server logo abaixo. Sem esta chamada explícita, uma connection string insegura
+// em Production (TrustServerCertificate=True/Encrypt=False) chegaria a conectar e migrar o banco antes
+// da falha de startup do SqlServerConnectionSecurityValidator ser lançada.
+app.Services.GetRequiredService<Microsoft.Extensions.Options.IStartupValidator>().Validate();
 
 app.MapDefaultEndpoints();
 
