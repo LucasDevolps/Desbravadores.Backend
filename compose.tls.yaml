@@ -1,0 +1,40 @@
+# TLS "publicado": overlay opt-in para expor a API via HTTPS com um certificado real (emitido por uma
+# CA, ex.: Let's Encrypt, ou fornecido pela infraestrutura responsável pelo domínio) num ambiente
+# acessível fora da máquina local.
+#
+# Não confundir com compose.https.yaml: aquele é só para desenvolvimento local, com certificado
+# autoassinado gerado em nginx/certs/ e a porta ligada a 127.0.0.1 (ver docs/local-login.md). Este
+# overlay assume um domínio/IP público de verdade e redireciona HTTP -> HTTPS (nginx/nginx.tls.conf);
+# não use os dois overlays ao mesmo tempo.
+#
+# Uso (ver docs/authentication-security.md para o passo a passo completo e o que preencher no .env):
+#   NGINX_CONF_FILE=nginx.tls.conf docker compose -f compose.yaml -f compose.tls.yaml up -d --build
+# (ou defina NGINX_CONF_FILE=nginx.tls.conf permanentemente no .env deste ambiente, já que ele
+# também precisa ser lido pelo serviço nginx do compose.yaml base)
+#
+# A porta 80 continua vindo do compose.yaml base (API_HOST_PORT — com nginx.tls.conf ela passa a só
+# redirecionar para HTTPS, em vez de servir a API). Em publicação real defina API_HOST_PORT=80 no
+# .env; os mapeamentos de porta dos dois arquivos se somam (Compose não substitui a lista), então
+# manter o padrão 8090 aqui só deixaria as duas portas redirecionando, sem nenhum problema de
+# segurança, mas exigindo abrir as duas no firewall/roteador à toa.
+services:
+  nginx:
+    ports:
+      - "${TLS_HTTPS_HOST_PORT:-443}:443"
+    volumes:
+      # read_only + bind (não volume nomeado): o certificado/chave vivem fora do Git e fora de
+      # qualquer volume gerenciado pelo Docker, no caminho que o operador do ambiente escolher via
+      # TLS_CERT_PATH/TLS_KEY_PATH no .env. "create_host_path: false" faz o Compose recusar subir se
+      # o arquivo ainda não existir, em vez de criar silenciosamente um diretório vazio no lugar.
+      - type: bind
+        source: ${TLS_CERT_PATH:?defina TLS_CERT_PATH (caminho do certificado/fullchain, fora do Git) no arquivo .env deste ambiente}
+        target: /etc/nginx/tls-certs/fullchain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TLS_KEY_PATH:?defina TLS_KEY_PATH (caminho da chave privada, fora do Git) no arquivo .env deste ambiente}
+        target: /etc/nginx/tls-certs/privkey.pem
+        read_only: true
+        bind:
+          create_host_path: false

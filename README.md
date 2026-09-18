@@ -137,6 +137,22 @@ A API deixou de publicar porta diretamente no host (não existe mais `ports: 809
 que alguém acesse a API diretamente e contorne o rate limit do login. A porta externa continua
 sendo `8090` (variável `API_HOST_PORT`), agora publicada pelo nginx.
 
+### TLS num ambiente publicado (domínio/IP público real)
+
+`compose.https.yaml` (acima) é só para desenvolvimento local, com certificado autoassinado. Para um
+ambiente acessível fora da máquina local, use o overlay `compose.tls.yaml` com um certificado real
+(emitido por uma CA, ex.: Let's Encrypt, ou fornecido pela infraestrutura do domínio):
+
+```bash
+# .env desse ambiente: NGINX_CONF_FILE=nginx.tls.conf, TLS_CERT_PATH, TLS_KEY_PATH, API_HOST_PORT=80
+docker compose -f compose.yaml -f compose.tls.yaml up -d --build
+```
+
+`nginx/nginx.tls.conf` faz a porta 80 **somente** redirecionar (`308`) para HTTPS; o conteúdo é
+servido apenas em 443, com o certificado apontado por `TLS_CERT_PATH`/`TLS_KEY_PATH` (fora do Git).
+Detalhes, geração/validação do certificado e o que preencher no `.env` (inclusive para quem usa
+Pop!_OS/Linux) estão em [`docs/authentication-security.md`](docs/authentication-security.md).
+
 ### Rate limit do login
 
 `POST /api/Auth/login` (e variações de caixa equivalentes, como `/api/auth/login`) tem rate limit
@@ -260,7 +276,10 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
 | `SQL_TRUST_SERVER_CERTIFICATE` | aceita o certificado autoassinado do SQL Server do container; **só para desenvolvimento** — `True` em `Production` faz a API recusar iniciar (#36) | `False` |
 | `API_HOST_PORT` | porta HTTP publicada no host pelo nginx (reverse proxy da API) | `8090` |
-| `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.https.yaml` | `8443` |
+| `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.https.yaml` (desenvolvimento local, certificado autoassinado) | `8443` |
+| `NGINX_CONF_FILE` | arquivo em `nginx/` montado como config do nginx; `nginx.tls.conf` ativa TLS publicado (redirect 80→443) com `compose.tls.yaml` | `nginx.conf` |
+| `TLS_CERT_PATH` / `TLS_KEY_PATH` | caminhos, fora do Git, do certificado/chave privada reais montados por `compose.tls.yaml` | obrigatórias só com `compose.tls.yaml` |
+| `TLS_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.tls.yaml` (ambiente publicado, certificado real) | `443` |
 | `API_TRUSTED_PROXY_CIDR` | rede (CIDR) confiável para os headers X-Forwarded-For/X-Forwarded-Proto enviados pelo nginx; deve corresponder à subnet de `almirante-net` no `compose.yaml` | `172.30.0.0/24` |
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |

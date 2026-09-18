@@ -1,6 +1,6 @@
 # Autenticação, autorização e implantação segura
 
-Este documento cobre as issues #29 (login/perfil/JWT), #31 (RBAC), #33 (força bruta), #34 (segredos e política de senha), #35 (cabeçalhos HTTP) e #36 (TLS do SQL Server em produção). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
+Este documento cobre as issues #29 (login/perfil/JWT), #31 (RBAC), #33 (força bruta), #34 (segredos e política de senha), #35 (cabeçalhos HTTP), #36 (TLS do SQL Server em produção) e #50 (TLS no ponto de entrada do deploy, rotação de segredos expostos, Data Protection em Linux e auditoria do `PUT` de lançamentos). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
 
 ## Login, perfil e JWT (#29)
 
@@ -29,7 +29,7 @@ A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR
 
 - `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}` (antes era 401, o que levava o cliente a descartar uma sessão válida).
 - Decisão a confirmar com o negócio: as policies `GestaoCadastros` e `GestaoFinanceira` hoje têm o mesmo conjunto de roles (o registro de lançamentos precisa listar membros). Separá-las exige só alterar `Program.cs`.
-- Auditoria: `LancamentoOperacao.CriadoPorUsuarioId` e `lancamentos_deletados.UsuarioResponsavelId`/`IpResponsavel` vêm da identidade autenticada e do IP pós-proxy confiável. `PUT` não registra o responsável (não existe coluna para isso; lacuna anterior a esta entrega).
+- Auditoria: `LancamentoOperacao.CriadoPorUsuarioId`, `lancamentos_deletados.UsuarioResponsavelId`/`IpResponsavel` e, desde a #50, `Lancamento.AtualizadoPorUsuarioId` (migration `AddAtualizadoPorUsuarioIdToLancamentos`) vêm **sempre** da identidade autenticada (`User.TentarObterUsuarioId`, nunca do body) e do IP pós-proxy confiável quando aplicável. `AtualizadoPorUsuarioId` é nullable (`Guid?`, FK `Restrict` para `Usuarios`) para não quebrar lançamentos atualizados antes desta coluna existir; não é exposto em `LancamentoDto` (não é necessário ao frontend). Registra somente o **último** responsável pelo `PUT` — não é um histórico completo de alterações (se isso vier a ser necessário, é escopo de uma issue separada, com uma tabela de auditoria própria).
 
 ## Proteção contra força bruta (#33)
 
@@ -68,13 +68,15 @@ No Docker Compose use o `.env` (fora do Git); em publicação, variáveis de amb
 
 ### Rotação de valores expostos (pendência operacional)
 
-Remover um valor do arquivo atual **não** o remove do histórico do Git. Estiveram versionados: a chave JWT de desenvolvimento `dev-only-super-secret-key-change-me-…`, a senha de admin `senha` e a senha SA `Almirante_Dev_2026!` (`.env.example` e AppHost). Se qualquer um deles foi usado fora de uma máquina de desenvolvimento:
+Remover um valor do arquivo atual **não** o remove do histórico do Git. Estiveram versionados: a chave JWT de desenvolvimento `dev-only-super-secret-key-change-me-…`, a senha de admin `senha` e a senha SA `Almirante_Dev_2026!` (`.env.example` e AppHost). Se qualquer um deles foi usado fora de uma máquina de desenvolvimento, considere-os comprometidos e rotacione (issue #50, item 2 — **pendência operacional**: o código já suporta a rotação abaixo, mas executá-la num ambiente real exige acesso a esse ambiente e não foi feito por esta entrega):
 
-1. Gere nova chave, publique-a como nova entrada `Jwt__Keys__<kid>` em todas as réplicas, troque `Jwt__ActiveKeyId`; retire a antiga após 10 min + 30 s (ou imediatamente, se comprometida — todos precisarão entrar de novo).
-2. Troque a senha do admin diretamente no banco/fluxo administrativo (o seed não altera admin existente) e revogue as sessões (`UPDATE AuthSessions SET RevokedAtUtc = SYSUTCDATETIME(), RevocationReason = 'rotacao' WHERE RevokedAtUtc IS NULL`).
-3. Troque a senha SA do SQL Server e atualize a connection string.
+1. **JWT**: gere uma chave nova com `openssl rand -base64 32` (nunca cole a saída em issue/commit/PR/log). `Jwt:Keys` já é um dicionário por `kid` (`JwtOptions.Keys`/`JwtOptionsValidator`, sem mudança de código necessária) — durante a janela de rotação, adicione a nova entrada **junto** da atual (ex.: no `compose.yaml` deste ambiente, ou num override local não versionado, acrescente `Jwt__Keys__v2: ${JWT_KEY_V2:?...}` mantendo `Jwt__Keys__v1`), defina a nova `JWT_KEY_V2` no `.env` (fora do Git) e troque `JWT_ACTIVE_KEY_ID=v2`. Tokens antigos assinados com `v1` continuam validando (o `kid` no token seleciona a chave) até expirarem; depois de "10 min + 30 s" (maior tempo de vida de access token + tolerância de relógio) sem tokens `v1` em circulação, remova `Jwt__Keys__v1`/`JWT_KEY_V1`. Se a chave antiga estiver comprometida (não só "exposta no histórico antigo"), pule a janela: troque `JWT_ACTIVE_KEY_ID` e remova a entrada antiga imediatamente — todos precisarão logar de novo.
+2. **Senha do admin**: hoje não existe endpoint de autoatendimento para isso (`AuthController`/`UsuariosController` não expõem alteração de senha — ver "Fora de escopo" abaixo); a troca segura é direta no banco, com o mesmo `IPasswordHasher<Usuario>` usado pela aplicação, e **sempre** seguida de revogar as sessões da conta para forçar novo login: `UPDATE AuthSessions SET RevokedAtUtc = SYSUTCDATETIME(), RevocationReason = 'rotacao' WHERE UsuarioId = @id AND RevokedAtUtc IS NULL`. O seed (`DbSeeder.SeedAsync`) nunca sobrescreve a senha de um admin já existente — alterar `SEED_ADMIN_SENHA` no `.env` depois do primeiro startup não tem efeito algum sobre a senha real.
+3. **SQL Server (`sa`)**: trocar `SQL_SA_PASSWORD` no `.env` **não** altera a senha já persistida no volume `almirante-sqlserver-data` de um SQL Server existente — é preciso trocar a senha no próprio SQL Server (ex.: `ALTER LOGIN sa WITH PASSWORD = '<nova>'` numa sessão conectada com a senha atual) e só depois atualizar o `.env`/connection string. Nunca recrie o volume/banco só para "resolver" a senha sem backup validado.
 
-Esta entrega corrige o código; ela não comprova rotação em nenhum ambiente.
+Esta entrega corrige e documenta o suporte de código a essas rotações; ela **não** executa nem comprova rotação em nenhum ambiente real — isso continua sendo uma ação operacional de quem administra esse ambiente.
+
+**Fora de escopo desta entrega, recomendado para o futuro:** um endpoint de troca de senha autoatendido (autenticado, exigindo a senha atual, revogando as demais sessões) evitaria a necessidade de acesso direto ao banco para essa rotação.
 
 ## Cabeçalhos de segurança HTTP (#35)
 
@@ -95,6 +97,35 @@ Esta entrega corrige o código; ela não comprova rotação em nenhum ambiente.
 - `AlmiranteDbContextFactory` continua restrito a design-time (`dotnet ef`): a senha nele é só um placeholder, não uma credencial real, e `ALMIRANTE_DESIGN_TIME_CONNECTION` permite apontar para outra instância local sem editar o arquivo. Esse caminho não passa pelo validador acima (não usa `ConnectionStrings:almirante`/DI) nem precisa passar — não é usado para servir tráfego.
 - Fora de escopo: PKI própria do projeto, desabilitar TLS em dev, versionar certificados/chaves privadas, trocar de SGBD.
 
+## TLS no ponto de entrada do deploy (#50)
+
+O nginx é o único ponto de entrada HTTP/HTTPS externo (ver "Arquitetura com Nginx" no README); a API nunca é exposta diretamente. Dois overlays opt-in do `compose.yaml` cobrem TLS em pontas diferentes — **nunca aplique os dois ao mesmo tempo**:
+
+| | `compose.https.yaml` | `compose.tls.yaml` |
+| --- | --- | --- |
+| Uso | desenvolvimento local | ambiente publicado (domínio/IP real) |
+| Certificado | autoassinado, gerado localmente (`docs/local-login.md`) | real, emitido por uma CA (ex.: Let's Encrypt) ou fornecido pela infra do domínio |
+| Onde fica o certificado | `nginx/certs/` (fora do Git, `.gitignore`) | caminho arbitrário no host, fora do repositório, apontado por `TLS_CERT_PATH`/`TLS_KEY_PATH` |
+| Porta 80 | continua servindo a API em HTTP (não redireciona) — permite testar sem TLS | só redireciona (`308`) para HTTPS — nunca serve conteúdo |
+| Config do nginx | `nginx/nginx.conf` + `nginx/https.conf` (mesmo `server`, dois `listen`) | `nginx/nginx.tls.conf` (dois `server` — um só de redirect, outro TLS) |
+
+### Ativando `compose.tls.yaml`
+
+1. Obtenha um certificado real (fullchain + chave privada) para o domínio/IP público desse ambiente. Como emiti-lo é responsabilidade de quem administra o domínio/infraestrutura (ex.: Certbot/Let's Encrypt apontando para esse host) — está fora do que este repositório pode fazer sozinho.
+2. Copie os dois arquivos para um caminho no host **fora do repositório**, com permissão restrita à chave privada (`chmod 600` no Linux).
+3. No `.env` desse ambiente (nunca no Git), defina:
+   - `NGINX_CONF_FILE=nginx.tls.conf`
+   - `TLS_CERT_PATH=/caminho/para/fullchain.pem`
+   - `TLS_KEY_PATH=/caminho/para/privkey.pem`
+   - `API_HOST_PORT=80` (senão a porta do redirect continua sendo a mesma de hoje, ex. `8090` — funciona, mas exige abrir/encaminhar essa porta em vez da 80 padrão)
+   - Opcional: `TLS_HTTPS_HOST_PORT` se `443` já estiver em uso nesse host.
+4. `docker compose -f compose.yaml -f compose.tls.yaml up -d --build`.
+5. Valide: `curl -I http://<host>/` deve responder `308` com `Location: https://<host>/`; `curl -I https://<host>/health` deve responder `200` (ou o erro de certificado esperado, se ainda usando um certificado de teste).
+
+Preservado sem alterações: a API continua só com `expose: "8080"` (nunca publicada diretamente no host), o healthcheck interno API↔nginx continua em HTTP dentro da rede Docker (TLS protege a borda externa, não o tráfego interno do Compose), `ReverseProxy__TrustedNetworkCidr`/`API_TRUSTED_PROXY_CIDR` continuam restritos à subnet do Compose, e o nginx continua enviando `X-Forwarded-Proto: https` somente quando a conexão externa realmente foi HTTPS — o que faz `Request.IsHttps`, os cookies `Secure`, o antiforgery e o HSTS (`SecurityHeadersMiddleware`) funcionarem corretamente atrás do proxy sem exigir HTTPS também entre nginx e API.
+
+**Pendência operacional:** este repositório passa a ter suporte completo a TLS real no ponto de entrada, mas nenhum certificado real foi emitido nem instalado em nenhum ambiente por esta entrega — isso depende de um domínio/IP público e de quem administra essa infraestrutura.
+
 ## Contrato da SPA e CSRF
 
 1. Faça `GET /api/Auth/csrf` com `credentials: "include"`; mantenha `csrfToken` somente em memória.
@@ -107,10 +138,10 @@ Esta entrega corrige o código; ela não comprova rotação em nenhum ambiente.
 
 ## Implantação
 
-1. Faça backup e aplique as migrations (executadas no startup). Esta entrega corrige `20260917120000_UnifyLancamentosFlow`, que não tinha `[DbContext]` e era ignorada pelo EF — bancos que já rodaram a versão anterior receberão agora a renomeação `Tipo → Finalidade` e a remoção de `MembroNome`/`Moeda`, além de `AddLoginLockout`.
+1. Faça backup e aplique as migrations (executadas no startup). Esta entrega adiciona `AddAtualizadoPorUsuarioIdToLancamentos` (coluna nullable + índice + FK `Restrict` para `Usuarios`; não altera nem apaga linhas existentes — lançamentos atualizados antes dela simplesmente mantêm `AtualizadoPorUsuarioId = NULL`). Entregas anteriores corrigiram `20260917120000_UnifyLancamentosFlow`, que não tinha `[DbContext]` e era ignorada pelo EF — bancos que já rodaram a versão anterior receberam a renomeação `Tipo → Finalidade` e a remoção de `MembroNome`/`Moeda`, além de `AddLoginLockout`.
 2. Configure chaves e senhas conforme acima.
-3. **TLS é obrigatório para autenticar.** Os cookies antiforgery/refresh são `Secure`; em requisição HTTP a API responde `500` em `csrf`/`login`/`refresh`/`logout` (o Compose base escuta HTTP e envia `X-Forwarded-Proto: http`). Para desenvolvimento, use [`compose.https.yaml` e o guia de login local](local-login.md). Nos demais ambientes, termine TLS no nginx ou em um proxy confiável que encaminhe `X-Forwarded-Proto: https` até a API — ajustando o nginx para repassar esse valor apenas desse proxy.
-4. Data Protection: o Compose persiste as chaves em `almirante-dataprotection`. A imagem agora cria o diretório com dono `app`; um volume **já criado como root** e não vazio precisa de `chown` único (`docker run --rm --user root -v almirante-dataprotection:/d --entrypoint chown <imagem-da-api> -R app:app /d`; comando verificado em volume de teste). No IIS as chaves ficam no perfil do app pool; com várias réplicas, compartilhe-as.
+3. **TLS é obrigatório para autenticar.** Os cookies antiforgery/refresh são `Secure`; em requisição HTTP a API responde `500` em `csrf`/`login`/`refresh`/`logout` (o Compose base escuta HTTP e envia `X-Forwarded-Proto: http`). Para desenvolvimento, use [`compose.https.yaml` e o guia de login local](local-login.md). Num ambiente publicado (domínio/IP real), use `compose.tls.yaml` com um certificado real — ver ["TLS no ponto de entrada do deploy" acima](#tls-no-ponto-de-entrada-do-deploy-50). Em qualquer caso, o proxy só deve repassar `X-Forwarded-Proto`/`X-Forwarded-For` a partir da rede confiável (`API_TRUSTED_PROXY_CIDR`).
+4. Data Protection: o Compose persiste as chaves em `almirante-dataprotection`. A imagem agora cria o diretório com dono `app`; um volume **já criado como root** (comum em máquinas Linux/Pop!_OS que rodaram uma versão anterior da imagem — issue #50) e não vazio precisa de `chown` único — descubra a imagem em uso com `docker compose images api` e rode `docker run --rm --user root -v almirante-dataprotection:/d --entrypoint chown <imagem-da-api> -R app:app /d` (comando verificado em volume de teste). Isso corrige a posse **uma única vez**, sem apagar as chaves existentes; não é necessário repetir a cada deploy nem recriar o volume. No IIS as chaves ficam no perfil do app pool; com várias réplicas, compartilhe-as.
 5. Garanta configuração e SQL Server compartilhados entre réplicas. Publique backend e frontend coordenadamente: tokens antigos sem `sid` são rejeitados.
 
 ## Operação e riscos residuais

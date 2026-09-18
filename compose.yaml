@@ -101,7 +101,10 @@ services:
     ports:
       - "${API_HOST_PORT:-8090}:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # NGINX_CONF_FILE (padrão nginx.conf) troca para nginx.tls.conf em ambientes publicados com TLS
+      # real (ver compose.tls.yaml e docs/authentication-security.md); não altera o comportamento
+      # padrão de quem não define essa variável.
+      - ./nginx/${NGINX_CONF_FILE:-nginx.conf}:/etc/nginx/conf.d/default.conf:ro
     # 127.0.0.1 (e não localhost): no Alpine "localhost" resolve primeiro para ::1, mas o nginx só
     # escuta IPv4 ("listen 80"), e o healthcheck falhava sempre.
     healthcheck:
