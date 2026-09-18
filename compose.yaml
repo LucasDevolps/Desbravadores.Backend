@@ -55,7 +55,13 @@ services:
       Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
       Jwt__Audience: ${JWT_AUDIENCE:-Almirante.Frontend}
       Jwt__ActiveKeyId: ${JWT_ACTIVE_KEY_ID:-v1}
-      Jwt__Keys__v1: ${JWT_KEY_V1:?defina JWT_KEY_V1 Base64 no arquivo .env}
+      # Opcionais (não ":?"): durante uma rotação de chave (issue #50), o operador pode definir só
+      # JWT_KEY_V1 (padrão), as duas ao mesmo tempo (janela de rotação) ou só JWT_KEY_V2 (rotação
+      # concluída) mudando apenas o .env — sem editar este arquivo a cada etapa. Uma entrada não
+      # definida chega vazia e é removida antes da validação (ver Program.cs, PostConfigure<JwtOptions>);
+      # a aplicação recusa iniciar do mesmo jeito se, ao final, nenhuma chave válida sobrar.
+      Jwt__Keys__v1: ${JWT_KEY_V1:-}
+      Jwt__Keys__v2: ${JWT_KEY_V2:-}
       Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-10}
       Jwt__AbsoluteSessionDays: ${AUTH_SESSION_DAYS:-7}
       Jwt__RefreshInactivityHours: ${AUTH_REFRESH_INACTIVITY_HOURS:-24}

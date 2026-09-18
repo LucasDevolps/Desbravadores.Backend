@@ -17,10 +17,27 @@
 # .env; os mapeamentos de porta dos dois arquivos se somam (Compose não substitui a lista), então
 # manter o padrão 8090 aqui só deixaria as duas portas redirecionando, sem nenhum problema de
 # segurança, mas exigindo abrir as duas no firewall/roteador à toa.
+#
+# HTTPS pública só em 443 (fixo, sem variável de porta alternativa): o redirecionamento 80->443 do
+# nginx.tls.conf sempre aponta para a porta padrão do esquema (443 implícito em "https://"), então
+# publicar HTTPS em outra porta aqui produziria um redirect para o host sem a porta certa. Se 443 já
+# estiver ocupada neste host, este overlay não é utilizável sem uma solução de infraestrutura
+# separada (ex.: outro IP, ou um balanceador na frente que já resolva isso) — não introduza aqui um
+# mecanismo próprio de porta customizada só para contornar isso.
 services:
   nginx:
     ports:
-      - "${TLS_HTTPS_HOST_PORT:-443}:443"
+      - "443:443"
+    # Healthcheck próprio: com nginx.tls.conf, http://127.0.0.1/health (herdado de compose.yaml)
+    # cairia no redirect 308 para HTTPS, e o certificado (emitido para o domínio público) falharia
+    # a verificação de identidade contra "127.0.0.1". /internal-health é servido em texto plano,
+    # só para 127.0.0.1 (nginx/nginx.tls.conf), sem depender do redirecionamento.
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/internal-health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     volumes:
       # read_only + bind (não volume nomeado): o certificado/chave vivem fora do Git e fora de
       # qualquer volume gerenciado pelo Docker, no caminho que o operador do ambiente escolher via

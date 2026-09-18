@@ -52,7 +52,6 @@ public class SecretsAndPasswordPolicyTests
 
     [Theory]
     [InlineData("DEFINA_BASE64_DE_32_BYTES_ALEATORIOS")]
-    [InlineData("")]
     public void Startup_FalhaComChaveJwtInvalida(string key)
     {
         using var factory = new ConfiguredApiFactory(overrides: new Dictionary<string, string?> { ["Jwt:Keys:test-v1"] = key });
@@ -69,6 +68,43 @@ public class SecretsAndPasswordPolicyTests
             ["Jwt:Keys:test-v1"] = null, ["Jwt:ActiveKeyId"] = "",
         });
         Assert.IsType<OptionsValidationException>(Unwrap(Assert.ThrowsAny<Exception>(() => factory.CreateClient())));
+    }
+
+    // Issue #50 (rotação de chave): compose.yaml passa a mapear Jwt__Keys__v1/v2 como opcionais
+    // (${JWT_KEY_V1:-}), então uma chave "não configurada" chega como string vazia, não ausente. Uma
+    // entrada vazia deve se comportar como se não existisse (mesmo resultado de Startup_FalhaSemChavesJwt
+    // acima), não como "chave presente porém inválida" — ver PostConfigure<JwtOptions> em Program.cs.
+    [Fact]
+    public void Startup_TrataChaveVazia_ComoNaoConfigurada_NaoComoInvalida()
+    {
+        using var factory = new ConfiguredApiFactory(overrides: new Dictionary<string, string?> { ["Jwt:Keys:test-v1"] = "" });
+        var exception = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+        var validation = Assert.IsType<OptionsValidationException>(Unwrap(exception));
+        Assert.DoesNotContain("Jwt:Keys:test-v1", validation.Message);
+    }
+
+    [Fact]
+    public void Startup_AceitaDuasChaves_EEmiteComAActiveKeyId()
+    {
+        var v1 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var v2 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        using var factory = new ConfiguredApiFactory(overrides: new Dictionary<string, string?>
+        {
+            ["Jwt:Keys:v1"] = v1, ["Jwt:Keys:v2"] = v2, ["Jwt:ActiveKeyId"] = "v2",
+        });
+        using var client = factory.CreateClient(); // não lança: as duas chaves e a ativa são válidas.
+    }
+
+    [Fact]
+    public void Startup_AceitaSoAChaveV2_ComV1EfetivamenteRemovida()
+    {
+        var v2 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        using var factory = new ConfiguredApiFactory(overrides: new Dictionary<string, string?>
+        {
+            // "" simula compose.yaml com JWT_KEY_V1 vazio/ausente no .env (rotação concluída).
+            ["Jwt:Keys:v1"] = "", ["Jwt:Keys:v2"] = v2, ["Jwt:ActiveKeyId"] = "v2",
+        });
+        using var client = factory.CreateClient();
     }
 
     // ---- Política de senha ----
