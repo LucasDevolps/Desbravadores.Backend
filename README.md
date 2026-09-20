@@ -334,6 +334,7 @@ O agregado financeiro possui um único fluxo de criação, protegido pelas roles
 | Método | Rota | Finalidade |
 |---|---|---|
 | `GET` | `/api/Lancamentos` | Lista somente lançamentos ativos, com paginação e filtros |
+| `GET` | `/api/Lancamentos/{id}` | Consulta um lançamento ativo; destino do `Location` da criação individual |
 | `POST` | `/api/Lancamentos/Registrar` | Registra para um membro ou, atomicamente, para todos |
 | `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos |
 | `DELETE` | `/api/Lancamentos/{id}` | Exclusão lógica auditada, com motivo |
@@ -358,21 +359,48 @@ nome por `Usuarios`, define novos lançamentos como `Pendente` e trabalha exclus
 por isso nome, status e moeda não fazem parte do request. `Vencimento` é `DateOnly` e não aceita
 datas passadas.
 
-No modo geral (`aplicarATodosOsMembros: true`), `Idempotency-Key` é obrigatório. Uma única
+No modo geral (`aplicarATodosOsMembros: true`), `Idempotency-Key` é obrigatório e limitado a 100 caracteres. Uma única
 operação carrega os IDs elegíveis, insere o lote com `AddRange`/`SaveChanges` atômico e registra
 `OperacaoId`. Repetir chave e payload devolve a operação existente; mudar o payload resulta em
 `409 Conflict`. O hash inclui finalidade, descrição, categoria, fluxo, valor e vencimento.
 
 `DELETE` recebe `{ "motivo": "..." }`, apenas muda `Ativo` para `false` e mantém a auditoria por
 trigger/`SESSION_CONTEXT`. Listagens projetam o nome com JOIN, sem armazená-lo em `Lancamentos` e
-sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Despesa) é a
+sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Saida) é a
 direção financeira, portanto ambos permanecem.
+
+Categoria, status e fluxo são enums com valores explícitos e `Description`:
+
+| Campo | Valores |
+|---|---|
+| `CategoriaLancamento` | `0 = Evento`, `1 = Clube` |
+| `StatusLancamento` | `0 = Pendente`, `1 = Pago`, `2 = Atrasado` |
+| `TipoFluxoLancamento` | `0 = Entrada`, `1 = Saida` (descrição: “Saída”) |
+
+O JSON continua retornando nomes textuais; criação e atualização aceitam tanto nomes quanto
+os códigos numéricos correspondentes e rejeitam valores fora do enum. `status` na listagem
+aceita nome, código ou `Todos`. Clientes que enviavam `tipoFluxo: "Despesa"` devem passar a
+usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no JSON é `Saida`.
+
+`LancamentosService` coordena consultas e alterações individuais. `LancamentoGeralService`
+cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
+contexto SQL de auditoria. `LancamentoMapping` centraliza a projeção das respostas.
 
 ## Banco de dados e migrations
 
 Migrations são aplicadas incrementalmente no startup. `UnifyLancamentosFlow` renomeia `Tipo` para
 `Finalidade`, remove `MembroNome`/`Moeda`, cria a FK restritiva para `Usuarios`, atualiza índices e
 o trigger de auditoria sem apagar o histórico de migrations.
+
+`ConvertLancamentoEnums` converte as colunas nas tabelas `Lancamentos`, `LancamentosOperacoes`
+e `lancamentos_deletados` para `int`, sem recriar tabelas nem apagar registros. Também cria
+constraints para limitar os códigos aceitos. Dados legados fora das categorias/status/fluxos
+conhecidos interrompem a migração transacionalmente para que sejam corrigidos antes de tentar
+novamente. O rollback restaura os textos anteriores, inclusive `Despesa`.
+
+O hash histórico da idempotência é mantido: uma operação antiga de saída continua sendo
+reconhecida mesmo após a mudança de nome de `Despesa` para `Saida`. Não executar versões
+antiga e nova da API simultaneamente contra o schema convertido.
 
 ## Testes
 

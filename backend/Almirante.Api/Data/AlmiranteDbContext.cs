@@ -63,14 +63,20 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             // usar SELECT @@ROWCOUNT no lugar, compatível com o trigger, para qualquer INSERT/
             // UPDATE/DELETE gerado por SaveChanges nesta tabela (não afeta o UPDATE de exclusão
             // lógica do lançamento geral, que é SQL bruto e nunca usa OUTPUT).
-            entity.ToTable("Lancamentos", tb => tb.UseSqlOutputClause(false));
+            entity.ToTable("Lancamentos", table =>
+            {
+                table.UseSqlOutputClause(false);
+                table.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
+                table.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
+                table.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+            });
             entity.HasKey(l => l.Id);
             entity.Property(l => l.Finalidade).HasMaxLength(50).IsRequired();
             entity.Property(l => l.Descricao).HasMaxLength(500);
-            entity.Property(l => l.Categoria).HasMaxLength(50).IsRequired();
-            entity.Property(l => l.TipoFluxo).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.Property(l => l.Categoria).HasConversion<int>().IsRequired();
+            entity.Property(l => l.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(l => l.Valor).HasColumnType("decimal(18,2)");
-            entity.Property(l => l.Status).HasMaxLength(20).IsRequired();
+            entity.Property(l => l.Status).HasConversion<int>().IsRequired();
             entity.Property(l => l.Ativo).IsRequired();
 
             entity.HasIndex(l => l.Status);
@@ -93,14 +99,18 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
         modelBuilder.Entity<LancamentoOperacao>(entity =>
         {
-            entity.ToTable("LancamentosOperacoes");
+            entity.ToTable("LancamentosOperacoes", table =>
+            {
+                table.HasCheckConstraint("CK_LancamentosOperacoes_Categoria", "[Categoria] IN (0, 1)");
+                table.HasCheckConstraint("CK_LancamentosOperacoes_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+            });
             entity.HasKey(o => o.Id);
             entity.Property(o => o.IdempotencyKey).HasMaxLength(100).IsRequired();
             entity.Property(o => o.RequestHash).HasMaxLength(64).IsRequired();
             entity.Property(o => o.Finalidade).HasMaxLength(50).IsRequired();
             entity.Property(o => o.Descricao).HasMaxLength(500);
-            entity.Property(o => o.Categoria).HasMaxLength(50).IsRequired();
-            entity.Property(o => o.TipoFluxo).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.Property(o => o.Categoria).HasConversion<int>().IsRequired();
+            entity.Property(o => o.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(o => o.Valor).HasColumnType("decimal(18,2)");
 
             entity.HasIndex(o => o.IdempotencyKey).IsUnique();
@@ -113,15 +123,20 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
         modelBuilder.Entity<LancamentoDeletado>(entity =>
         {
-            entity.ToTable("lancamentos_deletados");
+            entity.ToTable("lancamentos_deletados", table =>
+            {
+                table.HasCheckConstraint("CK_lancamentos_deletados_Categoria", "[Categoria] IN (0, 1)");
+                table.HasCheckConstraint("CK_lancamentos_deletados_Status", "[Status] IN (0, 1, 2)");
+                table.HasCheckConstraint("CK_lancamentos_deletados_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+            });
             entity.HasKey(d => d.Id);
             entity.Property(d => d.IpResponsavel).HasMaxLength(45).IsRequired();
             entity.Property(d => d.Motivo).HasMaxLength(255).IsRequired();
             entity.Property(d => d.Finalidade).HasMaxLength(50).IsRequired();
-            entity.Property(d => d.Categoria).HasMaxLength(50).IsRequired();
-            entity.Property(d => d.TipoFluxo).HasMaxLength(20).IsRequired();
+            entity.Property(d => d.Categoria).HasConversion<int>().IsRequired();
+            entity.Property(d => d.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(d => d.Valor).HasColumnType("decimal(18,2)");
-            entity.Property(d => d.Status).HasMaxLength(20).IsRequired();
+            entity.Property(d => d.Status).HasConversion<int>().IsRequired();
 
             entity.HasIndex(d => d.LancamentoId);
 

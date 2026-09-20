@@ -102,6 +102,8 @@ builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<LoginLockout>();
 builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
+builder.Services.AddScoped<LancamentoGeralService>();
+builder.Services.AddScoped<LancamentoExclusaoService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 

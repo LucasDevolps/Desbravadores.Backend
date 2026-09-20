@@ -5,8 +5,8 @@ namespace Almirante.Api.Entities;
 // JWT do solicitante. Uma linha aqui só existe depois que a operação (esta linha + todos os
 // Lancamentos gerados) foi persistida com sucesso em um único SaveChanges — o índice único em
 // IdempotencyKey garante, mesmo sob concorrência, que apenas uma requisição "vence" para cada
-// chave (ver LancamentosService.RegistrarAsync).
-public class LancamentoOperacao
+// chave (ver LancamentoGeralService.RegistrarAsync).
+public sealed class LancamentoOperacao
 {
     public Guid Id { get; set; }
     public required string IdempotencyKey { get; set; }
@@ -18,7 +18,7 @@ public class LancamentoOperacao
 
     public required string Finalidade { get; set; }
     public string? Descricao { get; set; }
-    public required string Categoria { get; set; }
+    public required CategoriaLancamento Categoria { get; set; }
     public required TipoFluxoLancamento TipoFluxo { get; set; }
     public decimal Valor { get; set; }
     public DateOnly Vencimento { get; set; }
