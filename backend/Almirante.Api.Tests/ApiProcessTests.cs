@@ -77,7 +77,8 @@ public class ApiProcessRefusalTests
     {
         var saida = await RefusedAsync(Config(Admin("almirante_user_bd")));
 
-        Assert.Contains("não pode ser a de runtime", saida);
+        // Só ASCII: o console do processo filho no Windows do CI usa a code page do sistema, não UTF-8.
+        Assert.Contains("use credenciais distintas", saida);
     }
 
     [Theory]
