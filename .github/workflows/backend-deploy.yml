@@ -9,6 +9,7 @@ on:
       - "compose.tls.yaml"
       - "compose.https.yaml"
       - "nginx/**"
+      - "scripts/**"
       - ".github/workflows/backend-deploy.yml"
 
 jobs:
@@ -40,45 +41,23 @@ jobs:
         run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
 
       # Escolhe explicitamente os overlays do Compose a partir de DEPLOY_MODE (definido no
-      # .env fixo da máquina; ausente = "http", o comportamento de sempre). Falha aqui, sem
-      # fallback silencioso, se DEPLOY_MODE e NGINX_CONF_FILE estiverem incoerentes — evita
-      # publicar em HTTP achando que está em TLS (ou vice-versa). O mesmo valor "files" é
-      # reusado em todos os passos abaixo (validação, subida, logs, healthcheck), então é
-      # sempre a mesma configuração efetiva.
+      # .env fixo da máquina; ausente = "http", o comportamento de sempre). O .env é lido como DADO
+      # por scripts/deploy-config.sh (mesma regra de dotenv do Compose; nunca "source"/"eval": um valor
+      # com espaço, ";", "&" ou "$" não vira comando nem muda de significado). Falha aqui, antes de
+      # qualquer alteração de serviço e sem fallback silencioso, se DEPLOY_MODE, NGINX_CONF_FILE,
+      # TLS_PUBLIC_HOST, portas ou arquivos de certificado estiverem incoerentes. O mesmo valor
+      # "files" é reusado em todos os passos abaixo (validação, subida, logs, healthcheck).
       - name: Selecionar modo de deploy (compose overlay)
         id: compose-mode
-        run: |
-          set -a
-          source .env
-          set +a
-          mode="${DEPLOY_MODE:-http}"
-          case "$mode" in
-            http)
-              if [ -n "${NGINX_CONF_FILE:-}" ] && [ "${NGINX_CONF_FILE}" != "nginx.conf" ]; then
-                echo "DEPLOY_MODE=http mas NGINX_CONF_FILE=${NGINX_CONF_FILE} não é nginx.conf (nem vazio). Ajuste o .env desta máquina." >&2
-                exit 1
-              fi
-              files="-f compose.yaml"
-              ;;
-            tls)
-              if [ "${NGINX_CONF_FILE:-}" != "nginx.tls.conf" ]; then
-                echo "DEPLOY_MODE=tls exige NGINX_CONF_FILE=nginx.tls.conf no .env desta máquina." >&2
-                exit 1
-              fi
-              if [ -z "${TLS_PUBLIC_HOST:-}" ]; then
-                echo "DEPLOY_MODE=tls exige TLS_PUBLIC_HOST (nome DNS do certificado) no .env desta máquina." >&2
-                exit 1
-              fi
-              files="-f compose.yaml -f compose.tls.yaml"
-              ;;
-            *)
-              echo "DEPLOY_MODE inválido: '$mode' (use 'http' ou 'tls')." >&2
-              exit 1
-              ;;
-          esac
-          echo "modo=$mode"
-          echo "files=$files" >> "$GITHUB_OUTPUT"
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        run: bash scripts/deploy-config.sh modo .env "$GITHUB_OUTPUT"
+
+      # Só o nome DNS validado de TLS_PUBLIC_HOST entra no arquivo montado pelo compose.tls.yaml; é ele
+      # que define o único Host aceito pelo nginx e o destino canônico do redirect HTTP -> HTTPS.
+      - name: Gerar host permitido do nginx (modo tls)
+        if: steps.compose-mode.outputs.mode == 'tls'
+        env:
+          PUBLIC_HOST: ${{ steps.compose-mode.outputs.public_host }}
+        run: bash scripts/deploy-config.sh gerar-host-tls nginx/generated/tls-host.conf "$PUBLIC_HOST"
 
       - name: Validar configuração efetiva do Compose
         run: docker compose ${{ steps.compose-mode.outputs.files }} config --quiet
@@ -103,26 +82,25 @@ jobs:
       # atrasam o start além do que 30x2s (1min) tolerava, derrubando o
       # deploy mesmo quando a app sobe normalmente logo em seguida.
       - name: Aguardar API ficar saudável (confirma que as migrations rodaram)
+        env:
+          MODE: ${{ steps.compose-mode.outputs.mode }}
+          PUBLIC_HOST: ${{ steps.compose-mode.outputs.public_host }}
+          HOST_PORT: ${{ steps.compose-mode.outputs.port }}
         run: |
-          set -a
-          source .env
-          set +a
-          mode="${{ steps.compose-mode.outputs.mode }}"
-          if [ "$mode" = "tls" ]; then
+          if [ "$MODE" = "tls" ]; then
             # Modo TLS: exige a borda HTTPS pública de verdade (certificado válido para o
             # host, resposta final 200). Sem -k/--insecure — um certificado inválido deve
             # reprovar o deploy, não ser contornado. compose.tls.yaml publica só 443.
             # O certificado é emitido para o nome público, não para "localhost": usa esse nome na
             # URL (a verificação de identidade passa) e o --resolve o aponta para esta máquina.
-            url="https://${TLS_PUBLIC_HOST}/health"
-            curl_flags="-fsS --resolve ${TLS_PUBLIC_HOST}:443:127.0.0.1"
+            url="https://${PUBLIC_HOST}/health"
+            curl_flags=(-fsS --resolve "${PUBLIC_HOST}:443:127.0.0.1")
           else
-            port="${API_HOST_PORT:-8090}"
-            url="http://localhost:${port}/health"
-            curl_flags="-sf"
+            url="http://localhost:${HOST_PORT}/health"
+            curl_flags=(-sf)
           fi
           for i in $(seq 1 60); do
-            if curl $curl_flags "$url" > /dev/null; then
+            if curl "${curl_flags[@]}" "$url" > /dev/null; then
               echo "API saudável em $url"
               exit 0
             fi
@@ -168,28 +146,22 @@ jobs:
           (Get-Content "${{ env.PUBLISH_PATH }}\web.config") -replace 'stdoutLogEnabled="false"', 'stdoutLogEnabled="true"' |
             Set-Content "${{ env.PUBLISH_PATH }}\web.config"
 
-      # ANCM observa o app_offline.htm e derruba o processo em execução,
-      # liberando os locks de arquivo, sem precisar de direitos de admin do
-      # IIS para reciclar o app pool a partir do CI.
-      - name: Tirar o site do ar
+      # Preflight (nada aqui altera o site): tudo que pode falhar por configuração do host é conferido
+      # ANTES de "Tirar o site do ar", para uma falha não deixar o site IIS offline por causa de
+      # arquivo/TLS/porta incoerentes.
+      - name: Validar appsettings.Production.json existente
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path "${{ env.SITE_PATH }}" -Force | Out-Null
-          Set-Content -Path "${{ env.SITE_PATH }}\app_offline.htm" -Value "<html><body>Deploying...</body></html>"
-          Start-Sleep -Seconds 5
-
-      - name: Copiar os arquivos publicados para o site
-        shell: pwsh
-        run: |
-          robocopy "${{ env.PUBLISH_PATH }}" "${{ env.SITE_PATH }}" /MIR /XF appsettings.Production.json app_offline.htm /NFL /NDL /NJH /NJS
-          if ($LASTEXITCODE -ge 8) {
-            throw "robocopy falhou com o código $LASTEXITCODE"
+          $path = "${{ env.SITE_PATH }}\appsettings.Production.json"
+          if (-not (Test-Path $path)) {
+            Write-Error "Não existe $path (configuração persistente do ambiente). Crie-o antes do deploy; nada foi alterado."
+            exit 1
           }
-          exit 0
+          try { Get-Content $path -Raw | ConvertFrom-Json | Out-Null } catch {
+            Write-Error "$path não é um JSON válido; nada foi alterado."
+            exit 1
+          }
 
-      - name: Colocar o site no ar novamente
-        shell: pwsh
-        run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
 
       # Em vez de chutar a porta do binding (já erramos duas vezes:
       # 7370 e 8080 — nenhuma respondeu, então o problema pode nem ser a
@@ -214,6 +186,74 @@ jobs:
           Write-Host "Site '$($site.Name)' encontrado (PhysicalPath: $($site.PhysicalPath)), porta $port"
           "port=$port" >> $env:GITHUB_OUTPUT
 
+      # nginx/nginx.windows.conf (versionado no repo) é HTTP-only por design (loopback,
+      # nunca exposto à internet — ver o próprio arquivo). Se este host algum dia ganhar TLS
+      # configurado manualmente (fora do repo, ex.: um listener 443/ssl adicionado à mão em
+      # C:\nginx\conf\almirante.conf), o passo abaixo pararia e sobrescreveria com HTTP a
+      # cada deploy. Este guard aborta em vez de sobrescrever nesse caso — não decide por
+      # conta própria como reconciliar; só evita apagar silenciosamente.
+      - name: Verificar se a config atual do Nginx já tem TLS configurado manualmente
+        shell: pwsh
+        run: |
+          $path = "C:\nginx\conf\almirante.conf"
+          if (Test-Path $path) {
+            $atual = Get-Content $path -Raw
+            if ($atual -match '(?im)^\s*listen\s+.*\b443\b' -or $atual -match '(?im)^\s*ssl_certificate\b') {
+              Write-Error "C:\nginx\conf\almirante.conf já tem um listener TLS/443 que não vem de nginx/nginx.windows.conf (que é HTTP-only por design). Abortando para não sobrescrever uma configuração TLS manual deste host. Se essa config TLS não for mais necessária, remova-a manualmente antes de rodar o deploy de novo."
+              exit 1
+            }
+          }
+
+      # ANCM observa o app_offline.htm e derruba o processo em execução,
+      # liberando os locks de arquivo, sem precisar de direitos de admin do
+      # IIS para reciclar o app pool a partir do CI.
+      - name: Tirar o site do ar
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "${{ env.SITE_PATH }}" -Force | Out-Null
+          Set-Content -Path "${{ env.SITE_PATH }}\app_offline.htm" -Value "<html><body>Deploying...</body></html>"
+          Start-Sleep -Seconds 5
+
+      - name: Copiar os arquivos publicados para o site
+        shell: pwsh
+        run: |
+          robocopy "${{ env.PUBLISH_PATH }}" "${{ env.SITE_PATH }}" /MIR /XF appsettings.Production.json app_offline.htm /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) {
+            throw "robocopy falhou com o código $LASTEXITCODE"
+          }
+          exit 0
+
+      # ForwardedHeadersMiddleware (Program.cs) só confia em X-Forwarded-For/-Proto quando
+      # ReverseProxy:TrustedNetworkCidr está configurado, e o ASP.NET só rejeita Host desconhecido quando
+      # AllowedHosts não é "*". appsettings.Production.json é ignorado pelo robocopy (persiste entre
+      # deploys). Roda com o site ainda OFFLINE (app_offline.htm), antes de ele voltar ao ar, para o
+      # processo já subir com a configuração final. Idempotente; não sobrescreve o resto do arquivo nem
+      # imprime segredos. AllowedHosts só é definido quando ausente ou "*" (um valor já ajustado pelo
+      # operador é preservado): loopback e o nome desta máquina.
+      - name: Configurar proxy confiável e hosts permitidos (appsettings.Production.json)
+        shell: pwsh
+        run: |
+          $path = "${{ env.SITE_PATH }}\appsettings.Production.json"
+          $json = Get-Content $path -Raw | ConvertFrom-Json
+          if (-not $json.PSObject.Properties['ReverseProxy']) {
+            $json | Add-Member -MemberType NoteProperty -Name 'ReverseProxy' -Value ([PSCustomObject]@{ TrustedNetworkCidr = "127.0.0.1/32" })
+          } else {
+            $json.ReverseProxy.TrustedNetworkCidr = "127.0.0.1/32"
+          }
+          $hosts = "localhost;127.0.0.1;[::1];$($env:COMPUTERNAME.ToLowerInvariant())"
+          if (-not $json.PSObject.Properties['AllowedHosts']) {
+            $json | Add-Member -MemberType NoteProperty -Name 'AllowedHosts' -Value $hosts
+          } elseif ([string]::IsNullOrWhiteSpace($json.AllowedHosts) -or $json.AllowedHosts.Trim() -eq '*') {
+            $json.AllowedHosts = $hosts
+          }
+          $json | ConvertTo-Json -Depth 10 | Set-Content -Path $path -Encoding utf8
+          Write-Host "ReverseProxy:TrustedNetworkCidr e AllowedHosts configurados em appsettings.Production.json."
+
+
+      - name: Colocar o site no ar novamente
+        shell: pwsh
+        run: Remove-Item "${{ env.SITE_PATH }}\app_offline.htm" -ErrorAction SilentlyContinue
+
       # Espelha no Windows a proteção de rate limit de login que o Nginx já dá no Docker
       # Compose (deploy-linux). Não existe Docker aqui: o nginx roda nativo, só em
       # loopback (127.0.0.1:8090 -> 127.0.0.1:<porta do IIS>), na frente do site do IIS.
@@ -234,24 +274,6 @@ jobs:
             Write-Host "Nginx instalado em C:\nginx"
           } else {
             Write-Host "Nginx já instalado em C:\nginx"
-          }
-
-      # nginx/nginx.windows.conf (versionado no repo) é HTTP-only por design (loopback,
-      # nunca exposto à internet — ver o próprio arquivo). Se este host algum dia ganhar TLS
-      # configurado manualmente (fora do repo, ex.: um listener 443/ssl adicionado à mão em
-      # C:\nginx\conf\almirante.conf), o passo abaixo pararia e sobrescreveria com HTTP a
-      # cada deploy. Este guard aborta em vez de sobrescrever nesse caso — não decide por
-      # conta própria como reconciliar; só evita apagar silenciosamente.
-      - name: Verificar se a config atual do Nginx já tem TLS configurado manualmente
-        shell: pwsh
-        run: |
-          $path = "C:\nginx\conf\almirante.conf"
-          if (Test-Path $path) {
-            $atual = Get-Content $path -Raw
-            if ($atual -match '(?im)^\s*listen\s+.*\b443\b' -or $atual -match '(?im)^\s*ssl_certificate\b') {
-              Write-Error "C:\nginx\conf\almirante.conf já tem um listener TLS/443 que não vem de nginx/nginx.windows.conf (que é HTTP-only por design). Abortando para não sobrescrever uma configuração TLS manual deste host. Se essa config TLS não for mais necessária, remova-a manualmente antes de rodar o deploy de novo."
-              exit 1
-            }
           }
 
       # nginx/nginx.windows.conf (versionado no repo) é a fonte da verdade; este passo só
@@ -288,24 +310,6 @@ jobs:
             Register-ScheduledTask -TaskName "NginxAlmirante" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "Reverse proxy Nginx da API Almirante (rate limit de login), na frente do IIS." | Out-Null
             Write-Host "Tarefa agendada NginxAlmirante criada (inicia o nginx com o Windows)."
           }
-
-      # ForwardedHeadersMiddleware (Program.cs) só confia em X-Forwarded-For/-Proto quando
-      # ReverseProxy:TrustedNetworkCidr está configurado. appsettings.Production.json é
-      # ignorado pelo robocopy acima (persiste entre deploys), então isso só precisa
-      # acontecer uma vez — idempotente, não sobrescreve o resto do arquivo nem imprime
-      # segredos no log.
-      - name: Configurar confiança no proxy (ReverseProxy:TrustedNetworkCidr)
-        shell: pwsh
-        run: |
-          $path = "${{ env.SITE_PATH }}\appsettings.Production.json"
-          $json = Get-Content $path -Raw | ConvertFrom-Json
-          if (-not $json.PSObject.Properties['ReverseProxy']) {
-            $json | Add-Member -MemberType NoteProperty -Name 'ReverseProxy' -Value ([PSCustomObject]@{ TrustedNetworkCidr = "127.0.0.1/32" })
-          } else {
-            $json.ReverseProxy.TrustedNetworkCidr = "127.0.0.1/32"
-          }
-          $json | ConvertTo-Json -Depth 10 | Set-Content -Path $path -Encoding utf8
-          Write-Host "ReverseProxy:TrustedNetworkCidr configurado em appsettings.Production.json."
 
       # A primeira requisição após remover o app_offline.htm faz o ANCM subir
       # um processo novo, que roda as migrations pendentes antes de aceitar

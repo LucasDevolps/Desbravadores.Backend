@@ -136,6 +136,9 @@ builder.Services.AddControllersWithViews().AddJsonOptions(options =>
 {
     // ASP.NET Core já usa camelCase por padrão; mantido explícito para clareza.
     options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    // Janela de compatibilidade "Despesa" -> "Saida" (ver Entities/TipoFluxoLancamentoJsonConverter.cs).
+    options.JsonSerializerOptions.Converters.Add(new Almirante.Api.Entities.TipoFluxoLancamentoJsonConverter(
+        builder.Configuration.GetValue<bool>("Compatibility:LegacyTipoFluxoDespesa")));
 });
 
 builder.Services.AddExceptionHandler<ValidationExceptionHandler>();

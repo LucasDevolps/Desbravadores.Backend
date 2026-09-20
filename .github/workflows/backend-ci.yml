@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "scripts/**"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     branches: [main]
     paths:
       - "backend/**"
+      - "scripts/**"
       - ".github/workflows/backend-ci.yml"
 
 jobs:
@@ -33,3 +35,15 @@ jobs:
 
       - name: Test
         run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
+
+  # Leitura do .env do deploy como DADO (sem source/eval) e preflight do modo de deploy: testes puros de
+  # Bash, sem Docker. Roda no runner Linux, o mesmo ambiente onde o script é usado no deploy.
+  deploy-scripts:
+    runs-on: [self-hosted, Linux]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Testar scripts/deploy-config.sh
+        run: bash scripts/tests/deploy-config.test.sh

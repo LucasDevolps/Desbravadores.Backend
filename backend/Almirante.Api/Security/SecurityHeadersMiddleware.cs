@@ -10,10 +10,11 @@ namespace Almirante.Api.Security;
 //
 // HSTS é emitido aqui (e não por app.UseHsts()) pelo mesmo motivo: o HstsMiddleware grava o header
 // antes de chamar o próximo middleware e ele seria apagado em respostas de erro. Os parâmetros vêm
-// de HstsOptions (seção "Hsts"). Regras do framework preservadas: nunca em Development, só quando a
+// de HstsOptions (seção "Hsts"). Regras do framework preservadas: nunca em Development (salvo
+// Hsts:EnabledInDevelopment=true, para Development publicado), só quando a
 // requisição é HTTPS — considerando X-Forwarded-Proto apenas de proxy confiável — e nunca para os
 // hosts excluídos (localhost, 127.0.0.1, [::1] por padrão).
-public sealed class SecurityHeadersMiddleware(RequestDelegate next, IHostEnvironment environment, IOptions<HstsOptions> hstsOptions)
+public sealed class SecurityHeadersMiddleware(RequestDelegate next, IHostEnvironment environment, IOptions<HstsOptions> hstsOptions, IConfiguration configuration)
 {
     // API JSON: nada deve ser carregado, embutido em frame ou usado como base/form.
     public const string ApiContentSecurityPolicy =
@@ -26,6 +27,10 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next, IHostEnviron
     public const string SwaggerContentSecurityPolicy =
         "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
         "font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
+    // Development publicado (IIS/Pop!_OS com HTTPS real) também deve emitir HSTS: Hsts:EnabledInDevelopment=true.
+    // Hosts de loopback continuam excluídos (IsExcludedHost), então o desenvolvimento local não é afetado.
+    private readonly bool hstsInDevelopment = configuration.GetValue<bool>("Hsts:EnabledInDevelopment");
 
     public Task InvokeAsync(HttpContext context)
     {
@@ -48,7 +53,7 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next, IHostEnviron
             ? SwaggerContentSecurityPolicy
             : ApiContentSecurityPolicy;
 
-        if (!environment.IsDevelopment() && context.Request.IsHttps && !IsExcludedHost(context.Request.Host.Host))
+        if ((!environment.IsDevelopment() || hstsInDevelopment) && context.Request.IsHttps && !IsExcludedHost(context.Request.Host.Host))
         {
             var options = hstsOptions.Value;
             var value = $"max-age={(long)options.MaxAge.TotalSeconds}";

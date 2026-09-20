@@ -55,3 +55,22 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # Host aceito/canônico (gerado por scripts/deploy-config.sh gerar-host-tls a partir de
+      # TLS_PUBLIC_HOST; o workflow de deploy já faz isso). Sem o arquivo o Compose recusa subir.
+      - type: bind
+        source: ./nginx/generated/tls-host.conf
+        target: /etc/nginx/almirante-host/host.conf
+        read_only: true
+        bind:
+          create_host_path: false
+  api:
+    environment:
+      # A API só recebe o Host canônico (o nginx o fixa); qualquer outro é rejeitado (400) pelo
+      # HostFiltering. localhost/127.0.0.1 continuam aceitos para o healthcheck interno do container.
+      AllowedHosts: "${TLS_PUBLIC_HOST:?defina TLS_PUBLIC_HOST (nome DNS do certificado) no arquivo .env deste ambiente};localhost;127.0.0.1"
+      # Ambiente publicado usa a mesma política TLS do SQL Server de Production (Encrypt=True e
+      # TrustServerCertificate=False) — ative com SQL_REQUIRE_TRUSTED_CERTIFICATE=true no .env DEPOIS de
+      # instalar o certificado do SQL Server nos clientes (ver docs/authentication-security.md).
+      Security__RequireTrustedSqlServerCertificate: ${SQL_REQUIRE_TRUSTED_CERTIFICATE:-false}
+      # HSTS também em Development publicado (a API só o emite em HTTPS e fora de localhost).
+      Hsts__EnabledInDevelopment: "true"

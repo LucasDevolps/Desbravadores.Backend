@@ -183,6 +183,80 @@ public sealed class SecurityRegressionTests
         Assert.DoesNotContain("nao-usada", stderr);
     }
 
+
+    private static async Task<HttpResponseMessage> GetCsrfAsync(HttpClient client, string host)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/Auth/csrf");
+        request.Headers.Host = host;
+        return await client.SendAsync(request);
+    }
+
+    // Development publicado (HTTPS real) emite HSTS quando habilitado; sem a flag, nunca (comportamento de sempre).
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData(null, false)]
+    public async Task Hsts_EmDevelopmentPublicado_DependeDaConfiguracao_NaoSoDoAmbiente(string? flag, bool esperado)
+    {
+        var overrides = new Dictionary<string, string?>();
+        if (flag is not null) overrides["Hsts:EnabledInDevelopment"] = flag;
+        await using var factory = new ConfiguredApiFactory("Development", overrides);
+        var response = await GetCsrfAsync(factory.CreateClient(), "api.exemplo.com");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(esperado, response.Headers.Contains("Strict-Transport-Security"));
+    }
+
+    // Host desconhecido não chega ao pipeline (nem a redirects que o refletiriam): HostFiltering => 400.
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("Production")]
+    public async Task AllowedHosts_RejeitaHostDesconhecido(string environment)
+    {
+        await using var factory = new ConfiguredApiFactory(environment, new Dictionary<string, string?> { ["AllowedHosts"] = "api.exemplo.com" });
+        var client = factory.CreateClient();
+
+        Assert.Equal(HttpStatusCode.OK, (await GetCsrfAsync(client, "api.exemplo.com")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await GetCsrfAsync(client, "attacker.example")).StatusCode);
+    }
+
+
+    // Transição "Despesa" -> "Saida": o nome legado continua aceito na entrada; a resposta usa "Saida" e
+    // só volta a "Despesa" durante a janela de compatibilidade (Compatibility:LegacyTipoFluxoDespesa).
+    [Theory]
+    [InlineData("\"Despesa\"", 1)]
+    [InlineData("\"despesa\"", 1)]
+    [InlineData("\"Saida\"", 1)]
+    [InlineData("\"Saída\"", 1)]
+    [InlineData("1", 1)]
+    [InlineData("\"Entrada\"", 0)]
+    public void TipoFluxo_AceitaNomeLegadoNaEntrada(string json, int esperado)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { Converters = { new Almirante.Api.Entities.TipoFluxoLancamentoJsonConverter(false) } };
+        Assert.Equal((Almirante.Api.Entities.TipoFluxoLancamento)esperado,
+            System.Text.Json.JsonSerializer.Deserialize<Almirante.Api.Entities.TipoFluxoLancamento>(json, options));
+    }
+
+    [Theory]
+    [InlineData("\"Outro\"")]
+    [InlineData("7")]
+    [InlineData("null")]
+    public void TipoFluxo_RecusaValorDesconhecido(string json)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { Converters = { new Almirante.Api.Entities.TipoFluxoLancamentoJsonConverter(false) } };
+        Assert.Throws<System.Text.Json.JsonException>(() =>
+            System.Text.Json.JsonSerializer.Deserialize<Almirante.Api.Entities.TipoFluxoLancamento>(json, options));
+    }
+
+    [Theory]
+    [InlineData(false, "\"Saida\"")]
+    [InlineData(true, "\"Despesa\"")]
+    public void TipoFluxo_RespostaUsaSaida_SalvoJanelaDeCompatibilidade(bool legado, string esperado)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { Converters = { new Almirante.Api.Entities.TipoFluxoLancamentoJsonConverter(legado) } };
+        Assert.Equal(esperado, System.Text.Json.JsonSerializer.Serialize(Almirante.Api.Entities.TipoFluxoLancamento.Saida, options));
+        Assert.Equal("\"Entrada\"", System.Text.Json.JsonSerializer.Serialize(Almirante.Api.Entities.TipoFluxoLancamento.Entrada, options));
+    }
+
     private sealed class FakeEnvironment(string name) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = name;
