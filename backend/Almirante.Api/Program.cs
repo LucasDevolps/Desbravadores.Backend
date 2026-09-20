@@ -345,6 +345,12 @@ using (var scope = app.Services.CreateScope())
     var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<Usuario>>();
     var seedOptions = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<SeedOptions>>();
     await DbSeeder.SeedAsync(db, passwordHasher, seedOptions);
+
+    // Sem login rotacionado (ex.: IIS com Windows Authentication), audita a identidade efetiva da conexão.
+    if (!dbCredentialOptions.Enabled && db.Database.IsRelational())
+    {
+        await DbPrivilegeCheck.RunAsync(db, app.Configuration, app.Logger);
+    }
 }
 
 app.Run();
