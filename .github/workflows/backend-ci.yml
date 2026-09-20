@@ -118,5 +118,12 @@ jobs:
       - name: Testar política dos workflows
         run: bash scripts/tests/workflows.test.sh
 
+      # Separação de identidades SQL: a API nunca recebe o segredo do sa, não há fallback para sa e o bootstrap
+      # (único a usar o sa, fora da API) não põe senha na linha de comando. Sem subir nada.
+      - name: Testar bootstrap SQL e separação de identidades no Compose
+        run: |
+          bash scripts/tests/sql-bootstrap.test.sh
+          bash scripts/tests/compose-sql-identities.test.sh
+
       - name: Testar nginx HTTP, HTTPS e rate limiting em containers descartáveis
         run: bash scripts/tests/nginx.test.sh

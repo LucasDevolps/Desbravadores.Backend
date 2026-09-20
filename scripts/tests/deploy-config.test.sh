@@ -51,7 +51,11 @@ bash "$SCRIPT" get "$TMP/.env" B > /dev/null 2>&1 || true
 if [[ -e "$PWN" ]]; then falha "conteúdo do .env nunca é executado" "payload executado"; else ok "conteúdo do .env nunca é executado"; fi
 
 # modo
-modo() { printf '%s\n' "$1" > "$TMP/.env"; : > "$TMP/out"; bash "$SCRIPT" modo "$TMP/.env" "$TMP/out" > "$TMP/msg" 2>&1; }
+# Identidades SQL válidas por padrão (o preflight as exige); os testes específicos abaixo as sobrescrevem.
+SQL_OK=$'SQL_SA_PASSWORD=Sa.Senha.Do.Servidor.2026\nSQL_ADMIN_USER=almirante_admin_bd\nSQL_ADMIN_PASSWORD=Admin.Senha.Dedicada.2026-Zz9'
+modo() { printf '%s\n%s\n' "$SQL_OK" "$1" > "$TMP/.env"; : > "$TMP/out"; bash "$SCRIPT" modo "$TMP/.env" "$TMP/out" > "$TMP/msg" 2>&1; }
+# modo_sql: só o conteúdo dado (sem as identidades SQL padrão)
+modo_sql() { printf '%s\n' "$1" > "$TMP/.env"; : > "$TMP/out"; bash "$SCRIPT" modo "$TMP/.env" "$TMP/out" > "$TMP/msg" 2>&1; }
 
 modo $'API_HOST_PORT=8090'; if grep -q '^mode=http$' "$TMP/out" && grep -q '^files=-f compose.yaml$' "$TMP/out"; then ok "modo padrão = http"; else falha "modo padrão = http" "$(cat "$TMP/out" "$TMP/msg")"; fi
 modo $'DEPLOY_MODE=http\nNGINX_CONF_FILE=nginx.tls.conf'; if [[ $? -ne 0 ]]; then ok "http + nginx.tls.conf recusado"; else falha "http + nginx.tls.conf recusado" ""; fi
@@ -60,6 +64,20 @@ modo $'DEPLOY_MODE=tls\nNGINX_CONF_FILE=nginx.tls.conf'; if [[ $? -ne 0 ]]; then
 modo $'DEPLOY_MODE=tls\nNGINX_CONF_FILE=nginx.tls.conf\nTLS_PUBLIC_HOST=api.exemplo.com.br'; if [[ $? -ne 0 ]]; then ok "tls sem certificado recusado antes do deploy"; else falha "tls sem certificado recusado antes do deploy" ""; fi
 modo $'API_HOST_PORT=99999'; if [[ $? -ne 0 ]]; then ok "porta inválida recusada"; else falha "porta inválida recusada" ""; fi
 modo $'DEPLOY_MODE=tls\nNGINX_CONF_FILE=nginx.tls.conf\nTLS_PUBLIC_HOST=API.exemplo.com;evil'; if [[ $? -ne 0 ]]; then ok "host com caractere inválido recusado"; else falha "host com caractere inválido recusado" ""; fi
+
+# identidades SQL (sem fallback para sa)
+modo_sql $'SQL_SA_PASSWORD=Sa.Senha.2026'; if [[ $? -ne 0 ]] && grep -q 'SQL_ADMIN_USER ausente' "$TMP/msg"; then ok "sem SQL_ADMIN_USER recusado (sem fallback para sa)"; else falha "sem SQL_ADMIN_USER recusado" "$(cat "$TMP/msg")"; fi
+modo_sql $'SQL_ADMIN_USER=almirante_admin_bd'; if [[ $? -ne 0 ]] && grep -q 'SQL_ADMIN_PASSWORD ausente' "$TMP/msg"; then ok "sem SQL_ADMIN_PASSWORD recusado"; else falha "sem SQL_ADMIN_PASSWORD recusado" "$(cat "$TMP/msg")"; fi
+modo_sql $'SQL_ADMIN_USER=SA
+SQL_ADMIN_PASSWORD=Admin.Senha.Dedicada.2026-Zz9'; if [[ $? -ne 0 ]] && grep -q "não pode ser 'sa'" "$TMP/msg"; then ok "SQL_ADMIN_USER=sa recusado"; else falha "SQL_ADMIN_USER=sa recusado" "$(cat "$TMP/msg")"; fi
+modo_sql $'SQL_ADMIN_USER=almirante_admin_bd
+SQL_ADMIN_PASSWORD=DEFINA_UMA_SENHA_FORTE_FORA_DO_GIT'; if [[ $? -ne 0 ]] && grep -q 'placeholder' "$TMP/msg"; then ok "placeholder de SQL_ADMIN_PASSWORD recusado"; else falha "placeholder recusado" "$(cat "$TMP/msg")"; fi
+modo_sql $'SQL_SA_PASSWORD=Mesma.Senha.Dos.Dois.2026
+SQL_ADMIN_USER=almirante_admin_bd
+SQL_ADMIN_PASSWORD=Mesma.Senha.Dos.Dois.2026'; if [[ $? -ne 0 ]] && grep -q 'igual a SQL_SA_PASSWORD' "$TMP/msg"; then ok "senha administrativa igual à do sa recusada"; else falha "senha igual à do sa recusada" "$(cat "$TMP/msg")"; fi
+modo_sql $'SQL_ADMIN_USER=Almirante_User_BD
+SQL_ADMIN_PASSWORD=Admin.Senha.Dedicada.2026-Zz9'; if [[ $? -ne 0 ]] && grep -q 'igual a SQL_APP_USER' "$TMP/msg"; then ok "administrador igual ao runtime recusado"; else falha "administrador igual ao runtime recusado" "$(cat "$TMP/msg")"; fi
+if grep -rqF 'Admin.Senha.Dedicada' "$TMP/msg"; then falha "mensagens não imprimem valores" "vazou"; else ok "mensagens não imprimem valores"; fi
 
 echo cert > "$TMP/fullchain.pem"; echo key > "$TMP/privkey.pem"
 modo "DEPLOY_MODE=tls

@@ -10,6 +10,7 @@ on:
       - "compose.https.yaml"
       - "nginx/**"
       - "scripts/**"
+      - "docs/sql/**"
       - ".github/workflows/backend-deploy.yml"
 
 # Menor privilégio para o GITHUB_TOKEN: o deploy só precisa ler o repositório (o checkout).
@@ -76,9 +77,9 @@ jobs:
       # derrubando na inicialização), o compose não mostra o motivo — só "dependency
       # failed to start". Sem este passo, a única forma de ver a exceção real seria
       # entrar na máquina do runner manualmente.
-      - name: Logs da API em caso de falha ao subir
+      - name: Logs do bootstrap SQL e da API em caso de falha ao subir
         if: failure()
-        run: docker compose ${{ steps.compose-mode.outputs.files }} logs --no-color --tail=200 api
+        run: docker compose ${{ steps.compose-mode.outputs.files }} logs --no-color --tail=200 sql-bootstrap api
 
       # A aplicação roda as migrations pendentes automaticamente na
       # inicialização (Program.cs chama DbSeeder.SeedAsync antes de aceitar

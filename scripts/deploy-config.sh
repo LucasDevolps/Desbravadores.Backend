@@ -60,6 +60,21 @@ valida_host() {
   [[ "$h" =~ ^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$ && "$h" != *..* ]] || erro "TLS_PUBLIC_HOST inválido (use só o nome DNS, minúsculo, sem porta/esquema)"
 }
 
+# Identidades SQL da API: o Compose exige SQL_ADMIN_USER/SQL_ADMIN_PASSWORD (não existe fallback para "sa"). Falha
+# aqui, antes de qualquer alteração de serviço e com uma mensagem direta, se faltarem, forem "sa", placeholder ou
+# repetirem a senha do sa/a identidade de runtime. Nunca imprime valores.
+valida_identidades_sql() {
+  local env_file=$1 user pw sa_pw app
+  user=$(dotenv_get "$env_file" SQL_ADMIN_USER); pw=$(dotenv_get "$env_file" SQL_ADMIN_PASSWORD)
+  sa_pw=$(dotenv_get "$env_file" SQL_SA_PASSWORD); app=$(dotenv_get "$env_file" SQL_APP_USER); app=${app:-almirante_user_bd}
+  [[ -n "$user" ]] || erro "SQL_ADMIN_USER ausente no .env: a API exige a identidade administrativa dedicada (não há fallback para sa)."
+  [[ "${user,,}" != "sa" ]] || erro "SQL_ADMIN_USER não pode ser 'sa': a API nunca usa esse login."
+  [[ "${user,,}" != "${app,,}" ]] || erro "SQL_ADMIN_USER não pode ser igual a SQL_APP_USER (identidades distintas)."
+  [[ -n "$pw" ]] || erro "SQL_ADMIN_PASSWORD ausente no .env."
+  [[ "$pw" != DEFINA_* ]] || erro "SQL_ADMIN_PASSWORD ainda é o placeholder do .env.example."
+  [[ "$pw" != "$sa_pw" ]] || erro "SQL_ADMIN_PASSWORD não pode ser igual a SQL_SA_PASSWORD."
+}
+
 cmd_get() {
   [[ $# -eq 2 ]] || erro "uso: get ARQUIVO CHAVE"
   dotenv_get "$1" "$2"
@@ -85,6 +100,7 @@ cmd_modo() {
   [[ $# -ge 1 ]] || erro "uso: modo ARQUIVO_ENV [SAIDA]"
   local env_file=$1 out=${2:-/dev/stdout}
   local mode nginx_conf host cert key port
+  valida_identidades_sql "$env_file"
   mode=$(dotenv_get "$env_file" DEPLOY_MODE); mode=${mode:-http}
   nginx_conf=$(dotenv_get "$env_file" NGINX_CONF_FILE)
   port=$(dotenv_get "$env_file" API_HOST_PORT); port=${port:-8090}
