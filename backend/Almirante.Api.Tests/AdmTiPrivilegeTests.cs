@@ -83,9 +83,11 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
         await using (var admin = await OpenAdminAsync())
         {
             await ExecAsync(admin, $"""
+                USE master;
                 ALTER SERVER ROLE [sysadmin] ADD MEMBER [{Login}];
                 GRANT CONTROL SERVER TO [{Login}];
                 GRANT IMPERSONATE ON LOGIN::[sa] TO [{Login}];
+                USE [{Database}];
                 ALTER ROLE [db_owner] ADD MEMBER [{Login}];
                 ALTER ROLE [db_datareader] ADD MEMBER [almirante_ti_leitura];
                 GRANT IMPERSONATE ON USER::[dbo] TO [{Login}];
@@ -108,7 +110,7 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
         await using (var admin = await OpenAdminAsync())
         {
             await ExecAsync(admin, serverScope
-                ? $"GRANT VIEW SERVER STATE TO [{Login}] WITH GRANT OPTION;"
+                ? $"USE master; GRANT VIEW SERVER STATE TO [{Login}] WITH GRANT OPTION;"
                 : $"GRANT IMPERSONATE ON USER::[dbo] TO [{Login}] WITH GRANT OPTION;");
         }
 
