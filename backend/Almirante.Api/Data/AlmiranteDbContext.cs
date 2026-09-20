@@ -26,6 +26,10 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.Email).HasMaxLength(256).IsRequired();
             entity.Property(u => u.EmailNormalizado).HasMaxLength(256).IsRequired();
             entity.Property(u => u.SenhaHash).IsRequired();
+            // Token de concorrência: todo UPDATE de Usuarios (login, rehash, reset de senha) filtra por esta
+            // versão, então um login/rehash baseado em credenciais anteriores a um reset falha em vez de
+            // persistir uma sessão ou restaurar o hash antigo (ver AuthService.LoginAsync).
+            entity.Property(u => u.SecurityVersion).IsConcurrencyToken();
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
 
             entity.HasOne(u => u.Cargo)

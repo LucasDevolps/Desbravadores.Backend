@@ -400,6 +400,7 @@ namespace Almirante.Api.Data.Migrations
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<long>("SecurityVersion")
+                        .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
                     b.Property<string>("SenhaHash")

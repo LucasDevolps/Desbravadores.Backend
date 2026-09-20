@@ -12,7 +12,7 @@ namespace Almirante.Api.Tests;
 // (ex.: "Server=localhost;Trusted_Connection=True;TrustServerCertificate=True"); cada fábrica cria um
 // banco descartável almirante_test_<guid>, aplica TODAS as migrations pelo startup real e o remove
 // no Dispose. Excluídos do CI (runner sem SQL Server) pelo filtro Category!=RequiresSqlServer.
-public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides = null) : AlmiranteApiFactory
+public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides = null, Action<DbContextOptionsBuilder>? configureDb = null) : AlmiranteApiFactory
 {
     public const string EnvironmentVariable = "ALMIRANTE_TEST_SQLSERVER";
     private readonly string _connectionString = BuildConnectionString();
@@ -36,7 +36,7 @@ public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides 
     }
 
     protected override void ConfigureDatabase(IServiceCollection services) =>
-        services.AddDbContext<AlmiranteDbContext>(options => options.UseSqlServer(_connectionString));
+        services.AddDbContext<AlmiranteDbContext>(options => { options.UseSqlServer(_connectionString); configureDb?.Invoke(options); });
 
     protected override void Dispose(bool disposing)
     {

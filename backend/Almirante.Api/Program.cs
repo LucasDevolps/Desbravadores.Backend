@@ -264,23 +264,32 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Validações de segurança de startup (JwtOptions, ConnectionStringsOptions/TLS do SQL Server): por padrão
+// só rodam dentro de app.Run(), DEPOIS do seed/migração do SQL Server. Executam aqui, uma única vez e
+// antes de qualquer acesso ao banco, tanto para o startup normal quanto para a CLI administrativa
+// abaixo — sem isso, uma connection string insegura (TrustServerCertificate=True/Encrypt=False) chegaria
+// a conectar e a alterar o banco antes da falha de validação.
+var isAdminCli = args.Length > 0 && string.Equals(args[0], AdminPasswordResetCli.CommandName, StringComparison.OrdinalIgnoreCase);
+try
+{
+    app.Services.GetRequiredService<Microsoft.Extensions.Options.IStartupValidator>().Validate();
+}
+catch (Microsoft.Extensions.Options.OptionsValidationException ex) when (isAdminCli)
+{
+    // Só nomes de opções, nunca valores/connection strings (ver os validators).
+    Console.Error.WriteLine("Configuração recusada pela validação de segurança: " + string.Join(" ", ex.Failures));
+    return 1;
+}
+
 // Ferramenta local de rotação de senha do admin (issue #50): roda antes do pipeline HTTP normal e
 // sai em seguida, sem subir o host web. Ver Cli/AdminPasswordResetCli.cs.
-if (args.Length > 0 && string.Equals(args[0], AdminPasswordResetCli.CommandName, StringComparison.OrdinalIgnoreCase))
+if (isAdminCli)
 {
     // Com usuário de aplicação rotacionado, a senha só existe dentro do processo da API; a CLI usa a
     // conexão administrativa (o AppUser tampouco poderia ler/atualizar por ela sem provisionar/rotacionar).
     var cliConnection = dbCredentialOptions.Enabled ? app.Configuration.GetConnectionString(DbCredentialManager.AdminConnectionName) : null;
     return await AdminPasswordResetCli.RunAsync(app.Services, args, cliConnection);
 }
-
-// Dispara agora as validações registradas com ValidateOnStart (JwtOptions, ConnectionStringsOptions):
-// por padrão elas só rodam dentro de app.Run() (quando o host efetivamente inicia), o que é DEPOIS do
-// seed/migração do SQL Server logo abaixo. Sem esta chamada explícita, uma connection string insegura
-// em Production (TrustServerCertificate=True/Encrypt=False) chegaria a conectar e migrar o banco antes
-// da falha de startup do SqlServerConnectionSecurityValidator ser lançada.
-app.Services.GetRequiredService<Microsoft.Extensions.Options.IStartupValidator>().Validate();
-
 // Migrations (DDL) pela conexão administrativa e provisionamento/rotação inicial da senha do usuário da
 // aplicação, antes de qualquer acesso do DbContext normal (que só tem SELECT/INSERT/UPDATE).
 if (dbCredentialOptions.Enabled)

@@ -16,6 +16,7 @@ public static class AdminPasswordResetCli
 {
     public const string CommandName = "reset-admin-password";
     private const string MotivoRevogacao = "reset-senha-admin";
+    private const int MaxTentativasConcorrencia = 5;
 
     public enum ResetResult
     {
@@ -34,34 +35,52 @@ public static class AdminPasswordResetCli
         CancellationToken cancellationToken = default)
     {
         var emailNormalizado = email.Trim().ToUpperInvariant();
-        var usuario = await db.Usuarios.SingleOrDefaultAsync(u => u.EmailNormalizado == emailNormalizado, cancellationToken);
-        if (usuario is null)
+
+        // Um login concorrente que já leu o usuário pode vencer a corrida pelo UPDATE (SecurityVersion é
+        // token de concorrência); nesse caso relê e reaplica o reset, em vez de perder a troca de senha.
+        for (var tentativa = 1; ; tentativa++)
         {
-            return (ResetResult.UsuarioNaoEncontrado, []);
+            db.ChangeTracker.Clear();
+            var usuario = await db.Usuarios.SingleOrDefaultAsync(u => u.EmailNormalizado == emailNormalizado, cancellationToken);
+            if (usuario is null)
+            {
+                return (ResetResult.UsuarioNaoEncontrado, []);
+            }
+
+            var erros = PasswordPolicy.Validate(novaSenha, usuario.Email);
+            if (erros.Count > 0)
+            {
+                return (ResetResult.SenhaInvalida, erros);
+            }
+
+            // Hash novo, SecurityVersion+1 e revogação das sessões saem no MESMO SaveChanges (uma
+            // transação). SecurityVersion invalida os access tokens já emitidos e, por ser token de
+            // concorrência, faz qualquer login/rehash lido antes deste reset falhar ao persistir
+            // (ver AuthService.LoginAsync).
+            usuario.SenhaHash = passwordHasher.HashPassword(usuario, novaSenha);
+            usuario.SecurityVersion++;
+
+            // Só remover a senha antiga não invalida sessões já emitidas (refresh token é opaco e não
+            // revalida credenciais) — revogar aqui é o que de fato força novo login em todo dispositivo.
+            var agora = clock.GetUtcNow().UtcDateTime;
+            var sessoesAtivas = await db.AuthSessions
+                .Where(s => s.UsuarioId == usuario.Id && s.RevokedAtUtc == null)
+                .ToListAsync(cancellationToken);
+            foreach (var sessao in sessoesAtivas)
+            {
+                sessao.RevokedAtUtc = agora;
+                sessao.RevocationReason = MotivoRevogacao;
+            }
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                return (ResetResult.Sucesso, []);
+            }
+            catch (DbUpdateConcurrencyException) when (tentativa < MaxTentativasConcorrencia)
+            {
+            }
         }
-
-        var erros = PasswordPolicy.Validate(novaSenha, usuario.Email);
-        if (erros.Count > 0)
-        {
-            return (ResetResult.SenhaInvalida, erros);
-        }
-
-        usuario.SenhaHash = passwordHasher.HashPassword(usuario, novaSenha);
-
-        // Só remover a senha antiga não invalida sessões já emitidas (refresh token é opaco e não
-        // revalida credenciais) — revogar aqui é o que de fato força novo login em todo dispositivo.
-        var agora = clock.GetUtcNow().UtcDateTime;
-        var sessoesAtivas = await db.AuthSessions
-            .Where(s => s.UsuarioId == usuario.Id && s.RevokedAtUtc == null)
-            .ToListAsync(cancellationToken);
-        foreach (var sessao in sessoesAtivas)
-        {
-            sessao.RevokedAtUtc = agora;
-            sessao.RevocationReason = MotivoRevogacao;
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-        return (ResetResult.Sucesso, []);
     }
 
     // Entrada de linha de comando: `dotnet run --project backend/Almirante.Api -- reset-admin-password <email>`.
