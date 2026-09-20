@@ -76,7 +76,8 @@ cp .env.example .env
 
 Altere no `.env`, no mínimo, os valores de:
 
-- `SQL_SA_PASSWORD`;
+- `SQL_SA_PASSWORD` (só o SQL Server e o bootstrap a conhecem; a API nunca a recebe);
+- `SQL_ADMIN_USER` e `SQL_ADMIN_PASSWORD` (identidade administrativa dedicada da API, obrigatórias, nunca `sa`; 16+ caracteres, diferente da senha do `sa`);
 - `JWT_KEY_V1` (Base64 de no mínimo 32 bytes) e `JWT_ACTIVE_KEY_ID`;
 - `SEED_ADMIN_SENHA` (política: 12–128 caracteres, não trivial; ver [`docs/authentication-security.md`](docs/authentication-security.md)).
 
@@ -251,14 +252,15 @@ O AppHost:
 
 - inicia um SQL Server em contêiner;
 - utiliza o volume persistente `almirante-sqlserver-data`;
-- cria o banco lógico `almirante`;
-- aguarda o banco ficar disponível;
-- inicia a API e exibe os endereços dos recursos no painel do Aspire.
+- executa o contêiner `sql-bootstrap` (o mesmo `scripts/sql-bootstrap.sh` do Compose), que cria o banco `almirante` e as identidades SQL da API (administrativa dedicada e de runtime, sem privilégio de servidor);
+- aguarda o bootstrap terminar;
+- inicia a API com essas identidades (o AppHost não repassa o `sa` a ela) e exibe os endereços dos recursos no painel do Aspire.
 
 Nenhuma credencial fica versionada. Antes da primeira execução, defina os segredos locais fora do Git:
 
 ```bash
-dotnet user-secrets set "Parameters:sql-password" "<senha do SQL Server>" --project backend/Almirante.AppHost
+dotnet user-secrets set "Parameters:sql-password" "<senha do sa do SQL Server>" --project backend/Almirante.AppHost
+dotnet user-secrets set "Parameters:sql-admin-password" "<senha administrativa dedicada, 16+ caracteres>" --project backend/Almirante.AppHost
 dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project backend/Almirante.Api
 dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project backend/Almirante.Api
 dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project backend/Almirante.Api
@@ -272,7 +274,9 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 
 | Variável | Finalidade | Padrão no Compose |
 | --- | --- | --- |
-| `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server | obrigatória |
+| `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server; usada só pelos serviços `sqlserver` e `sql-bootstrap` — a API não a recebe e recusa iniciar se receber | obrigatória |
+| `SQL_ADMIN_USER` / `SQL_ADMIN_PASSWORD` | identidade administrativa dedicada da API (usuário contido criado pelo `sql-bootstrap`: migrations, concessões e rotação da senha de runtime; sem privilégio de servidor). Sem padrão e sem fallback para `sa` | obrigatórias |
+| `SQL_APP_USER` / `SQL_APP_PASSWORD_ROTATION_HOURS` | identidade de runtime da API (senha aleatória rotacionada em memória) e intervalo da rotação | `almirante_user_bd` / `24` |
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
 | `SQL_TRUST_SERVER_CERTIFICATE` | aceita o certificado autoassinado do SQL Server do container; **só para desenvolvimento** — `True` em `Production` faz a API recusar iniciar (#36) | `False` |
 | `API_HOST_PORT` | porta HTTP publicada no host pelo nginx (reverse proxy da API) | `8090` |
@@ -415,8 +419,11 @@ lockout, forwarded headers, segredos/política de senha, cabeçalhos de seguran�
 migrations.
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
-lockout concorrente, corrida login/reset, privilégios SQL e auditoria por trigger). Cada fixture cria
-e remove bancos/logins exclusivos. Use uma instância descartável dedicada a testes, com sysadmin:
+lockout concorrente, corrida login/reset, modelo de identidades SQL sem `sa`, rotação de senha com pools,
+privilégios e auditoria por trigger, startup real da API). Cada teste cria e remove bancos exclusivos e os
+usuários/logins de teste. A conexão de `ALMIRANTE_TEST_SQLSERVER` é do *harness* (cria e remove o ambiente, como o
+bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o CI usa um contêiner com `sa` descartável).
+A API sob teste nunca usa essa conexão. Exemplo com Windows Auth:
 
 ```bash
 ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx --filter Category=RequiresSqlServer
