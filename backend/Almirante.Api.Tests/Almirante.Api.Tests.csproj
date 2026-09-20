@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <None Include="../../docs/sql/criar-usuario-adm-ti.sql" Link="Sql/criar-usuario-adm-ti.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../docs/sql/criar-usuario-admin-app.sql" Link="Sql/criar-usuario-admin-app.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

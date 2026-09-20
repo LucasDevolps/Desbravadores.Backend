@@ -1,12 +1,11 @@
+using System.Text.RegularExpressions;
 using Almirante.Api.Infrastructure;
-using Almirante.Api.Options;
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Tests;
 
+// Testes sem SQL Server do gerador/SQL de rotação. O comportamento contra SQL Server real (rotação, pools,
+// identidades, privilégios) está em SqlIdentityModelTests.
 public class DbCredentialManagerUnitTests
 {
     [Fact]
@@ -23,22 +22,52 @@ public class DbCredentialManagerUnitTests
         Assert.All(a, c => Assert.True(char.IsAsciiLetterOrDigit(c)));
     }
 
+    // 48 símbolos de um alfabeto de 62 ≈ 285 bits de entropia: mil senhas nunca repetem, e o alfabeto é usado por inteiro.
+    [Fact]
+    public void GeneratePassword_NaoRepeteEUsaOAlfabetoTodo()
+    {
+        var senhas = Enumerable.Range(0, 1000).Select(_ => DbCredentialManager.GeneratePassword()).ToList();
+
+        Assert.Equal(senhas.Count, senhas.Distinct().Count());
+        Assert.True(string.Concat(senhas).Distinct().Count() >= 62);
+    }
+
     [Theory]
     [InlineData("x]; DROP LOGIN sa;--")]
     [InlineData("1abc")]
     [InlineData("")]
     [InlineData("com espaco")]
-    public void BuildProvisionSql_RejectsUnsafeUserNames(string user) =>
-        Assert.Throws<ArgumentException>(() => DbCredentialManager.BuildProvisionSql(user, "Abc123"));
+    public void BuildRotateSql_RejectsUnsafeUserNames(string user) =>
+        Assert.Throws<ArgumentException>(() => DbCredentialManager.BuildRotateSql(user, "Abc123"));
+
+    [Theory]
+    [InlineData("abc'; --")]
+    [InlineData("")]
+    [InlineData("com espaco")]
+    public void BuildRotateSql_RejectsNonAlphanumericPassword(string password) =>
+        Assert.Throws<ArgumentException>(() => DbCredentialManager.BuildRotateSql("almirante_user_bd", password));
 
     [Fact]
-    public void BuildProvisionSql_RejectsNonAlphanumericPassword() =>
-        Assert.Throws<ArgumentException>(() => DbCredentialManager.BuildProvisionSql("almirante_user_bd", "abc'; --"));
+    public void BuildRotateSql_AlteraSoASenhaDoUsuarioContido_SemCriarLoginNemMexerEmPermissao()
+    {
+        var sql = DbCredentialManager.BuildRotateSql("almirante_user_bd", "Abc123def");
+
+        Assert.Equal("ALTER USER [almirante_user_bd] WITH PASSWORD = N'Abc123def';", sql);
+        Assert.DoesNotContain("LOGIN", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("GRANT", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("x]; DROP LOGIN sa;--")]
+    [InlineData("1abc")]
+    [InlineData("")]
+    public void BuildProvisionSql_RejectsUnsafeUserNames(string user) =>
+        Assert.Throws<ArgumentException>(() => DbCredentialManager.BuildProvisionSql(user));
 
     [Fact]
     public void BuildProvisionSql_GrantsOnlySelectInsertUpdateAndDeleteOnlyOnAuthSessions()
     {
-        var sql = DbCredentialManager.BuildProvisionSql("almirante_user_bd", "Abc123def");
+        var sql = DbCredentialManager.BuildProvisionSql("almirante_user_bd");
 
         Assert.DoesNotContain("ON SCHEMA::dbo TO", sql);
         Assert.Contains("GRANT SELECT, INSERT, UPDATE ON OBJECT::dbo.", sql);
@@ -47,89 +76,23 @@ public class DbCredentialManagerUnitTests
         Assert.DoesNotContain("db_owner", sql);
         Assert.DoesNotContain("db_datawriter", sql);
     }
-}
 
-// Exige SQL Server real com login sysadmin (ver SqlServerApiFactory.EnvironmentVariable). Cria um banco
-// e um login descartáveis; ambos são removidos ao final.
-[Trait("Category", "RequiresSqlServer")]
-public class DbCredentialManagerSqlServerTests
-{
+    // A identidade administrativa não tem ALTER ANY LOGIN/ROLE nem CONTROL no banco: o provisionamento da API
+    // não pode depender de nada disso (criar login/usuário/role, mexer em papéis) — isso é do bootstrap.
     [Fact]
-    public async Task InitializeAndRotate_ProvisionsLeastPrivilegeUserAndInvalidatesOldPassword()
+    public void BuildProvisionSql_NaoCriaNemAlteraLoginUsuarioOuRole_SoConcedeNaRoleDeRuntime()
     {
-        var server = Environment.GetEnvironmentVariable(SqlServerApiFactory.EnvironmentVariable)
-            ?? throw new InvalidOperationException($"Defina {SqlServerApiFactory.EnvironmentVariable}.");
-        var suffix = Guid.NewGuid().ToString("N")[..12];
-        var database = $"almirante_cred_{suffix}";
-        var appUser = $"almirante_user_{suffix}";
-        var adminCs = new SqlConnectionStringBuilder(server) { InitialCatalog = database }.ConnectionString;
-        var adminBuilder = new SqlConnectionStringBuilder(adminCs);
-        var appCs = new SqlConnectionStringBuilder
-        {
-            DataSource = adminBuilder.DataSource,
-            InitialCatalog = database,
-            TrustServerCertificate = adminBuilder.TrustServerCertificate,
-            Encrypt = adminBuilder.Encrypt,
-        };
+        var sql = DbCredentialManager.BuildProvisionSql("almirante_user_bd");
 
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["ConnectionStrings:almirante"] = appCs.ConnectionString,
-            ["ConnectionStrings:AlmiranteAdmin"] = adminCs,
-        }).Build();
-        var provider = new AppDbCredentialProvider();
-        var manager = new DbCredentialManager(configuration, Microsoft.Extensions.Options.Options.Create(new DbCredentialOptions { AppUser = appUser }), provider, NullLogger<DbCredentialManager>.Instance);
-
-        try
-        {
-            await manager.InitializeAsync();
-            var first = provider.Current!;
-
-            await using (var app = new SqlConnection(appCs.ConnectionString, first))
-            {
-                await app.OpenAsync();
-                Assert.Equal(1, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.Cargos','OBJECT','SELECT')"));
-                Assert.Equal(1, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.Cargos','OBJECT','INSERT')"));
-                Assert.Equal(1, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.Cargos','OBJECT','UPDATE')"));
-                Assert.Equal(0, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.Cargos','OBJECT','DELETE')"));
-                Assert.Equal(0, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.Lancamentos','OBJECT','DELETE')"));
-                Assert.Equal(1, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.AuthSessions','OBJECT','DELETE')"));
-                Assert.Equal(0, await Scalar(app, "SELECT HAS_PERMS_BY_NAME(DB_NAME(),'DATABASE','CREATE TABLE')"));
-                Assert.Equal(0, await Scalar(app, "SELECT HAS_PERMS_BY_NAME('dbo.Cargos','OBJECT','ALTER')"));
-            }
-
-            await manager.RotateAsync();
-            var second = provider.Current!;
-
-            await using (var app = new SqlConnection(appCs.ConnectionString, second))
-            {
-                await app.OpenAsync();
-            }
-
-            SqlConnection.ClearAllPools();
-            await using var stale = new SqlConnection(appCs.ConnectionString, first);
-            var ex = await Assert.ThrowsAsync<SqlException>(() => stale.OpenAsync());
-            Assert.Equal(18456, ex.Number);
-        }
-        finally
-        {
-            SqlConnection.ClearAllPools();
-            var master = new SqlConnectionStringBuilder(server) { InitialCatalog = "master" }.ConnectionString;
-            await using var connection = new SqlConnection(master);
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            command.CommandText = $"""
-                IF DB_ID(N'{database}') IS NOT NULL BEGIN ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}]; END
-                IF SUSER_ID(N'{appUser}') IS NOT NULL DROP LOGIN [{appUser}];
-                """;
-            await command.ExecuteNonQueryAsync();
-        }
+        Assert.DoesNotMatch(new Regex(@"\b(CREATE|DROP)\s+(LOGIN|USER|ROLE)\b", RegexOptions.IgnoreCase), sql);
+        Assert.DoesNotMatch(new Regex(@"\bALTER\s+(LOGIN|USER|ROLE|SERVER)\b", RegexOptions.IgnoreCase), sql);
+        Assert.DoesNotContain("ADD MEMBER", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("IMPERSONATE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("execute o bootstrap", sql);
     }
 
-    private static async Task<int> Scalar(SqlConnection connection, string sql)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return Convert.ToInt32(await command.ExecuteScalarAsync());
-    }
+    // Rotação nunca mexe em permissões (não abre janela sem GRANT com a API em tráfego).
+    [Fact]
+    public void BuildRotateSql_NaoContemPermissoes() =>
+        Assert.DoesNotMatch(new Regex(@"\b(GRANT|DENY|REVOKE)\b", RegexOptions.IgnoreCase), DbCredentialManager.BuildRotateSql("almirante_user_bd", "Abc123def"));
 }

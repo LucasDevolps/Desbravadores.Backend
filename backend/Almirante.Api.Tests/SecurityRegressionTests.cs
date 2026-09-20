@@ -162,7 +162,7 @@ public sealed class SecurityRegressionTests
         };
         psi.Environment["ASPNETCORE_ENVIRONMENT"] = environment;
         psi.Environment["ConnectionStrings__almirante"] = "Server=127.0.0.1,1;Database=x;Encrypt=True;TrustServerCertificate=True";
-        psi.Environment["ConnectionStrings__AlmiranteAdmin"] = "Server=127.0.0.1,1;Database=x;User Id=sa;Password=nao-usada;Encrypt=True;TrustServerCertificate=True";
+        psi.Environment["ConnectionStrings__AlmiranteAdmin"] = "Server=127.0.0.1,1;Database=x;User Id=almirante_admin_bd;Password=nao-usada;Encrypt=True;TrustServerCertificate=True";
         psi.Environment["DbCredentials__AppUser"] = "almirante_user_bd";
         psi.Environment["Jwt__Issuer"] = "t";
         psi.Environment["Jwt__Audience"] = "t";
@@ -254,6 +254,10 @@ public sealed class SecurityRegressionTests
     [InlineData("Development", null, true)]
     [InlineData("Development", "false", false)]
     [InlineData("Production", null, false)]
+    // O compose.yaml repassa SWAGGER_ENABLED="" quando a variável não existe: vazio = padrão do ambiente (antes derrubava o startup).
+    [InlineData("Development", "", true)]
+    [InlineData("Production", "", false)]
+    [InlineData("Production", "   ", false)]
     [InlineData("Production", "true", true)]
     public async Task Swagger_SoEhServidoQuandoHabilitado(string environment, string? flag, bool esperado)
     {

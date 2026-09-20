@@ -22,12 +22,45 @@ public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides 
     // internal (não protected): a classe é sealed, então não há subclasse para herdar o acesso.
     internal string ConnectionString => _connectionString;
 
+    // A conexão de ALMIRANTE_TEST_SQLSERVER (no CI, o "sa" de um SQL Server descartável; localmente, a conta do
+    // Windows) é do HARNESS: só cria e remove o ambiente, como faria o bootstrap. O DbContext da API sob teste
+    // usa um usuário contido descartável, dono só deste banco — nunca "sa" (a API recusaria: SqlIdentityPolicy).
+    // As identidades de produção (admin dedicado + runtime de menor privilégio) são provadas em
+    // SqlIdentityModelTests e ApiProcessTests; aqui o foco é o comportamento funcional da aplicação.
     private static string BuildConnectionString()
     {
         var server = Environment.GetEnvironmentVariable(EnvironmentVariable);
         if (string.IsNullOrWhiteSpace(server))
             throw new InvalidOperationException($"Defina {EnvironmentVariable} para executar testes Category=RequiresSqlServer.");
-        return new SqlConnectionStringBuilder(server) { InitialCatalog = $"almirante_test_{Guid.NewGuid():N}" }.ConnectionString;
+        var database = $"almirante_test_{Guid.NewGuid():N}";
+        var user = $"almirante_tf_{Guid.NewGuid():N}"[..30];
+        var password = SqlIdentityEnvironment.NewPassword();
+
+        var harness = new SqlConnectionStringBuilder(server) { InitialCatalog = "master" };
+        using (var connection = new SqlConnection(harness.ConnectionString))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = $"""
+                IF (SELECT CAST(value_in_use AS int) FROM sys.configurations WHERE name = N'contained database authentication') = 0
+                BEGIN EXEC sys.sp_configure N'contained database authentication', 1; RECONFIGURE; END
+                CREATE DATABASE [{database}] CONTAINMENT = PARTIAL;
+                """;
+            command.ExecuteNonQuery();
+        }
+        harness.InitialCatalog = database;
+        using (var connection = new SqlConnection(harness.ConnectionString))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = $"CREATE USER [{user}] WITH PASSWORD = N'{password}', DEFAULT_SCHEMA = [dbo]; ALTER ROLE [db_owner] ADD MEMBER [{user}];";
+            command.ExecuteNonQuery();
+        }
+        return new SqlConnectionStringBuilder
+        {
+            DataSource = harness.DataSource, InitialCatalog = database, UserID = user, Password = password,
+            Encrypt = harness.Encrypt, TrustServerCertificate = harness.TrustServerCertificate,
+        }.ConnectionString;
     }
 
     protected override void ConfigureSettings(IDictionary<string, string?> settings)
@@ -42,9 +75,8 @@ public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides 
     {
         base.Dispose(disposing);
         if (!disposing) return;
-        var builder = new SqlConnectionStringBuilder(_connectionString);
-        var database = builder.InitialCatalog;
-        builder.InitialCatalog = "master";
+        var database = new SqlConnectionStringBuilder(_connectionString).InitialCatalog;
+        var builder = new SqlConnectionStringBuilder(SqlIdentityEnvironment.HarnessConnectionString) { InitialCatalog = "master" };
         SqlConnection.ClearAllPools();
         using var connection = new SqlConnection(builder.ConnectionString);
         connection.Open();

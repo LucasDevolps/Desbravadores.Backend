@@ -47,6 +47,10 @@ builder.Services.Configure<ReverseProxyOptions>(builder.Configuration.GetSection
 builder.Services.AddOptions<ConnectionStringsOptions>().Bind(builder.Configuration.GetSection(ConnectionStringsOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ConnectionStringsOptions>, SqlServerConnectionSecurityValidator>();
+// A API nunca usa "sa" nem recebe o segredo dele: SQL_SA_PASSWORD/MSSQL_SA_PASSWORD no ambiente, "sa" em
+// qualquer connection string e identidade administrativa ausente/igual à de runtime derrubam o startup
+// (SqlIdentityPolicy). Sem modo Warn/Off.
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ConnectionStringsOptions>, SqlIdentityPolicyValidator>();
 
 // Só confia nos headers X-Forwarded-For/X-Forwarded-Proto quando ReverseProxy:TrustedNetworkCidr
 // estiver configurado (Docker/nginx). Sem essa configuração, ForwardedHeaders permanece "None"
@@ -308,6 +312,13 @@ if (isAdminCli)
     // Com usuário de aplicação rotacionado, a senha só existe dentro do processo da API; a CLI usa a
     // conexão administrativa (o AppUser tampouco poderia ler/atualizar por ela sem provisionar/rotacionar).
     var cliConnection = dbCredentialOptions.Enabled ? app.Configuration.GetConnectionString(DbCredentialManager.AdminConnectionName) : null;
+    if (cliConnection is not null)
+    {
+        // Mesma auditoria do startup: a CLI também só roda com a identidade administrativa dedicada.
+        await using var auditConnection = new Microsoft.Data.SqlClient.SqlConnection(cliConnection);
+        await auditConnection.OpenAsync();
+        await DbAdminPrivilegeCheck.RunAsync(auditConnection);
+    }
     return await AdminPasswordResetCli.RunAsync(app.Services, args, cliConnection);
 }
 // Migrations (DDL) pela conexão administrativa e provisionamento/rotação inicial da senha do usuário da
@@ -344,7 +355,15 @@ app.Use((context, next) =>
 // Isso é ferramenta de desenvolvimento, não de ambiente publicado: ligado por padrão só em
 // Development, e desligável/ligável explicitamente por "Swagger:Enabled" (compose.tls.yaml o fixa
 // em false, porque o ambiente publicado pode rodar como Development).
-if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
+// O compose.yaml repassa SWAGGER_ENABLED como "" quando a variável não está definida: vazio significa "usar o
+// padrão do ambiente" (GetValue<bool> lançaria FormatException e derrubaria o startup); valor inválido falha claro.
+var swaggerSetting = app.Configuration["Swagger:Enabled"];
+var swaggerEnabled = string.IsNullOrWhiteSpace(swaggerSetting)
+    ? app.Environment.IsDevelopment()
+    : bool.TryParse(swaggerSetting.Trim(), out var parsedSwagger)
+        ? parsedSwagger
+        : throw new InvalidOperationException("Swagger:Enabled deve ser true ou false.");
+if (swaggerEnabled)
 {
     app.UseSwagger();
     app.UseSwaggerUI();
