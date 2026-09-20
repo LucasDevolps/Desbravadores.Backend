@@ -15,6 +15,10 @@
   Idempotente e regularizador: se "adm-ti" já existir (criado pela versão anterior deste script, que o
   fazia sysadmin), a execução remove o papel sysadmin e demais papéis privilegiados, reaplica as
   permissões abaixo e redefine a senha. Após regularizar, considere a senha antiga comprometida.
+
+  NOTA sobre a senha: o sqlcmd substitui $(ADM_TI_PASSWORD) como TEXTO dentro do literal N'...'
+  abaixo. Uma senha contendo aspa simples (') quebra o script — e, como ele roda como sysadmin,
+  quebraria executando o que vier depois da aspa. Use letras, dígitos e símbolos SEM aspas.
 */
 :on error exit
 USE master;
@@ -74,18 +78,30 @@ IF IS_ROLEMEMBER(N'almirante_ti_leitura', N'adm-ti') = 0
 EXEC sys.sp_executesql @cmd;
 GO
 
--- Views de consulta. Cada uma lista as colunas permitidas (nunca SenhaHash nem tokens); como o esquema
--- [ti] pertence ao mesmo dono (dbo) das tabelas, a cadeia de propriedade dispensa qualquer permissão
--- direta nas tabelas.
+-- Views de consulta. TODAS listam as colunas explicitamente — nunca "SELECT *".
+-- Motivo: uma view criada com "SELECT *" fixa as colunas existentes no momento da criação, mas
+-- reexecutar este script depois de uma migration que adicione coluna sensível (um hash, um token, um
+-- dado pessoal novo) a recriaria já incluindo essa coluna, ampliando o acesso do adm-ti em silêncio.
+-- Com a lista explícita, uma coluna nova só entra aqui por decisão de quem edita este arquivo.
+-- Como o esquema [ti] pertence ao mesmo dono (dbo) das tabelas, a cadeia de propriedade dispensa
+-- qualquer permissão direta nas tabelas (e é por isso que o DENY abaixo não quebra as views).
 CREATE OR ALTER VIEW [ti].[Usuarios] AS
     SELECT Id, Nome, Email, CargoId, DataCriacao, FalhasLoginConsecutivas, UltimaFalhaLoginUtc, LoginBloqueadoAteUtc
     FROM dbo.Usuarios;
 GO
-CREATE OR ALTER VIEW [ti].[Cargos] AS SELECT * FROM dbo.Cargos;
+CREATE OR ALTER VIEW [ti].[Cargos] AS
+    SELECT Id, Nome, Descricao, Role, Ativo, CriadoPor, CriadoEm, UltimaAtualizacao
+    FROM dbo.Cargos;
 GO
-CREATE OR ALTER VIEW [ti].[Lancamentos] AS SELECT * FROM dbo.Lancamentos;
+CREATE OR ALTER VIEW [ti].[Lancamentos] AS
+    SELECT Id, MembroId, Finalidade, Descricao, Categoria, TipoFluxo, Valor, Vencimento, Status,
+           Ativo, OperacaoId, DataCriacao, DataAtualizacao, AtualizadoPorUsuarioId
+    FROM dbo.Lancamentos;
 GO
-CREATE OR ALTER VIEW [ti].[lancamentos_deletados] AS SELECT * FROM dbo.lancamentos_deletados;
+CREATE OR ALTER VIEW [ti].[lancamentos_deletados] AS
+    SELECT Id, LancamentoId, UsuarioResponsavelId, IpResponsavel, ExcluidoEmUtc, Motivo, MembroId,
+           Finalidade, Categoria, TipoFluxo, Valor, Vencimento, Status, OperacaoId, DataCriacaoOriginal
+    FROM dbo.lancamentos_deletados;
 GO
 CREATE OR ALTER VIEW [ti].[AuthSessions] AS
     SELECT Id, UsuarioId, CreatedAtUtc, LastRenewedAtUtc, AbsoluteExpiresAtUtc, RevokedAtUtc, RevocationReason
@@ -97,14 +113,32 @@ GRANT SELECT ON SCHEMA::[ti] TO [almirante_ti_leitura];
 DENY SELECT, INSERT, UPDATE, DELETE, ALTER, EXECUTE ON SCHEMA::[dbo] TO [almirante_ti_leitura];
 GO
 
--- Conferência: deve retornar 0 em todas as colunas, exceto ler_view = 1.
+-- Conferência, parte 1 — escopo de SERVIDOR.
+-- NÃO use EXECUTE AS USER aqui: sob impersonação de escopo de BANCO, IS_SRVROLEMEMBER devolve NULL
+-- (o contexto não tem identidade de servidor) e o ISNULL(...,0) da versão anterior deste script
+-- reportava "sysadmin = 0" mesmo para um login que de fato ERA sysadmin — uma conferência que não
+-- conferia nada. Consultar os catálogos de servidor diretamente é o único jeito correto.
+SELECT
+    (SELECT COUNT(*) FROM sys.server_role_members m
+      JOIN sys.server_principals r ON r.principal_id = m.role_principal_id
+      JOIN sys.server_principals l ON l.principal_id = m.member_principal_id
+     WHERE l.name = N'adm-ti')                                                 AS papeis_de_servidor,  -- deve ser 0
+    (SELECT COUNT(*) FROM sys.server_permissions p
+      JOIN sys.server_principals l ON l.principal_id = p.grantee_principal_id
+     WHERE l.name = N'adm-ti' AND p.state_desc = 'GRANT'
+       AND p.permission_name <> 'CONNECT SQL')                                 AS permissoes_de_servidor; -- deve ser 0
+GO
+
+-- Conferência, parte 2 — escopo de BANCO (aqui a impersonação é adequada: as funções são de banco).
+-- Todas devem ser 0, exceto ler_view = 1.
 EXECUTE AS USER = N'adm-ti';
 SELECT
-    ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)                                   AS sysadmin,
     ISNULL(IS_MEMBER(N'db_owner'), 0)                                          AS db_owner,
+    ISNULL(IS_MEMBER(N'db_datareader'), 0)                                     AS db_datareader,
     ISNULL(HAS_PERMS_BY_NAME(N'dbo.Usuarios', N'OBJECT', N'SELECT'), 0)        AS ler_tabela_usuarios,
     ISNULL(HAS_PERMS_BY_NAME(N'ti.Usuarios', N'OBJECT', N'SELECT'), 0)         AS ler_view,
     ISNULL(HAS_PERMS_BY_NAME(N'ti.Usuarios', N'OBJECT', N'UPDATE'), 0)         AS escrever_view,
-    ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CREATE TABLE'), 0)      AS ddl;
+    ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CREATE TABLE'), 0)      AS ddl,
+    ISNULL(HAS_PERMS_BY_NAME(N'dbo', N'USER', N'IMPERSONATE'), 0)              AS impersonar_dbo;
 REVERT;
 GO

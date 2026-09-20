@@ -219,6 +219,59 @@ public sealed class SecurityRegressionTests
         Assert.Equal(HttpStatusCode.BadRequest, (await GetCsrfAsync(client, "attacker.example")).StatusCode);
     }
 
+    // Uma rede "confiável" larga demais faz a API aceitar X-Forwarded-For/-Proto de qualquer cliente:
+    // dá para forjar o IP (quebrando a partição do rate limit) e marcar a requisição como HTTPS.
+    // Antes isso era aceito em silêncio; agora o startup recusa, com a mesma severidade de uma chave
+    // JWT inválida. /16 (IPv4) e /64 (IPv6) são o limite: a subnet do Compose e o 127.0.0.1/32 do
+    // IIS ficam bem abaixo disso.
+    [Theory]
+    [InlineData("0.0.0.0/0")]
+    [InlineData("10.0.0.0/8")]
+    [InlineData("::/0")]
+    public async Task TrustedNetworkCidr_AmploDemais_RecusaIniciar(string cidr)
+    {
+        await using var factory = new ConfiguredApiFactory("Production",
+            new Dictionary<string, string?> { ["ReverseProxy:TrustedNetworkCidr"] = cidr });
+
+        var excecao = await Assert.ThrowsAnyAsync<Exception>(async () => await GetCsrfAsync(factory.CreateClient(), "api.exemplo.com"));
+        Assert.Contains("TrustedNetworkCidr", Achatar(excecao), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("172.30.0.0/24")]
+    [InlineData("127.0.0.1/32")]
+    [InlineData("fd00::/64")]
+    public async Task TrustedNetworkCidr_RestritoOSuficiente_Inicia(string cidr)
+    {
+        await using var factory = new ConfiguredApiFactory("Production",
+            new Dictionary<string, string?> { ["ReverseProxy:TrustedNetworkCidr"] = cidr, ["AllowedHosts"] = "*" });
+
+        Assert.Equal(HttpStatusCode.OK, (await GetCsrfAsync(factory.CreateClient(), "api.exemplo.com")).StatusCode);
+    }
+
+    // Swagger descreve toda a superfície da API: fora de Development só aparece por opção explícita.
+    [Theory]
+    [InlineData("Development", null, true)]
+    [InlineData("Development", "false", false)]
+    [InlineData("Production", null, false)]
+    [InlineData("Production", "true", true)]
+    public async Task Swagger_SoEhServidoQuandoHabilitado(string environment, string? flag, bool esperado)
+    {
+        var overrides = new Dictionary<string, string?> { ["AllowedHosts"] = "*" };
+        if (flag is not null) overrides["Swagger:Enabled"] = flag;
+        await using var factory = new ConfiguredApiFactory(environment, overrides);
+
+        var response = await factory.CreateClient().GetAsync("/swagger/v1/swagger.json");
+        Assert.Equal(esperado, response.StatusCode == HttpStatusCode.OK);
+    }
+
+    private static string Achatar(Exception exception)
+    {
+        var texto = new System.Text.StringBuilder();
+        for (Exception? atual = exception; atual is not null; atual = atual.InnerException) texto.AppendLine(atual.Message);
+        return texto.ToString();
+    }
+
 
     // Transição "Despesa" -> "Saida": o nome legado continua aceito na entrada; a resposta usa "Saida" e
     // só volta a "Despesa" durante a janela de compatibilidade (Compatibility:LegacyTipoFluxoDespesa).

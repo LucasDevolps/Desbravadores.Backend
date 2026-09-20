@@ -71,7 +71,24 @@ builder.Services.AddOptions<ForwardedHeadersOptions>()
         options.KnownIPNetworks.Clear();
         // Totalmente qualificado: Microsoft.AspNetCore.HttpOverrides (acima) também expõe um tipo
         // IPNetwork (obsoleto), o que tornaria "IPNetwork" ambíguo sem qualificação aqui.
-        options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(trustedNetworkCidr));
+        var network = System.Net.IPNetwork.Parse(trustedNetworkCidr);
+
+        // Uma rede confiável larga demais (ex.: 0.0.0.0/0) faria a API aceitar X-Forwarded-For/-Proto
+        // de QUALQUER cliente: bastaria variar o header para particionar o rate limit por valor
+        // forjado e para marcar a requisição como HTTPS. Isso é pior do que não configurar nada, e
+        // passava em silêncio. O proxy confiável é sempre uma sub-rede pequena e conhecida (a rede do
+        // Compose, ou 127.0.0.1/32 no IIS), então exigimos /16 ou mais específico em IPv4 e /64 em IPv6.
+        var minimoPrefixo = network.BaseAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 64 : 16;
+        if (network.PrefixLength < minimoPrefixo)
+        {
+            throw new InvalidOperationException(
+                $"{ReverseProxyOptions.SectionName}:TrustedNetworkCidr ('{trustedNetworkCidr}') é amplo demais: " +
+                $"com prefixo /{network.PrefixLength} a API passaria a confiar em X-Forwarded-For/X-Forwarded-Proto " +
+                $"de praticamente qualquer origem, permitindo forjar IP e esquema. Use a sub-rede do reverse proxy " +
+                $"(/{minimoPrefixo} ou mais específica; ex.: a subnet do Compose, ou 127.0.0.1/32 atrás do IIS).");
+        }
+
+        options.KnownIPNetworks.Add(network);
     });
 
 // Usuário SQL da aplicação com senha rotacionada em execução (ver DbCredentialManager). Só ativa
@@ -323,8 +340,15 @@ app.Use((context, next) =>
     return next(context);
 });
 
-app.UseSwagger();
-app.UseSwaggerUI();
+// Swagger/OpenAPI descrevem toda a superfície da API (rotas, DTOs, parâmetros, esquema de auth).
+// Isso é ferramenta de desenvolvimento, não de ambiente publicado: ligado por padrão só em
+// Development, e desligável/ligável explicitamente por "Swagger:Enabled" (compose.tls.yaml o fixa
+// em false, porque o ambiente publicado pode rodar como Development).
+if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();

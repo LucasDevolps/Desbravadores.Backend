@@ -57,6 +57,23 @@ seen=$(curl -s -o /dev/null -D - $R https://api.exemplo.test:$HTTPS_PORT/qualque
 check "API recebe Host canônico" "$seen" "X-Seen-Host: api.exemplo.test"
 check "HTTPS login 401 passa pela API" "$(code $R -X POST https://api.exemplo.test:$HTTPS_PORT/api/Auth/login)" 401
 
+# Política TLS declarada em nginx.tls.conf (ssl_protocols TLSv1.2 TLSv1.3): não basta "443 aberta".
+# Protocolos obsoletos precisam falhar o handshake, e não só "provavelmente estar desligados por
+# default da imagem". O openssl do sistema pode ter sido compilado sem TLS 1.0/1.1 — nesse caso a
+# própria chamada falha, o que também satisfaz a expectativa (handshake não estabelecido).
+tls_handshake() {
+  openssl s_client -connect "127.0.0.1:$HTTPS_PORT" -servername api.exemplo.test "$1" \
+    </dev/null >/dev/null 2>&1 && echo aceito || echo recusado
+}
+for proto in -tls1 -tls1_1; do
+  check "handshake ${proto#-} recusado" "$(tls_handshake $proto)" recusado
+done
+for proto in -tls1_2 -tls1_3; do
+  check "handshake ${proto#-} aceito" "$(tls_handshake $proto)" aceito
+done
+check "server_tokens off (sem versão no header Server)" \
+  "$(H $R https://api.exemplo.test:$HTTPS_PORT/qualquer | grep -ci '^server: nginx/[0-9]')" 0
+
 for path in login refresh; do
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     out=$(curl -s -o "$W/body" -D "$W/hdr" -w '%{http_code}' $R -X POST https://api.exemplo.test:$HTTPS_PORT/api/Auth/$path)

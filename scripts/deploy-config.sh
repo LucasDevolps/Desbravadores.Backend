@@ -96,6 +96,15 @@ cmd_modo() {
       [[ -z "$nginx_conf" || "$nginx_conf" == "nginx.conf" ]] || erro "DEPLOY_MODE=http mas NGINX_CONF_FILE não é nginx.conf (nem vazio)."
       files="-f compose.yaml"
       host=""
+      # Aviso (não falha): em modo http o nginx repassa o Host do cliente e, com AllowedHosts="*",
+      # a API aceita qualquer nome. Não é bloqueante porque este mesmo compose serve desenvolvimento
+      # local, onde fixar a lista atrapalharia; mas num host publicado é config que falta.
+      local allowed
+      allowed=$(dotenv_get "$env_file" API_ALLOWED_HOSTS)
+      if [[ -z "$allowed" || "$allowed" == "*" ]]; then
+        echo "deploy-config: AVISO — API_ALLOWED_HOSTS não está definido (ou é '*'): a API aceitará qualquer Host header." >&2
+        echo "deploy-config:          Num ambiente publicado, defina os nomes reais no .env (ex.: API_ALLOWED_HOSTS=api.exemplo.com.br;localhost;127.0.0.1)." >&2
+      fi
       ;;
     tls)
       [[ "$nginx_conf" == "nginx.tls.conf" ]] || erro "DEPLOY_MODE=tls exige NGINX_CONF_FILE=nginx.tls.conf."

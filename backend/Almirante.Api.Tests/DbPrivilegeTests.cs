@@ -120,6 +120,76 @@ public sealed class DbPrivilegeTests : IAsyncLifetime
         Assert.Empty(await DbPrivilegeAuditor.FindExcessPrivilegesAsync(app));
     }
 
+    // IMPERSONATE é permissão de classe 4 (sobre outro principal do banco), não aparece em nenhuma
+    // checagem de papel/objeto/esquema. Com IMPERSONATE em dbo, um EXECUTE AS USER dá db_owner
+    // efetivo — e a versão anterior do provisionamento filtrava p.class IN (0,1,3), então o GRANT
+    // sobrevivia a todo startup e a auditoria dizia que estava tudo certo.
+    [Fact]
+    public async Task ImpersonateEmDbo_ERevogadoNoStartup_EDetectadoPelaAuditoria()
+    {
+        await NewManager().InitializeAsync();
+
+        await using (var admin = await OpenAdminAsync())
+        {
+            await ExecAsync(admin, $"GRANT IMPERSONATE ON USER::[dbo] TO [{AppUser}];");
+        }
+
+        // Antes da normalização: a permissão existe e a auditoria precisa enxergá-la.
+        await using (var comprometido = await OpenAppAsync())
+        {
+            Assert.Equal(1, await ScalarAsync(comprometido, "SELECT HAS_PERMS_BY_NAME('dbo','USER','IMPERSONATE')"));
+            Assert.Contains(await DbPrivilegeAuditor.FindExcessPrivilegesAsync(comprometido),
+                f => f.Contains("IMPERSONATE", StringComparison.OrdinalIgnoreCase));
+        }
+
+        SqlConnection.ClearAllPools();
+        await NewManager().InitializeAsync();
+
+        await using var app = await OpenAppAsync();
+        Assert.Equal(0, await ScalarAsync(app, "SELECT HAS_PERMS_BY_NAME('dbo','USER','IMPERSONATE')"));
+        Assert.Empty(await DbPrivilegeAuditor.FindExcessPrivilegesAsync(app));
+    }
+
+    // A conexão administrativa precisa de DDL e ALTER ANY LOGIN, mas não de sysadmin: ela vive no
+    // processo da API, então sysadmin aqui transforma qualquer leitura do ambiente do container em
+    // comprometimento do servidor inteiro. Warn (padrão) só registra; Enforce recusa iniciar.
+    [Fact]
+    public async Task ConexaoAdministrativaSysadmin_EDetectada_EEnforceRecusaIniciar()
+    {
+        await NewManager().InitializeAsync();
+
+        await using var admin = await OpenAdminAsync();
+        var achados = await DbPrivilegeAuditor.FindAdminExcessPrivilegesAsync(admin);
+
+        // O ALMIRANTE_TEST_SQLSERVER do ambiente de teste normalmente é sysadmin (sa ou Windows auth
+        // local). Se for, o Enforce tem de barrar; se o ambiente já usar um login restrito, o Warn
+        // não tem nada a relatar — os dois casos são válidos, e cada um verifica um lado da política.
+        var configuracao = (string modo) => new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { [DbAdminPrivilegeCheck.SettingName] = modo }).Build();
+
+        if (achados.Count > 0)
+        {
+            Assert.Contains(achados, f => f.Contains("sysadmin", StringComparison.OrdinalIgnoreCase)
+                                       || f.Contains("CONTROL SERVER", StringComparison.OrdinalIgnoreCase));
+
+            var excecao = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                DbAdminPrivilegeCheck.RunAsync(admin, configuracao("Enforce"), NullLogger.Instance));
+            Assert.Contains("criar-usuario-admin-app.sql", excecao.Message);
+
+            // Warn não derruba o startup (ambientes existentes ainda usam sa).
+            await DbAdminPrivilegeCheck.RunAsync(admin, configuracao("Warn"), NullLogger.Instance);
+        }
+        else
+        {
+            await DbAdminPrivilegeCheck.RunAsync(admin, configuracao("Enforce"), NullLogger.Instance);
+        }
+
+        // Off nunca falha, qualquer que seja a identidade.
+        await DbAdminPrivilegeCheck.RunAsync(admin, configuracao("Off"), NullLogger.Instance);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            DbAdminPrivilegeCheck.RunAsync(admin, configuracao("ModoInexistente"), NullLogger.Instance));
+    }
+
     [Fact]
     public async Task LoginNovoELoginCorrigido_TemAsMesmasPermissoesEfetivas()
     {

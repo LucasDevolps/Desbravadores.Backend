@@ -2,17 +2,23 @@ name: Backend CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "backend/**"
       - "scripts/**"
       - ".github/workflows/backend-ci.yml"
+  # develop é o branch que dispara o deploy (backend-deploy.yml); sem ele aqui, uma PR para
+  # develop era mesclada e publicada sem nenhum check automatizado.
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - "backend/**"
       - "scripts/**"
       - ".github/workflows/backend-ci.yml"
+
+# Menor privilégio para o GITHUB_TOKEN deste workflow (nenhum job aqui escreve no repositório).
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
@@ -21,8 +27,10 @@ jobs:
     runs-on: [self-hosted, Windows]
 
     steps:
+      # Pinado por SHA (v4.2.2): uma tag é mutável, e este job roda em runner self-hosted —
+      # um comprometimento da action seria execução de código nessa máquina.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       # actions/setup-dotnet tries to install the SDK under C:\Program Files\dotnet,
       # which the runner account can't write to. The .NET 10 SDK is already installed
@@ -36,14 +44,26 @@ jobs:
       - name: Test
         run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
 
-  # Leitura do .env do deploy como DADO (sem source/eval) e preflight do modo de deploy: testes puros de
-  # Bash, sem Docker. Roda no runner Linux, o mesmo ambiente onde o script é usado no deploy.
+  # Leitura do .env do deploy como DADO (sem source/eval) e preflight do modo de deploy: testes puros
+  # de Bash (set -euo pipefail), sem Docker e sem nada específico do host.
+  #
+  # runs-on: ubuntu-latest, NUNCA self-hosted. Este job é disparado por `pull_request`, ou seja, roda
+  # um script que vem do HEAD da PR — código não confiável, já que o repositório é público e aceita
+  # fork. O único runner self-hosted Linux registrado é a própria máquina de deploy (labels
+  # self-hosted/Linux/popos-lucas), que guarda ~/almirante/.env (senha do sa, chave JWT, senha do
+  # admin) e tem acesso ao daemon Docker. Rodar código de PR ali seria entregar o ambiente publicado.
+  # Se algum dia este job precisar de algo que só existe no host, separe-o num workflow `on: push`.
   deploy-scripts:
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
       - name: Testar scripts/deploy-config.sh
         run: bash scripts/tests/deploy-config.test.sh
+
+      # Impede a regressão do próprio problema acima: nenhum job disparado por pull_request pode
+      # voltar a agendar em runner self-hosted.
+      - name: Testar política dos workflows
+        run: bash scripts/tests/workflows.test.sh

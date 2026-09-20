@@ -155,6 +155,56 @@ Cada item abaixo tem teste automatizado (`SecurityRegressionTests`, `DbPrivilege
 - **`Despesa` → `Saida`.** O enum tipado mudou o nome retornado pela API. A entrada aceita `Despesa` (e `Saida`/`Saída`/`0`/`1`). Enquanto existir cliente que **lê** `Despesa` na resposta, defina `Compatibility__LegacyTipoFluxoDespesa=true` (a resposta volta a usar `Despesa`); desligue quando todos os clientes usarem `Saida`. Confirme o frontend efetivamente publicado antes de desligar.
 - **Segredos históricos.** Rotação de JWT/SA/senha do admin/senhas SQL continua sendo ação operacional (seção "Rotação de valores expostos"); inclua também `adm-ti` (redefinida pelo script) e trate qualquer senha SQL já usada como comprometida. A senha do SQL é trocada **no servidor**, não só no `.env`.
 
+## Correções da segunda rodada de revisão da PR #59
+
+### CI não executa código de PR na máquina de deploy
+
+O job `deploy-scripts` (`backend-ci.yml`) roda em `ubuntu-latest`, **nunca** em runner self-hosted. Ele é disparado por `pull_request`, ou seja, executa um script vindo do HEAD da PR — código não confiável, já que o repositório é público e aceita fork. O único runner self-hosted Linux registrado é a própria máquina de deploy, que guarda `~/almirante/.env` (senha do login administrativo, chave JWT, senha do admin) e tem acesso ao daemon Docker.
+
+`scripts/tests/workflows.test.sh` trava a regressão: falha se qualquer job com gatilho `pull_request` voltar a usar `runs-on: self-hosted`, se um workflow não declarar `permissions:` no topo, ou se uma action não estiver pinada por SHA. O job `build-and-test` é a única exceção registrada (compila e roda a suíte .NET, o que já é execução de código da PR) e está explícita no próprio script — aquele runner não guarda o `.env` de deploy.
+
+Além disso: `backend-ci.yml` agora também roda em `main` **e** `develop`. Antes, uma PR para `develop` era mesclada e publicada sem nenhum check automatizado, embora `develop` seja o branch que dispara o deploy.
+
+### Conexão administrativa do SQL Server sem `sysadmin`
+
+A API mantém a credencial de `ConnectionStrings:AlmiranteAdmin` no próprio processo, porque precisa dela para as migrations e para rotacionar a senha do `DbCredentials:AppUser`. Enquanto essa credencial for `sa`, ler o ambiente do container entrega o servidor SQL inteiro — outros bancos, `xp_cmdshell`, leitura direta de hash de senha e de refresh token, e a capacidade de apagar `dbo.lancamentos_deletados` (o `DENY` de auditoria vale para a role da aplicação, não para `sysadmin`). Todo o menor privilégio do `AppUser` deixa de valer na prática.
+
+`docs/sql/criar-usuario-admin-app.sql` cria o login dedicado com o conjunto mínimo — `ALTER ANY LOGIN` (servidor), `db_ddladmin`, `db_datareader`, `db_datawriter`, `db_securityadmin` e `ALTER ANY USER` (banco) — e nada de `sysadmin`, `CONTROL SERVER` ou acesso a outros bancos. Aponte `SQL_ADMIN_USER`/`SQL_ADMIN_PASSWORD` no `.env` para ele.
+
+`Security:AdminPrivilegeCheck` (env `SQL_ADMIN_PRIVILEGE_CHECK`) audita essa identidade em todo startup: `Warn` (padrão) registra no log enquanto ela ainda for `sysadmin`; `Enforce` recusa iniciar; `Off` desliga. O padrão é `Warn`, e não `Enforce`, para não derrubar ambientes existentes numa atualização — migre e depois trave com `Enforce`.
+
+**O banco precisa existir antes**: esse login não tem `CREATE DATABASE`, de propósito. Num ambiente novo, suba uma vez com `sa` para o banco ser criado e as migrations rodarem, e só então troque a connection string.
+
+### `IMPERSONATE` (permissão de classe 4)
+
+`GRANT IMPERSONATE ON USER::dbo` não aparece em nenhuma checagem de papel, objeto ou esquema: é permissão sobre **outro principal**. Com ela, um `EXECUTE AS USER = 'dbo'` dá privilégio equivalente ao do dono do banco sem pertencer a papel algum. O provisionamento (`DbCredentialManager.BuildProvisionSql`) filtrava `p.class IN (0,1,3)`, então um `GRANT` desses sobrevivia a todo startup e a auditoria reportava tudo certo.
+
+Agora a classe 4 entra tanto no `REVOKE` do provisionamento quanto em `docs/sql/corrigir-privilegios-usuario-app.sql`, e `DbPrivilegeAuditor` confere `IMPERSONATE` sobre qualquer principal do banco e `EXECUTE` por objeto (procedures/funções). Teste: `DbPrivilegeTests.ImpersonateEmDbo_ERevogadoNoStartup_EDetectadoPelaAuditoria`.
+
+### Conferências dos scripts SQL que não conferiam
+
+Sob `EXECUTE AS USER` (impersonação de escopo de **banco**), `IS_SRVROLEMEMBER` devolve `NULL`, e o `ISNULL(...,0)` das versões anteriores fazia os scripts reportarem `sysadmin = 0` mesmo para um login que de fato **era** `sysadmin`. As conferências foram divididas: escopo de servidor consultando `sys.server_role_members`/`sys.server_permissions` diretamente, escopo de banco com `EXECUTE AS USER` (onde a impersonação é adequada).
+
+As views de `docs/sql/criar-usuario-adm-ti.sql` também deixaram de usar `SELECT *`: uma view criada assim fixa as colunas do momento da criação, mas reexecutar o script depois de uma migration que adicione coluna sensível a recriaria já incluindo essa coluna, ampliando o acesso do `adm-ti` em silêncio.
+
+### Política TLS declarada, não herdada
+
+`nginx/nginx.tls.conf` declara `ssl_protocols TLSv1.2 TLSv1.3`, a suite "intermediate" do Mozilla, `ssl_session_tickets off` e `server_tokens off`. A imagem atual já desabilita TLS 1.0/1.1 por padrão (mudou no nginx 1.23.4), mas nada no repositório comprovava a política efetiva, e um downgrade da tag da imagem a reintroduziria em silêncio. `scripts/tests/nginx.test.sh` verifica que um handshake TLS 1.0/1.1 falha e que 1.2/1.3 são aceitos.
+
+### Defaults que fechavam em vez de abrir
+
+- `compose.tls.yaml`: `Security__RequireTrustedSqlServerCertificate` passou a `true` por padrão. Este overlay existe para ambiente publicado de verdade; um default permissivo fazia um "Development publicado" aceitar `TrustServerCertificate=True` em silêncio. **Ordem importa**: instale o certificado do SQL Server nos clientes antes do primeiro deploy com o overlay, ou a API recusa iniciar (comportamento desejado). Para adiar conscientemente, `SQL_REQUIRE_TRUSTED_CERTIFICATE=false`.
+- `compose.yaml`: a porta do SQL Server é publicada em `127.0.0.1` (`SQL_BIND_ADDRESS`). O Docker escreve direto na chain `DOCKER` do iptables e costuma contornar o `ufw`, então o mapeamento anterior expunha o banco na internet do host publicado, furando a premissa de que o nginx é o único ponto de entrada.
+- Swagger/OpenAPI: servidos só quando `Swagger:Enabled` é verdadeiro, com default `IsDevelopment()`. `compose.tls.yaml` fixa `false` — o ambiente publicado pode rodar como Development e não deve expor o mapa completo da API.
+- `ReverseProxy:TrustedNetworkCidr`: o startup recusa uma rede larga demais (menos específica que `/16` em IPv4 ou `/64` em IPv6). Com `0.0.0.0/0` a API passaria a aceitar `X-Forwarded-For`/`-Proto` de qualquer cliente — dá para forjar o IP, quebrando a partição do rate limit, e marcar a requisição como HTTPS. Antes isso passava em silêncio.
+- `AllowedHosts`: continua `*` por padrão no `compose.yaml` base, porque o mesmo arquivo serve desenvolvimento local (localhost, 127.0.0.1, IP da LAN) e fixar a lista atrapalharia. Em ambiente publicado em modo `http`, defina `API_ALLOWED_HOSTS` — `scripts/deploy-config.sh` avisa no log do deploy enquanto estiver ausente.
+
+### Container e supply chain
+
+- `api`: `cap_drop: [ALL]` (a API roda como não-root e escuta em porta não privilegiada, não precisa de capability alguma) e `no-new-privileges`. `nginx` e `sqlserver` recebem só `no-new-privileges`: o modelo master/worker do nginx precisa de `CHOWN`/`SETUID`/`SETGID`.
+- Actions pinadas por SHA e `permissions: contents: read` explícito nos dois workflows.
+- O zip do nginx para Windows tem o SHA256 verificado antes de ser extraído e instalado. **Risco residual não corrigido**: a tarefa agendada ainda roda o nginx como `SYSTEM`; trocar o principal exige criar a conta e ajustar a ACL de `C:\nginx` naquele host, e o passo só cria a tarefa quando ela ainda não existe — está documentado no próprio workflow como ação do operador.
+
 ## Contrato da SPA e CSRF
 
 1. Faça `GET /api/Auth/csrf` com `credentials: "include"`; mantenha `csrfToken` somente em memória.

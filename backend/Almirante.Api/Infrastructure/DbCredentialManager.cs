@@ -46,6 +46,18 @@ public sealed partial class DbCredentialManager(
             await DbSeeder.MigrateWithRetryAsync(adminDb, cancellationToken);
         }
 
+        // Audita a própria conexão administrativa: ela precisa de DDL e ALTER ANY LOGIN, mas não de
+        // sysadmin (ver DbAdminPrivilegeCheck). DEPOIS das migrations, de propósito — num ambiente
+        // novo o banco da connection string só passa a existir ali, e abrir a conexão antes disso
+        // falharia o startup inteiro por "não é possível abrir o banco de dados solicitado".
+        // Padrão Warn (só registra), para não derrubar ambientes que ainda usam "sa";
+        // Security:AdminPrivilegeCheck=Enforce trava depois da migração para o login dedicado.
+        await using (var adminConnection = new SqlConnection(GetAdminConnectionString()))
+        {
+            await adminConnection.OpenAsync(cancellationToken);
+            await DbAdminPrivilegeCheck.RunAsync(adminConnection, configuration, logger, cancellationToken);
+        }
+
         await RotateAsync(cancellationToken);
     }
 
@@ -124,16 +136,23 @@ public sealed partial class DbCredentialManager(
             WHERE u.name = N'{user}' AND r.name <> N'{role}';
 
             -- Revoga permissões concedidas diretamente ao usuário e as anteriores da própria role (recriadas abaixo).
+            -- A classe 4 (DATABASE_PRINCIPAL) precisa estar aqui: um GRANT IMPERSONATE ON USER::dbo
+            -- sobreviveria a toda a normalização acima e daria EXECUTE AS USER = 'dbo', ou seja,
+            -- privilégio equivalente ao do dono do banco sem pertencer a papel algum.
+            -- DbPrivilegeAuditor também passou a conferir isso depois da rotação.
             SELECT @cmd += N'REVOKE ' + p.permission_name COLLATE DATABASE_DEFAULT
                 + CASE p.class
                     WHEN 0 THEN N''
                     WHEN 1 THEN N' ON OBJECT::' + QUOTENAME(OBJECT_SCHEMA_NAME(p.major_id)) + N'.' + QUOTENAME(OBJECT_NAME(p.major_id))
                     WHEN 3 THEN N' ON SCHEMA::' + QUOTENAME(SCHEMA_NAME(p.major_id))
+                    WHEN 4 THEN N' ON ' + CASE WHEN alvo.type = 'R' THEN N'ROLE::' ELSE N'USER::' END + QUOTENAME(alvo.name)
                   END
                 + N' FROM ' + QUOTENAME(g.name) + N'; '
             FROM sys.database_permissions p
             JOIN sys.database_principals g ON g.principal_id = p.grantee_principal_id
-            WHERE g.name IN (N'{user}', N'{role}') AND p.permission_name <> N'CONNECT' AND p.class IN (0, 1, 3) AND p.minor_id = 0;
+            LEFT JOIN sys.database_principals alvo ON p.class = 4 AND alvo.principal_id = p.major_id
+            WHERE g.name IN (N'{user}', N'{role}') AND p.permission_name <> N'CONNECT' AND p.class IN (0, 1, 3, 4) AND p.minor_id = 0
+              AND (p.class <> 4 OR alvo.principal_id IS NOT NULL);
 
             IF IS_ROLEMEMBER(N'{role}', N'{user}') = 0
                 SET @cmd += N'ALTER ROLE [{role}] ADD MEMBER [{user}]; ';
