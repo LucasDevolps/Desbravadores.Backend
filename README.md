@@ -23,7 +23,7 @@ O backend está em fase de **MVP funcional** e possui:
 - Nginx como reverse proxy no Docker Compose, com rate limit no login e encaminhamento do IP real do cliente;
 - execução local com Docker Compose ou .NET Aspire;
 - testes de integração da autenticação, dos lançamentos e do encaminhamento de IP real;
-- integração contínua com GitHub Actions em runner self-hosted.
+- integração contínua com GitHub Actions em runners hospedados e descartáveis.
 
 ## Tecnologias
 
@@ -415,7 +415,8 @@ lockout, forwarded headers, segredos/política de senha, cabeçalhos de seguran�
 migrations.
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
-lockout concorrente e auditoria por trigger). Cada teste cria e remove um banco `almirante_test_<guid>`:
+lockout concorrente, corrida login/reset, privilégios SQL e auditoria por trigger). Cada fixture cria
+e remove bancos/logins exclusivos. Use uma instância descartável dedicada a testes, com sysadmin:
 
 ```bash
 ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx --filter Category=RequiresSqlServer
@@ -455,21 +456,20 @@ done
 
 ## Integração contínua
 
-O workflow `.github/workflows/backend-ci.yml` é executado em um runner **self-hosted** quando há:
+O workflow `.github/workflows/backend-ci.yml` roda em pushes e PRs para `main` e `develop`,
+sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo GitHub:
 
-- push para `main` com alterações em `backend/**` ou no próprio workflow;
-- pull request direcionada à `main` com alterações nesses mesmos caminhos.
+- `build-and-test`: instala .NET 10, compila a solução no Windows e executa os testes sem
+  dependências externas.
+- `sqlserver-integration`: executa **todos** os testes `Category=RequiresSqlServer` em Linux,
+  com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
+- `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
+  com certificados de teste e containers descartáveis.
 
-O pipeline utiliza o SDK .NET 10 já instalado no runner e executa:
-
-```bash
-dotnet restore backend/Almirante.slnx
-dotnet build backend/Almirante.slnx --configuration Release --no-restore
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
-```
-
-A execução atual realiza validação de compilação e testes. O filtro exclui os testes que exigem
-Docker ou SQL Server real, indisponíveis neste runner (ver [Testes](#testes)).
+Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
+Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
+No ruleset de `main` e `develop`, configure os três jobs como checks obrigatórios antes de merge.
+Essa configuração depende das permissões administrativas do repositório; o YAML sozinho não a ativa.
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 

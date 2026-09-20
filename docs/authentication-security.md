@@ -149,7 +149,7 @@ Cada item abaixo tem teste automatizado (`SecurityRegressionTests`, `DbPrivilege
 - **Corrida login × reset.** `Usuario.SecurityVersion` é token de concorrência. O reset grava hash novo, `SecurityVersion+1` e revogação das sessões na mesma transação; o login sempre emite `UPDATE` de `Usuarios` filtrado por essa versão, então um login (ou rehash) lido antes do reset falha ao persistir (não é repetido automaticamente) e nenhuma sessão/hash antigo sobrevive. Access tokens antigos caem pela verificação de `SecurityVersion` já existente.
 - **Menor privilégio (SQL).** O login da aplicação recebe uma role própria (`almirante_app_role`) com `GRANT` explícito por tabela (SELECT/INSERT/UPDATE; DELETE só em `AuthSessions`; só SELECT em `__EFMigrationsHistory` e `lancamentos_deletados`) — nada no schema inteiro, nenhum papel fixo. Um login já provisionado (ex.: `db_owner`) é normalizado no startup (sai das outras roles, perde permissões diretas). Depois da rotação a API confere as permissões **efetivas** com a própria credencial (`DbPrivilegeAuditor`) e recusa iniciar se sobrar papel de servidor/banco, DDL, DELETE arbitrário, escrita direta na auditoria ou propriedade de objetos — a mensagem lista o achado, sem segredos. Papéis de **servidor** não são removidos pela API: use `docs/sql/corrigir-privilegios-usuario-app.sql` (como administrador). Para a identidade Windows do IIS (sem `DbCredentials:AppUser`), `Security:DbPrivilegeCheck` = `Warn` (padrão, só registra), `Enforce` ou `Off`; a recomendação é habilitar `DbCredentials:AppUser` e deixar a conta Windows como conexão administrativa (`ConnectionStrings:AlmiranteAdmin`, migrations/provisionamento).
 - **Auditoria de exclusões.** A aplicação não tem INSERT/UPDATE/DELETE em `lancamentos_deletados` (`DENY` na role); o trigger continua gravando por cadeia de propriedade (testado: exclusão legítima grava responsável/IP/motivo; escrita direta falha com 229).
-- **Consultas de TI (`adm-ti`).** `docs/sql/criar-usuario-adm-ti.sql` não concede mais `sysadmin`: cria leitura só nas views do schema `ti` (sem `SenhaHash`/tokens), sem escrita, DDL ou acesso a outros bancos, e **regulariza** um `adm-ti` já existente (remove papéis de servidor). Senha por variável de ambiente (`ADM_TI_PASSWORD`). Manutenção de emergência fica em identidade administrativa separada.
+- **Consultas de TI (`adm-ti`).** `docs/sql/criar-usuario-adm-ti.sql` cria leitura só nas views do schema `ti` (sem `SenhaHash`/tokens). Regulariza roles, permissões diretas de servidor, `IMPERSONATE` no banco, grants por coluna e herança da própria role de leitura. Propriedade de objetos, mapeamentos em outros bancos, classes não suportadas e `GRANT OPTION` exigem revisão manual: o script aborta e desfaz a transação, sem `CASCADE` sobre terceiros. As verificações finais bloqueiam privilégios residuais em vez de apenas imprimi-los. Senha por variável de ambiente (`ADM_TI_PASSWORD`). Manutenção de emergência fica em identidade administrativa separada.
 - **Host Header, HSTS e 429.** No `nginx.tls.conf` só o host de `TLS_PUBLIC_HOST` é aceito (`421` para os demais, nunca refletido); o redirect HTTP→HTTPS usa sempre o destino canônico preservando caminho/query e a API recebe o Host canônico (a API também recebe `AllowedHosts=<host>;localhost;127.0.0.1` no overlay TLS). O arquivo de host (`nginx/generated/tls-host.conf`) é gerado por `scripts/deploy-config.sh gerar-host-tls` a partir de `TLS_PUBLIC_HOST` (o workflow faz isso). Os `429` de login **e** refresh (nginx Linux/TLS/Windows) usam o mesmo `problem+json` com `Retry-After`, CSP, `nosniff`, `X-Frame-Options` e `no-store`; na borda HTTPS também `Strict-Transport-Security`. HSTS em Development publicado: `Hsts__EnabledInDevelopment=true` (o overlay TLS já define; `localhost` continua excluído). No IIS, o deploy grava `AllowedHosts` (loopback + nome da máquina) em `appsettings.Production.json` quando ausente/`*`; acesso por outro nome/IP passa a receber `400` até o operador incluí-lo nesse arquivo.
 - **`.env` e workflows.** `source .env` foi removido: `scripts/deploy-config.sh` lê o `.env` como dado, com a regra de dotenv do Compose (sem aspas até ` #`; aspas simples literais; `$` fora de aspas simples é **recusado** em vez de interpretado de forma diferente), valida modo/host/portas/arquivos de certificado antes de qualquer alteração de serviço e nunca imprime valores. No Windows, os passos que podem falhar por configuração do host (existência de `appsettings.Production.json`, porta do site, TLS manual do nginx) rodam **antes** de o site ficar offline. Teste: `bash scripts/tests/deploy-config.test.sh` (e `scripts/tests/nginx.test.sh`, com Docker, valida a matriz HTTP/HTTPS e 429 contra nginx real).
 - **`Despesa` → `Saida`.** O enum tipado mudou o nome retornado pela API. A entrada aceita `Despesa` (e `Saida`/`Saída`/`0`/`1`). Enquanto existir cliente que **lê** `Despesa` na resposta, defina `Compatibility__LegacyTipoFluxoDespesa=true` (a resposta volta a usar `Despesa`); desligue quando todos os clientes usarem `Saida`. Confirme o frontend efetivamente publicado antes de desligar.
@@ -159,11 +159,21 @@ Cada item abaixo tem teste automatizado (`SecurityRegressionTests`, `DbPrivilege
 
 ### CI não executa código de PR na máquina de deploy
 
-O job `deploy-scripts` (`backend-ci.yml`) roda em `ubuntu-latest`, **nunca** em runner self-hosted. Ele é disparado por `pull_request`, ou seja, executa um script vindo do HEAD da PR — código não confiável, já que o repositório é público e aceita fork. O único runner self-hosted Linux registrado é a própria máquina de deploy, que guarda `~/almirante/.env` (senha do login administrativo, chave JWT, senha do admin) e tem acesso ao daemon Docker.
+Todos os jobs de `backend-ci.yml` usam runners hospedados pelo GitHub: `build-and-test` no Windows;
+`sqlserver-integration` e `deploy-scripts` no Ubuntu. Nenhum deles executa código de PR na máquina de
+deploy, usa seus segredos ou monta seus volumes. O checkout não persiste credenciais, o token tem
+somente `contents: read` e as actions são pinadas por SHA.
 
-`scripts/tests/workflows.test.sh` trava a regressão: falha se qualquer job com gatilho `pull_request` voltar a usar `runs-on: self-hosted`, se um workflow não declarar `permissions:` no topo, ou se uma action não estiver pinada por SHA. O job `build-and-test` é a única exceção registrada (compila e roda a suíte .NET, o que já é execução de código da PR) e está explícita no próprio script — aquele runner não guarda o `.env` de deploy.
+`scripts/tests/workflows.test.sh` falha se um job com gatilho `pull_request` usar `runs-on: self-hosted`,
+se faltar `permissions:` no topo ou se uma action não estiver pinada por SHA. A exceção antiga de
+`build-and-test` foi removida: compilar e testar também executa código vindo da PR.
 
-Além disso: `backend-ci.yml` agora também roda em `main` **e** `develop`. Antes, uma PR para `develop` era mesclada e publicada sem nenhum check automatizado, embora `develop` seja o branch que dispara o deploy.
+O CI roda em `main` **e** `develop` sem filtro de caminhos. SQL Server real cobre concorrência de
+login/reset, migrations, menor privilégio e o próprio script de TI (`AdmTiPrivilegeTests`). Os TRX
+ficam vinculados ao SHA do HEAD da PR; checks de commits anteriores não comprovam a versão atual.
+O job de scripts também executa nginx HTTP/HTTPS/429 com certificados descartáveis. Isso valida a
+configuração, não a instalação dos certificados reais. Configure os três checks como obrigatórios
+nos rulesets antes de merge; a existência do workflow não configura essa proteção automaticamente.
 
 ### Conexão administrativa do SQL Server sem `sysadmin`
 
@@ -172,6 +182,12 @@ A API mantém a credencial de `ConnectionStrings:AlmiranteAdmin` no próprio pro
 `docs/sql/criar-usuario-admin-app.sql` cria o login dedicado com o conjunto mínimo — `ALTER ANY LOGIN` (servidor), `db_ddladmin`, `db_datareader`, `db_datawriter`, `db_securityadmin` e `ALTER ANY USER` (banco) — e nada de `sysadmin`, `CONTROL SERVER` ou acesso a outros bancos. Aponte `SQL_ADMIN_USER`/`SQL_ADMIN_PASSWORD` no `.env` para ele.
 
 `Security:AdminPrivilegeCheck` (env `SQL_ADMIN_PRIVILEGE_CHECK`) audita essa identidade em todo startup: `Warn` (padrão) registra no log enquanto ela ainda for `sysadmin`; `Enforce` recusa iniciar; `Off` desliga. O padrão é `Warn`, e não `Enforce`, para não derrubar ambientes existentes numa atualização — migre e depois trave com `Enforce`.
+
+**Critério para publicação:** comprovar o login administrativo dedicado e `Security:AdminPrivilegeCheck=Enforce`;
+quando a API usa uma identidade direta (sem `DbCredentials:AppUser`), exigir também
+`Security:DbPrivilegeCheck=Enforce`. `Warn`/`Off` não satisfazem essa verificação. Registrar a validação
+no ambiente real junto da rotação dos segredos e dos certificados; os testes do CI são descartáveis
+e não comprovam que essas ações operacionais já ocorreram.
 
 **O banco precisa existir antes**: esse login não tem `CREATE DATABASE`, de propósito. Num ambiente novo, suba uma vez com `sa` para o banco ser criado e as migrations rodarem, e só então troque a connection string.
 

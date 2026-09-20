@@ -8,9 +8,7 @@
 #
 #   nenhum job de um workflow com gatilho `pull_request` pode usar runner self-hosted.
 #
-# O job `build-and-test` é a exceção conhecida e explicitamente registrada abaixo (compila e roda a
-# suíte .NET, o que já é execução de código da PR); ela existe porque aquele runner não guarda o
-# .env de deploy. Ao remover essa exceção, este teste passa a exigir runner hospedado também nele.
+# Sem exceções para build/testes: compilar uma PR também executa código vindo dela.
 set -uo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -19,15 +17,6 @@ falhas=0
 
 erro() { echo "FALHOU: $*" >&2; falhas=$((falhas + 1)); }
 ok() { echo "ok: $*"; }
-
-# Jobs autorizados a rodar em self-hosted mesmo com gatilho pull_request (arquivo:job).
-EXCECOES=("backend-ci.yml:build-and-test")
-
-e_excecao() {
-  local alvo=$1 item
-  for item in "${EXCECOES[@]}"; do [[ "$item" == "$alvo" ]] && return 0; done
-  return 1
-}
 
 # Lista os nomes de job (chaves com 2 espaços de indentação sob "jobs:") de um workflow.
 jobs_de() {
@@ -81,11 +70,7 @@ for arquivo in "$WF"/*.yml "$WF"/*.yaml; do
     [[ -n "$job" ]] || continue
     runs=$(bloco_do_job "$arquivo" "$job" | grep -E '^[[:space:]]*runs-on:' | head -1)
     if grep -q 'self-hosted' <<<"$runs"; then
-      if e_excecao "$nome:$job"; then
-        ok "$nome/$job: self-hosted com pull_request (exceção registrada)"
-      else
-        erro "$nome/$job: job disparado por pull_request usa runner self-hosted ($(tr -s ' ' <<<"$runs" | sed 's/^ //')). Código de PR não confiável não pode rodar na máquina de deploy — use 'runs-on: ubuntu-latest' ou mova o job para um workflow 'on: push'."
-      fi
+      erro "$nome/$job: job disparado por pull_request usa runner self-hosted ($(tr -s ' ' <<<"$runs" | sed 's/^ //')). Código de PR não confiável não pode rodar na máquina de deploy — use runner hospedado ou mova o job para um workflow 'on: push'."
     else
       ok "$nome/$job: runner hospedado"
     fi

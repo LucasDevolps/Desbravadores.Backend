@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Valida nginx.tls.conf/nginx.conf/nginx.windows.conf com containers Docker descartáveis (prefixo pr59fix-).
+# Valida nginx.tls.conf/nginx.conf/nginx.windows.conf com containers Docker descartáveis e nomes únicos.
 # Requer docker + openssl + curl. Uso: bash scripts/tests/nginx.test.sh
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 W=$(mktemp -d)
-P=almirante-nginx-test
+P=almirante-nginx-test-$(basename "$W" | tr '[:upper:].' '[:lower:]-')
 mkdir -p "$W/certs" "$W/gen" "$W/stub"
-cleanup() { docker rm -f ${P}-api ${P}-tls ${P}-plain >/dev/null 2>&1; docker network rm ${P}-net >/dev/null 2>&1; }
-cleanup
+cleanup() { docker rm -f ${P}-api ${P}-tls ${P}-plain >/dev/null 2>&1 || true; docker network rm ${P}-net >/dev/null 2>&1 || true; rm -rf "$W"; }
+trap cleanup EXIT
 docker network create ${P}-net >/dev/null
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=api.exemplo.test" -addext "subjectAltName=DNS:api.exemplo.test" \
@@ -101,6 +101,5 @@ for conf in "$REPO/nginx/nginx.conf" "$W/win.conf"; do
   done
 done
 
-cleanup
-rm -rf "$W"
 echo "RESULT fail=$fail"
+exit "$fail"

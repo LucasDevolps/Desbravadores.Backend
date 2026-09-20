@@ -24,4 +24,8 @@
     <ProjectReference Include="..\Almirante.Api\Almirante.Api.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="../../docs/sql/criar-usuario-adm-ti.sql" Link="Sql/criar-usuario-adm-ti.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

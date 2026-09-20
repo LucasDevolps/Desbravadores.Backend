@@ -11,7 +11,7 @@ namespace Almirante.Api.Tests;
 // Exige um SQL Server real. Defina ALMIRANTE_TEST_SQLSERVER com uma connection string SEM Database
 // (ex.: "Server=localhost;Trusted_Connection=True;TrustServerCertificate=True"); cada fábrica cria um
 // banco descartável almirante_test_<guid>, aplica TODAS as migrations pelo startup real e o remove
-// no Dispose. Excluídos do CI (runner sem SQL Server) pelo filtro Category!=RequiresSqlServer.
+// no Dispose. Executados no job sqlserver-integration do CI, contra um SQL Server descartável.
 public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides = null, Action<DbContextOptionsBuilder>? configureDb = null) : AlmiranteApiFactory
 {
     public const string EnvironmentVariable = "ALMIRANTE_TEST_SQLSERVER";
