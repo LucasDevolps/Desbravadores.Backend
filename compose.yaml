@@ -1,5 +1,4 @@
 name: almirante
-# (commit de teste: revalida apos SQL_TRUST_SERVER_CERTIFICATE=True no .env do runner popos-lucas)
 
 # Rede dedicada com subnet fixa: é o que permite ao ASP.NET Core (ReverseProxy__TrustedNetworkCidr,
 # ver api.environment abaixo) confiar apenas no nginx para os headers X-Forwarded-For/X-Forwarded-Proto,
@@ -21,8 +20,16 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?defina SQL_SA_PASSWORD no arquivo .env}
       MSSQL_PID: Developer
+    # Publicada SÓ no loopback do host. O Docker escreve direto na chain DOCKER do iptables e
+    # normalmente contorna o ufw, então "- 14330:1433" expunha o SQL Server (com o login
+    # administrativo) na internet do host publicado — furando a premissa de que o nginx é o único
+    # ponto de entrada. A API não usa este mapeamento (fala com "sqlserver:1433" pela rede interna);
+    # ele existe para ferramentas locais. Para alcançar de outra máquina, use um túnel SSH
+    # (ssh -L 14330:127.0.0.1:14330 host) em vez de abrir a porta.
     ports:
-      - "${SQL_HOST_PORT:-14330}:1433"
+      - "${SQL_BIND_ADDRESS:-127.0.0.1}:${SQL_HOST_PORT:-14330}:1433"
+    security_opt:
+      - no-new-privileges:true
     networks:
       - almirante-net
     volumes:
@@ -55,7 +62,15 @@ services:
       # a API cria/rotaciona o login DbCredentials__AppUser (só SELECT/INSERT/UPDATE) e injeta a senha a
       # cada conexão. "AlmiranteAdmin" (sa) é usada só para migrations e para a rotação da senha.
       ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
-      ConnectionStrings__AlmiranteAdmin: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      # Conexão administrativa (migrations + provisionamento/rotação do AppUser). O padrão continua
+      # sendo "sa" para não quebrar ambientes existentes, mas ele NÃO é o alvo: enquanto a credencial
+      # aqui for sysadmin, comprometer o container da API equivale a comprometer o servidor SQL
+      # inteiro, o que anula boa parte do ganho do AppUser de menor privilégio.
+      # Crie o login dedicado com docs/sql/criar-usuario-admin-app.sql e aponte SQL_ADMIN_USER/
+      # SQL_ADMIN_PASSWORD para ele no .env. Security__AdminPrivilegeCheck (abaixo) avisa no log a
+      # cada startup enquanto essa identidade ainda for sysadmin.
+      ConnectionStrings__AlmiranteAdmin: Server=sqlserver,1433;Database=almirante;User Id=${SQL_ADMIN_USER:-sa};Password=${SQL_ADMIN_PASSWORD:-${SQL_SA_PASSWORD}};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      Security__AdminPrivilegeCheck: ${SQL_ADMIN_PRIVILEGE_CHECK:-Warn}
       DbCredentials__AppUser: ${SQL_APP_USER:-almirante_user_bd}
       DbCredentials__RotationHours: ${SQL_APP_PASSWORD_ROTATION_HOURS:-24}
       Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
@@ -83,6 +98,15 @@ services:
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
       ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
       DataProtection__KeysPath: /var/lib/almirante/dataprotection
+      # Host Header: o padrão "*" aceita qualquer Host, porque este arquivo também serve
+      # desenvolvimento local (localhost, 127.0.0.1, IP da LAN) e fixar a lista quebraria isso.
+      # Em ambiente PUBLICADO em modo http, defina API_ALLOWED_HOSTS no .env com os nomes reais
+      # (ex.: "api.exemplo.com.br;localhost;127.0.0.1") — o deploy avisa no log enquanto estiver "*".
+      # No overlay TLS, compose.tls.yaml já fixa a lista a partir de TLS_PUBLIC_HOST.
+      AllowedHosts: ${API_ALLOWED_HOSTS:-*}
+      # Swagger/OpenAPI expõem o mapa completo da API (rotas, DTOs, parâmetros). Fora de Development
+      # fica desligado por padrão; ligue conscientemente com SWAGGER_ENABLED=true se precisar.
+      Swagger__Enabled: ${SWAGGER_ENABLED:-}
     networks:
       - almirante-net
     # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
@@ -90,6 +114,13 @@ services:
     # acessando a API diretamente.
     expose:
       - "8080"
+    # A API roda como usuário "app" (não-root, ver Dockerfile) e escuta em 8080, porta não
+    # privilegiada: não precisa de nenhuma capability do Linux. cap_drop ALL reduz o que um
+    # comprometimento do processo alcança; no-new-privileges impede ganho por binário setuid.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - almirante-dataprotection:/var/lib/almirante/dataprotection
     healthcheck:
@@ -112,6 +143,11 @@ services:
     # (documentação, healthchecks e workflows de deploy continuam apontando para ela).
     ports:
       - "${API_HOST_PORT:-8090}:80"
+    # Sem cap_drop aqui de propósito: o modelo master/worker do nginx precisa de CHOWN/SETUID/SETGID
+    # (e NET_BIND_SERVICE na 80) para baixar privilégio dos workers. no-new-privileges é seguro e
+    # mantém o ganho principal.
+    security_opt:
+      - no-new-privileges:true
     volumes:
       # NGINX_CONF_FILE (padrão nginx.conf) troca para nginx.tls.conf em ambientes publicados com TLS
       # real (ver compose.tls.yaml e docs/authentication-security.md); não altera o comportamento
