@@ -224,10 +224,12 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
         modelBuilder.Entity<EventoOperacao>(entity =>
         {
-            entity.ToTable("eventos_operacoes");
+            entity.ToTable("eventos_operacoes", table =>
+                table.HasCheckConstraint("CK_eventos_operacoes_RespostaJson", "[RespostaJson] IS NULL OR ISJSON([RespostaJson]) = 1"));
             entity.HasKey(o => o.Id);
             entity.Property(o => o.IdempotencyKey).HasMaxLength(100).IsRequired();
             entity.Property(o => o.RequestHash).HasMaxLength(64).IsRequired();
+            entity.Property(o => o.RespostaJson).HasColumnType("nvarchar(max)");
             entity.HasIndex(o => new { o.UsuarioId, o.IdempotencyKey }).IsUnique();
             entity.HasIndex(o => o.EventoId);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(o => o.UsuarioId).OnDelete(DeleteBehavior.Restrict);

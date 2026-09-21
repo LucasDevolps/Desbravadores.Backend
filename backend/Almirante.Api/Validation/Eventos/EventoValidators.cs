@@ -69,14 +69,11 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
 
 public sealed class RegistrarEventoRequestValidator : EventoConteudoValidator<RegistrarEventoRequest>
 {
-    public RegistrarEventoRequestValidator(TimeProvider clock)
+    public RegistrarEventoRequestValidator()
     {
-        // A partir do PRIMEIRO DIA do mês atual (UTC), não de "hoje": datas passadas dentro do mês são válidas.
-        RuleFor(x => x.DataEvento!.Value)
-            .Must(data => data >= EventoRegras.PrimeiroDiaDoMes(clock.GetUtcNow()))
-            .WithMessage(_ => $"dataEvento deve ser a partir de {EventoRegras.PrimeiroDiaDoMes(clock.GetUtcNow()):yyyy-MM-dd} (primeiro dia do mês atual, UTC).")
-            .When(x => x.DataEvento.HasValue).OverridePropertyName("DataEvento");
-
+        // Só formato/presença/normalização. O limite de data (a partir do primeiro dia do mês atual, UTC) depende do
+        // relógio e vale apenas para uma operação NOVA: é verificado em EventosService.RegistrarAsync, depois de
+        // resolvido o replay, para que um reenvio legítimo não falhe só porque o mês virou.
         RuleFor(x => x.EventoReferenciaId).NotEqual(Guid.Empty).WithMessage("eventoReferenciaId não pode ser um GUID vazio.")
             .When(x => x.EventoReferenciaId.HasValue);
 

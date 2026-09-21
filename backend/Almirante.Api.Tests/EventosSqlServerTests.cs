@@ -1340,4 +1340,119 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         }
     }
 
+    // ------------------------------------------------------------------ composição de custos após pagamento (achado 3 da PR #62)
+
+    private async Task<(EventoDto Evento, List<Guid> Membros)> EventoComPagamentoAsync(string status, params (string Campo, object? Valor)[] ajustes)
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m, ajustes: ajustes);
+        await PagarAsync(dto.Lancamentos.First(l => l.MembroId == m[0]).Id, status);
+        return (await ObterAsync(dto.Id), m);
+    }
+
+    private async Task AssertCadastroInalteradoAsync(EventoDto antes)
+    {
+        var atual = await ObterAsync(antes.Id);
+        Assert.Equal(antes.Versao, atual.Versao);   // até o "lock" de versão do PUT recusado foi revertido
+        Assert.Equal(antes.Transporte, atual.Transporte);
+        Assert.Equal(antes.Alimentacao, atual.Alimentacao);
+        Assert.Equal(antes.SeguroObrigatorio, atual.SeguroObrigatorio);
+        Assert.Equal((antes.DataEvento, antes.Local, antes.ValorPorMembro, antes.Total), (atual.DataEvento, atual.Local, atual.ValorPorMembro, atual.Total));
+        Assert.Equal(antes.Membros, atual.Membros);
+        Assert.Equal(antes.Lancamentos, atual.Lancamentos);
+    }
+
+    [Theory]
+    [InlineData("Pago")]
+    [InlineData("Atrasado")]
+    public async Task Put_RedistribuirCustosComMesmaSoma_ComLancamentoPagoOuAtrasado_Retorna409_SemAlterarNada(string status)
+    {
+        var (dto, m) = await EventoComPagamentoAsync(status);   // 10 + 8 + 2 = 20
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 5m, alimentacao: 13m));   // 5 + 13 + 2 = 20
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        await AssertCadastroInalteradoAsync(dto);
+        var linha = await Db(db => db.Eventos.AsNoTracking().SingleAsync(e => e.Id == dto.Id));
+        Assert.Equal((10m, 8m, 2m), (linha.TransporteValor, linha.AlimentacaoValor, linha.SeguroObrigatorio));
+    }
+
+    [Theory]
+    [InlineData(true, false)]    // transporte grátis, alimentação coletiva de 18: 0 + 18 + 2 = 20
+    [InlineData(false, true)]    // transporte de 18, alimentação individual: 18 + 0 + 2 = 20
+    public async Task Put_TrocarBooleanosMantendoOTotal_ComLancamentoPago_Retorna409(bool gratis, bool individual)
+    {
+        var (dto, m) = await EventoComPagamentoAsync("Pago");
+        var valorAlimentacao = individual ? 0m : 18m;
+        var valorTransporte = gratis ? 0m : 18m;
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, EventosSqlSupport.Editar(dto, m, transporte: valorTransporte, gratis: gratis, alimentacao: valorAlimentacao, individual: individual));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(20m, valorTransporte + valorAlimentacao + 2m); // a soma não mudou: só a composição
+        await AssertCadastroInalteradoAsync(dto);
+    }
+
+    [Fact]
+    public async Task Put_SeguroTrocadoPorTransporteComMesmaSoma_ComLancamentoPago_Retorna409()
+    {
+        var (dto, m) = await EventoComPagamentoAsync("Pago");   // 10 + 8 + 2
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 8m, seguro: 4m)); // 8 + 8 + 4
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        await AssertCadastroInalteradoAsync(dto);
+    }
+
+    [Fact]
+    public async Task Put_NumeroIgnoradoPeloBooleanoInalterado_NaoEhAlteracaoFinanceira_MesmoComLancamentoPago()
+    {
+        // transporte grátis: o valor recebido é descartado (normalizado para 0); alimentação 8 e seguro 2 → 10
+        var (dto, m) = await EventoComPagamentoAsync("Pago", ("transporte", new { valor = 555m, ehGratis = true }));
+        Assert.Equal(new TransporteDto(0m, true), dto.Transporte);
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, EventosSqlSupport.Editar(dto, m, transporte: 777m, gratis: true));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);   // equivalência semântica: nada financeiro mudou
+        var atual = await ObterAsync(dto.Id);
+        Assert.Equal(new TransporteDto(0m, true), atual.Transporte);
+        Assert.Equal((dto.ValorPorMembro, dto.Total), (atual.ValorPorMembro, atual.Total));
+        Assert.Equal(dto.Lancamentos, atual.Lancamentos);
+    }
+
+    [Fact]
+    public async Task Put_ComTudoPendente_RedistribuirCustosComMesmaSoma_ContinuaPermitidoESincronizado()
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m);
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 5m, alimentacao: 13m));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var linha = await Db(db => db.Eventos.AsNoTracking().SingleAsync(e => e.Id == dto.Id));
+        Assert.Equal((5m, 13m, 2m, 20m), (linha.TransporteValor, linha.AlimentacaoValor, linha.SeguroObrigatorio, linha.ValorPorMembro));
+        Assert.All(await LancamentosDe(dto.Id), l => Assert.Equal((20m, StatusLancamento.Pendente), (l.Valor, l.Status)));
+    }
+
+    [Fact]
+    public async Task Put_CorrigirSoOLocal_ComLancamentoPagoEDoisCadastrosAtivos_Retorna409_SemAlterarNada()
+    {
+        var m = await MembrosAsync(2);
+        var a = await CriarAsync(m[0]);
+        await CriarAsync(m[1], referencia: a.Id);
+        await PagarAsync(a.Lancamentos[0].Id);
+        a = await ObterAsync(a.Id);
+
+        var response = await EventosTestKit.PutAsync(Client, a.Id, Editar(a, m[0], local: "Parque Corrigido"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        await AssertCadastroInalteradoAsync(a);
+    }
+
+    private async Task<EventoDto> CriarAsync(object? membros, Guid referencia)
+    {
+        var corpo = EventosTestKit.Corpo(membros, referencia: referencia);
+        var response = await EventosTestKit.PostAsync(Client, corpo);
+        Assert.True(HttpStatusCode.Created == response.StatusCode, await response.Content.ReadAsStringAsync());
+        return await EventosTestKit.LerAsync(response);
+    }
+
 }

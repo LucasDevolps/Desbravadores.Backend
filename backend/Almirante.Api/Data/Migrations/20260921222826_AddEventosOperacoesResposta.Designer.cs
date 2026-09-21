@@ -4,6 +4,7 @@ using Almirante.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Almirante.Api.Data.Migrations
 {
     [DbContext(typeof(AlmiranteDbContext))]
-    partial class AlmiranteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260921222826_AddEventosOperacoesResposta")]
+    partial class AddEventosOperacoesResposta
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

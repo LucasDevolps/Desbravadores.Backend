@@ -66,7 +66,7 @@ public sealed class EventosOperationFilter : IOperationFilter
         if (idempotency is not null)
         {
             idempotency.Required = true;
-            idempotency.Description = "UUID desta operação (obrigatório). Mesma chave + mesma operação normalizada devolve 200 com o resultado original; " +
+            idempotency.Description = "UUID desta operação (obrigatório). Mesma chave + mesma operação normalizada devolve 200 com o resultado ORIGINAL do POST (com a versao original, não o estado atual); " +
                 "mesma chave com dados diferentes retorna 409; ausente ou inválida retorna 400. O escopo é o usuário autenticado.";
         }
 

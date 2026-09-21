@@ -46,8 +46,11 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [EndpointDescription("Exige o header Idempotency-Key (UUID). O campo membros aceita um GUID OU um array de GUIDs (mesma operação). " +
         "A data mínima é o primeiro dia do mês atual (referência UTC do servidor, não a data de hoje). " +
         "Cada membro recebe um lançamento com valorPorMembro = transporte efetivo + alimentação efetiva + seguro; total = valorPorMembro × membros. " +
-        "201: criado. 200: reenvio idempotente (mesma chave e mesma operação normalizada). 409: chave com dados diferentes, evento já excluído, " +
-        "ou membro já em outro grupo ativo do mesmo passeio. 404: eventoReferenciaId inexistente/inativo.")]
+        "201: criado. 200: reenvio idempotente (mesma chave e mesma operação normalizada) — devolve o RESULTADO ORIGINAL do POST, com a versao original, " +
+        "não o estado atual (consulte o GET antes de editar; um PUT com a versao original recebe 409 se o cadastro mudou). O reenvio vale mesmo depois da virada do mês; " +
+        "a data mínima só se aplica a operações novas. 409: chave com dados diferentes, evento já excluído, membro já em outro grupo ativo do mesmo passeio, " +
+        "passeio em uso por outra operação, ou operação registrada antes de a resposta original ser guardada (codigo EVENTO_IDEMPOTENCIA_SEM_RESPOSTA_ORIGINAL: consulte o evento existente). " +
+        "404: eventoReferenciaId inexistente/inativo.")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -74,7 +77,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [HttpPut("{id:guid}")]
     [EndpointSummary("Atualiza um cadastro de evento e sincroniza participantes e lançamentos.")]
     [EndpointDescription("Exige versao (rowversion). Com todos os lançamentos pendentes, atualiza mantidos, cria novos e desativa removidos " +
-        "(motivo obrigatório na remoção). Com lançamento Pago/Atrasado, alterações de valor, participantes ou data retornam 409; o local ainda pode ser corrigido. " +
+        "(motivo obrigatório na remoção). Com lançamento Pago/Atrasado, qualquer mudança na composição de custos (transporte, ehGratis, alimentação, individual, seguro — não só o total), participantes ou data retorna 409; o local ainda pode ser corrigido. " +
         "membros aceita GUID ou GUID[] como no POST. Data e local não mudam quando o passeio tem mais de um cadastro ativo (409).")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

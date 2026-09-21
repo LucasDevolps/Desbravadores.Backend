@@ -232,7 +232,8 @@ public class ApiProcessEventosTests
         Assert.Equal(System.Net.HttpStatusCode.OK, (await Post(new[] { membros[0] }, chave)).StatusCode);
 
         // POST com vários membros (outro passeio) e GET
-        var varios = await EventosTestKit.LerAsync(await Post(new[] { membros[1], membros[2] }, Guid.NewGuid().ToString()));
+        var chaveVarios = Guid.NewGuid().ToString();
+        var varios = await EventosTestKit.LerAsync(await Post(new[] { membros[1], membros[2] }, chaveVarios));
         Assert.Equal((20m, 40m), (varios.ValorPorMembro, varios.Total));
         var lista = await client.GetFromJsonAsync<Almirante.Api.Dtos.EventosResponse>("/api/Eventos");
         Assert.Contains(evento.Id, lista!.Items.Select(i => i.Id));
@@ -245,6 +246,22 @@ public class ApiProcessEventosTests
         Assert.Equal((22m, 22m), (editado.ValorPorMembro, editado.Total));
         Assert.Equal(System.Net.HttpStatusCode.Conflict,
             (await client.PutAsJsonAsync($"/api/Eventos/{varios.Id}", EventosTestKit.Corpo(membros[1], versao: varios.Versao))).StatusCode);
+
+        // replay depois da edição: resultado ORIGINAL (2 participantes, valor 20, versão original), gravado na mesma transação do POST
+        var replay = await Post(new[] { membros[2], membros[1] }, chaveVarios);
+        Assert.Equal(System.Net.HttpStatusCode.OK, replay.StatusCode);
+        var replayDto = await EventosTestKit.LerAsync(replay);
+        Assert.Equal((varios.Versao, 20m, 2), (replayDto.Versao, replayDto.ValorPorMembro, replayDto.QuantidadeMembros));
+
+        // POST com eventoReferenciaId: o lock de coordenação do passeio (sp_getapplock) funciona com a identidade de menor privilégio
+        var referenciando = new HttpRequestMessage(HttpMethod.Post, "/api/Eventos")
+        {
+            Content = JsonContent.Create(EventosTestKit.Corpo(membros[2], referencia: varios.Id)),
+        };
+        referenciando.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var segundoGrupo = await client.SendAsync(referenciando);
+        Assert.Equal(System.Net.HttpStatusCode.Created, segundoGrupo.StatusCode);
+        Assert.Equal(varios.EventoGrupoId, (await EventosTestKit.LerAsync(segundoGrupo)).EventoGrupoId);
 
         // DELETE: exclusão lógica + histórico gravado pelo trigger com o IP real da conexão
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{evento.Id}")

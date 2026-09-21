@@ -15,5 +15,12 @@ public sealed class EventoOperacao
     public required string RequestHash { get; set; }
 
     public Guid EventoId { get; set; }
+
+    // Resposta ORIGINAL do POST (EventoDto em JSON, inclusive a rowversion gerada pelo banco), gravada na mesma
+    // transação do evento. É o que o replay devolve (200): nunca o estado atual do cadastro e nunca com a versão atual.
+    // Nula só em operações anteriores a esta coluna (sem fonte confiável do resultado original): o replay delas
+    // responde 409 com código estável (ver EventosService.ReplayAsync).
+    public string? RespostaJson { get; set; }
+
     public DateTime CriadoEmUtc { get; set; }
 }

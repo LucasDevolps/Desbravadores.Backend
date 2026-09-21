@@ -438,9 +438,20 @@ paginada; período maior devolve `400`). Lista vazia é `items: []`.
 `LancamentosOperacoes`). O hash usa apenas dados normalizados: data, local (trim + espaços
 colapsados), booleanos, valores efetivos, seguro, `eventoReferenciaId` e membros **ordenados**;
 GUID único ≡ array de um elemento, e a ordem dos membros não importa. Mesma chave + mesma operação →
-`200` com o cadastro; dados diferentes → `409`; chave ausente/inválida → `400`; operação cujo evento
-foi excluído → `409` (nunca reativa). Falha em qualquer etapa desfaz tudo (mesma transação), então
-o retry não duplica cobrança.
+`200` com o **resultado original do POST** (o mesmo DTO, com a **versão original**) — não o estado atual: se o
+cadastro foi editado ou pago depois, o `GET` mostra o estado atual e o replay continua devolvendo o original
+(uma edição feita a partir dele leva `409`, pois a versão original ficou antiga). O DTO original é gravado em
+`eventos_operacoes.RespostaJson` na **mesma transação** do evento, dos participantes e dos lançamentos (dois
+`SaveChanges`, um commit; a rowversion só existe depois do INSERT). O replay é resolvido **antes** da regra
+"data a partir do 1º dia do mês", que vale só para operações novas (reenviar em outubro um POST válido de
+setembro dá `200`; chave nova com a mesma data antiga dá `400`). Dados diferentes → `409` (inclusive depois
+da virada do mês); chave ausente/inválida → `400`; operação cujo evento foi excluído → `409` (nunca reativa).
+Falha em qualquer etapa desfaz tudo (mesma transação), então o retry não duplica cobrança.
+
+**Operações anteriores à resposta original.** Chaves registradas antes da coluna `RespostaJson` não têm fonte
+confiável do resultado original (o estado atual pode já ter mudado), então nada é inventado: o replay delas
+devolve `409` com `codigo = EVENTO_IDEMPOTENCIA_SEM_RESPOSTA_ORIGINAL` e `eventoId`, orientando a consultar
+o evento existente (`GET /api/Eventos/{id}`); a chave não é apagada e nada é recriado.
 
 **Mesmo passeio, preços diferentes.** `eventoReferenciaId` (opcional) aponta para um cadastro ativo;
 o servidor mantém o `eventoGrupoId`, exige mesma data e local (`400` por campo) e responde `404` se
@@ -450,14 +461,19 @@ a referência não existe/está inativa. Um membro só pode estar em **um** cada
 
 **Concorrência.** `versao` (base64 do `rowversion`) vem em toda resposta e é exigida no PUT/DELETE
 (`409` se desatualizada). A **mudança de status de um lançamento do evento também altera a versão**,
-então um PUT/DELETE feito com versão anterior ao pagamento é recusado. O cadastro é travado antes dos
-lançamentos (mesma ordem de locks nos dois caminhos, sem deadlock).
+então um PUT/DELETE feito com versão anterior ao pagamento é recusado. Ordem única de locks, sem deadlock:
+(1) coordenador do passeio — `sp_getapplock` exclusivo por `eventoGrupoId`, preso à transação, com espera
+limitada (`409` ao esgotar) — em POST com `eventoReferenciaId`, PUT e DELETE; (2) linha do cadastro (`UPDATE`
+com a `versao`); (3) participações e lançamentos. O pagamento usa só (2) e (3). Cada tentativa do retry do
+pagamento recarrega o estado sob o lock e, se o commit falhar de forma ambígua, verifica no banco se ele
+foi efetivado antes de responder sucesso.
 
 **PUT.** Campos editáveis = os do POST + `versao` (+ `motivo`); não altera `id`, `eventoGrupoId`,
 `eventoReferenciaId`, total, valor por membro nem status. Com tudo pendente: mantidos são atualizados,
 novos ganham lançamento pendente e removidos são desativados (participação + lançamento, com auditoria
 do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. Com algum lançamento
-`Pago`/`Atrasado`: `409` para valor, participantes ou data (pagamentos nunca voltam a pendente nem
+`Pago`/`Atrasado`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
+`individual`, seguro — não só o total), participantes ou data (pagamentos nunca voltam a pendente nem
 geram estorno); só o **local** pode ser corrigido (a descrição de todos os lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo
 local; valor, vencimento e status do pagamento não mudam). Data/local não mudam por PUT isolado quando o passeio
 tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.

@@ -13,13 +13,6 @@ public sealed class EventosRegrasTests
     private static readonly Guid C = Guid.Parse("33333333-3333-4333-8333-333333333333");
     private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
 
-    private sealed class RelogioFixo(DateTimeOffset agora) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => agora;
-    }
-
-    private static RelogioFixo Em(string iso) => new(DateTimeOffset.Parse(iso, null, System.Globalization.DateTimeStyles.AssumeUniversal));
-
     private static string Json(string membros, string data = "2026-10-18", string transporte = """{"valor":10.00,"ehGratis":false}""",
         string alimentacao = """{"individual":false,"valor":8.00}""", string seguro = "2.00", string extra = "") =>
         $$"""{"dataEvento":"{{data}}","local":"Parque Ibirapuera","transporte":{{transporte}},"alimentacao":{{alimentacao}},"seguroObrigatorio":{{seguro}},"membros":{{membros}}{{extra}}}""";
@@ -31,8 +24,8 @@ public sealed class EventosRegrasTests
         return request;
     }
 
-    private static IEnumerable<string> Erros(RegistrarEventoRequest request, string agora = "2026-09-18T12:00:00Z") =>
-        new RegistrarEventoRequestValidator(Em(agora)).Validate(request).Errors.Select(e => e.ErrorMessage);
+    private static IEnumerable<string> Erros(RegistrarEventoRequest request) =>
+        new RegistrarEventoRequestValidator().Validate(request).Errors.Select(e => e.ErrorMessage);
 
     // ------------------------------------------------------------------ GUID | GUID[]
 
@@ -218,8 +211,9 @@ public sealed class EventosRegrasTests
     [InlineData("2025-09-18", false)]
     public void DataEvento_AceitaAPartirDoPrimeiroDiaDoMesAtual(string data, bool valida)
     {
-        var erros = Erros(Ler(Json($"\"{A}\"", data: data)), "2026-09-18T12:00:00Z");
-        Assert.Equal(valida, !erros.Any(e => e.Contains("dataEvento")));
+        // regra de CRIAÇÃO: fora do validador (não pode barrar replay); ver EventosService.ValidarDataDeCadastro
+        Assert.Equal(valida, EventoRegras.DataDeCadastroValida(DateOnly.Parse(data), DateTimeOffset.Parse("2026-09-18T12:00:00Z")));
+        Assert.Empty(Erros(Ler(Json($"\"{A}\"", data: data))));   // o validador não julga a data pelo relógio
     }
 
     [Theory]
@@ -231,9 +225,7 @@ public sealed class EventosRegrasTests
     [InlineData("2026-09-30T22:00:00-03:00", "2026-09-30", false)] // fuso local não conta: referência é UTC
     public void DataEvento_UsaReferenciaUtc(string agora, string data, bool valida)
     {
-        var erros = new RegistrarEventoRequestValidator(new RelogioFixo(DateTimeOffset.Parse(agora)))
-            .Validate(Ler(Json($"\"{A}\"", data: data))).Errors.Select(e => e.ErrorMessage);
-        Assert.Equal(valida, !erros.Any(e => e.Contains("dataEvento")));
+        Assert.Equal(valida, EventoRegras.DataDeCadastroValida(DateOnly.Parse(data), DateTimeOffset.Parse(agora)));
     }
 
     [Theory]

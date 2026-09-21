@@ -35,6 +35,12 @@ public static class EventoRegras
     // Primeiro dia do mês corrente na referência UTC (TimeProvider), independente do fuso da máquina.
     public static DateOnly PrimeiroDiaDoMes(DateTimeOffset agoraUtc) => new(agoraUtc.UtcDateTime.Year, agoraUtc.UtcDateTime.Month, 1);
 
+    // Regra de CRIAÇÃO (POST de uma operação nova): a data do evento é a partir do primeiro dia do mês atual (UTC).
+    public static bool DataDeCadastroValida(DateOnly dataEvento, DateTimeOffset agoraUtc) => dataEvento >= PrimeiroDiaDoMes(agoraUtc);
+
+    public static string MensagemDataDeCadastro(DateTimeOffset agoraUtc) =>
+        $"dataEvento deve ser a partir de {PrimeiroDiaDoMes(agoraUtc):yyyy-MM-dd} (primeiro dia do mês atual, UTC).";
+
     public static DateOnly UltimoDiaDoMes(DateTimeOffset agoraUtc) =>
         PrimeiroDiaDoMes(agoraUtc).AddMonths(1).AddDays(-1);
 
