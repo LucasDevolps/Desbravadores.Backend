@@ -23,6 +23,7 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         "GET /api/Usuarios" => new(HttpMethod.Get, "/api/Usuarios"),
         "GET /api/Cargos" => new(HttpMethod.Get, "/api/Cargos"),
         "GET /api/Lancamentos" => new(HttpMethod.Get, "/api/Lancamentos"),
+        "GET /api/Lancamentos/{id}" => new(HttpMethod.Get, $"/api/Lancamentos/{Guid.NewGuid()}"),
         "POST /api/Lancamentos/Registrar" => new(HttpMethod.Post, "/api/Lancamentos/Registrar") { Content = JsonContent.Create(NovoLancamento(Guid.NewGuid())) },
         "PUT /api/Lancamentos/{id}" => new(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { status = "Pago" }) },
         "DELETE /api/Lancamentos/{id}" => new(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { motivo = "rbac" }) },
@@ -31,7 +32,7 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
 
     public static TheoryData<string> EndpointsAdministrativos => new()
     {
-        "GET /api/Usuarios", "GET /api/Cargos", "GET /api/Lancamentos", "POST /api/Lancamentos/Registrar",
+        "GET /api/Usuarios", "GET /api/Cargos", "GET /api/Lancamentos", "GET /api/Lancamentos/{id}", "POST /api/Lancamentos/Registrar",
         "PUT /api/Lancamentos/{id}", "DELETE /api/Lancamentos/{id}",
     };
 

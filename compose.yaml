@@ -1,5 +1,4 @@
 name: almirante
-# (commit de teste: revalida apos SQL_TRUST_SERVER_CERTIFICATE=True no .env do runner popos-lucas)
 
 # Rede dedicada com subnet fixa: é o que permite ao ASP.NET Core (ReverseProxy__TrustedNetworkCidr,
 # ver api.environment abaixo) confiar apenas no nginx para os headers X-Forwarded-For/X-Forwarded-Proto,
@@ -19,23 +18,80 @@ services:
     container_name: almirante-sqlserver
     environment:
       ACCEPT_EULA: "Y"
+      # Só este serviço (que inicializa a instância) e o "sql-bootstrap" conhecem o segredo do "sa". A API
+      # NUNCA o recebe: não existe SQL_SA_PASSWORD no ambiente dela, e ela recusa iniciar se receber.
       MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?defina SQL_SA_PASSWORD no arquivo .env}
       MSSQL_PID: Developer
+    # Publicada SÓ no loopback do host. O Docker escreve direto na chain DOCKER do iptables e
+    # normalmente contorna o ufw, então "- 14330:1433" expunha o SQL Server (com o login
+    # administrativo) na internet do host publicado — furando a premissa de que o nginx é o único
+    # ponto de entrada. A API não usa este mapeamento (fala com "sqlserver:1433" pela rede interna);
+    # ele existe para ferramentas locais. Para alcançar de outra máquina, use um túnel SSH
+    # (ssh -L 14330:127.0.0.1:14330 host) em vez de abrir a porta.
     ports:
-      - "${SQL_HOST_PORT:-14330}:1433"
+      - "${SQL_BIND_ADDRESS:-127.0.0.1}:${SQL_HOST_PORT:-14330}:1433"
+    security_opt:
+      - no-new-privileges:true
     networks:
       - almirante-net
     volumes:
       # Volume nomeado e persistente: pode ser exportado (docker volume + docker run --rm -v ...)
       # e restaurado em outra máquina para compartilhar backups/estado atual do banco.
       - almirante-sqlserver-data:/var/opt/mssql
+    # Readiness SEM autenticação privilegiada (nenhum "sa", nenhuma senha): tenta um login que não existe e
+    # exige a resposta "Login failed for user" — a resposta do SQL Server a um login inexistente prova que a
+    # instância terminou de subir e está processando autenticações. Servidor ainda subindo, porta fechada ou
+    # timeout produzem outra saída e reprovam. (O "sql-bootstrap" confirma depois, com credencial, que aceita
+    # comandos; e o /health da API confere a conexão real com a identidade de runtime.) Custo: uma tentativa de
+    # login inválida do usuário "almirante_healthcheck" a cada intervalo aparece no log do SQL Server.
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U almirante_healthcheck -P invalido -C -l 5 -Q 'SELECT 1' 2>&1 | grep -q 'Login failed for user' || exit 1"]
+      interval: 15s
+      timeout: 10s
       retries: 10
       start_period: 20s
     restart: unless-stopped
+
+  # Provisionamento PRÉVIO e separado da API: cria o banco e as duas identidades da aplicação (administrativa
+  # dedicada e de runtime, ambas usuários contidos do banco, sem nenhum privilégio de servidor) com
+  # docs/sql/criar-usuario-admin-app.sql. Roda uma vez por "up", é idempotente e sai; a API só sobe depois
+  # de ele terminar com sucesso. É o único serviço, além do sqlserver, com o segredo do "sa" — passado por
+  # variável de ambiente lida pelo sqlcmd (SQLCMDPASSWORD), nunca por linha de comando. Rotação da credencial
+  # administrativa: troque SQL_ADMIN_PASSWORD no .env e rode "docker compose up -d" (ver
+  # docs/authentication-security.md).
+  sql-bootstrap:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/bootstrap/sql-bootstrap.sh"]
+    environment:
+      SQLCMDPASSWORD: ${SQL_SA_PASSWORD:?defina SQL_SA_PASSWORD no arquivo .env}
+      SQL_BOOTSTRAP_HOST: sqlserver
+      DB_NAME: almirante
+      ADMIN_USER: ${SQL_ADMIN_USER:?defina SQL_ADMIN_USER (identidade administrativa dedicada da API, nunca sa) no arquivo .env}
+      APP_USER: ${SQL_APP_USER:-almirante_user_bd}
+      APP_ADMIN_PASSWORD: ${SQL_ADMIN_PASSWORD:?defina SQL_ADMIN_PASSWORD (16+ caracteres, diferente da senha do sa) no arquivo .env}
+    volumes:
+      - type: bind
+        source: ./scripts/sql-bootstrap.sh
+        target: /bootstrap/sql-bootstrap.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./docs/sql/criar-usuario-admin-app.sql
+        target: /bootstrap/criar-usuario-admin-app.sql
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - almirante-net
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
 
   api:
     build:
@@ -45,17 +101,36 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
+      sql-bootstrap:
+        condition: service_completed_successfully
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
       # TrustServerCertificate padrão False (produção): o SQL Server do container usa certificado
       # autoassinado, então desenvolvimento local precisa definir SQL_TRUST_SERVER_CERTIFICATE=True no
       # .env (ver .env.example). Em Production, True aqui faz a API recusar iniciar
       # (SqlServerConnectionSecurityValidator) em vez de aceitar TLS sem validação de identidade.
-      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;User Id=sa;Password=${SQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      # Identidade de RUNTIME (menor privilégio): a connection string "almirante" NÃO leva usuário/senha; a
+      # API gera uma senha aleatória para DbCredentials__AppUser (só SELECT/INSERT/UPDATE; DELETE só em
+      # AuthSessions), a rotaciona e a injeta a cada conexão. Nada disso usa o "sa".
+      ConnectionStrings__almirante: Server=sqlserver,1433;Database=almirante;Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      # Identidade ADMINISTRATIVA da API (migrations, concessões à role de runtime, rotação da senha de
+      # runtime): usuário contido dedicado criado pelo serviço sql-bootstrap, sem nenhum privilégio de
+      # servidor. OBRIGATÓRIA e sem valor padrão: não existe fallback para "sa" — variável ausente derruba o
+      # "compose up", "sa" é recusado pela própria API (SqlIdentityPolicy) e privilégio além do previsto
+      # também (DbPrivilegeAuditor, sempre fatal). O segredo do "sa" (SQL_SA_PASSWORD) não entra aqui.
+      ConnectionStrings__AlmiranteAdmin: Server=sqlserver,1433;Database=almirante;User Id=${SQL_ADMIN_USER:?defina SQL_ADMIN_USER (identidade administrativa dedicada da API, nunca sa) no arquivo .env};Password=${SQL_ADMIN_PASSWORD:?defina SQL_ADMIN_PASSWORD no arquivo .env};Encrypt=True;TrustServerCertificate=${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      DbCredentials__AppUser: ${SQL_APP_USER:-almirante_user_bd}
+      DbCredentials__RotationHours: ${SQL_APP_PASSWORD_ROTATION_HOURS:-24}
       Jwt__Issuer: ${JWT_ISSUER:-Almirante.Api}
       Jwt__Audience: ${JWT_AUDIENCE:-Almirante.Frontend}
       Jwt__ActiveKeyId: ${JWT_ACTIVE_KEY_ID:-v1}
-      Jwt__Keys__v1: ${JWT_KEY_V1:?defina JWT_KEY_V1 Base64 no arquivo .env}
+      # Opcionais (não ":?"): durante uma rotação de chave (issue #50), o operador pode definir só
+      # JWT_KEY_V1 (padrão), as duas ao mesmo tempo (janela de rotação) ou só JWT_KEY_V2 (rotação
+      # concluída) mudando apenas o .env — sem editar este arquivo a cada etapa. Uma entrada não
+      # definida chega vazia e é removida antes da validação (ver Program.cs, PostConfigure<JwtOptions>);
+      # a aplicação recusa iniciar do mesmo jeito se, ao final, nenhuma chave válida sobrar.
+      Jwt__Keys__v1: ${JWT_KEY_V1:-}
+      Jwt__Keys__v2: ${JWT_KEY_V2:-}
       Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-10}
       Jwt__AbsoluteSessionDays: ${AUTH_SESSION_DAYS:-7}
       Jwt__RefreshInactivityHours: ${AUTH_REFRESH_INACTIVITY_HOURS:-24}
@@ -71,6 +146,15 @@ services:
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
       ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
       DataProtection__KeysPath: /var/lib/almirante/dataprotection
+      # Host Header: o padrão "*" aceita qualquer Host, porque este arquivo também serve
+      # desenvolvimento local (localhost, 127.0.0.1, IP da LAN) e fixar a lista quebraria isso.
+      # Em ambiente PUBLICADO em modo http, defina API_ALLOWED_HOSTS no .env com os nomes reais
+      # (ex.: "api.exemplo.com.br;localhost;127.0.0.1") — o deploy avisa no log enquanto estiver "*".
+      # No overlay TLS, compose.tls.yaml já fixa a lista a partir de TLS_PUBLIC_HOST.
+      AllowedHosts: ${API_ALLOWED_HOSTS:-*}
+      # Swagger/OpenAPI expõem o mapa completo da API (rotas, DTOs, parâmetros). Fora de Development
+      # fica desligado por padrão; ligue conscientemente com SWAGGER_ENABLED=true se precisar.
+      Swagger__Enabled: ${SWAGGER_ENABLED:-}
     networks:
       - almirante-net
     # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
@@ -78,6 +162,13 @@ services:
     # acessando a API diretamente.
     expose:
       - "8080"
+    # A API roda como usuário "app" (não-root, ver Dockerfile) e escuta em 8080, porta não
+    # privilegiada: não precisa de nenhuma capability do Linux. cap_drop ALL reduz o que um
+    # comprometimento do processo alcança; no-new-privileges impede ganho por binário setuid.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - almirante-dataprotection:/var/lib/almirante/dataprotection
     healthcheck:
@@ -100,6 +191,11 @@ services:
     # (documentação, healthchecks e workflows de deploy continuam apontando para ela).
     ports:
       - "${API_HOST_PORT:-8090}:80"
+    # Sem cap_drop aqui de propósito: o modelo master/worker do nginx precisa de CHOWN/SETUID/SETGID
+    # (e NET_BIND_SERVICE na 80) para baixar privilégio dos workers. no-new-privileges é seguro e
+    # mantém o ganho principal.
+    security_opt:
+      - no-new-privileges:true
     volumes:
       # NGINX_CONF_FILE (padrão nginx.conf) troca para nginx.tls.conf em ambientes publicados com TLS
       # real (ver compose.tls.yaml e docs/authentication-security.md); não altera o comportamento

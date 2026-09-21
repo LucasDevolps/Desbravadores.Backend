@@ -4,21 +4,21 @@ using MediatR;
 
 namespace Almirante.Api.Dtos;
 
-public sealed class LancamentoDto
+public sealed record LancamentoDto
 {
     public Guid Id { get; init; }
     public Guid? MembroId { get; init; }
     public required string MembroNome { get; init; }
     public required string Finalidade { get; init; }
     public string? Descricao { get; init; }
-    public required string Categoria { get; init; }
+    public required CategoriaLancamento Categoria { get; init; }
     public TipoFluxoLancamento TipoFluxo { get; init; }
     public decimal Valor { get; init; }
     public DateOnly Vencimento { get; init; }
-    public required string Status { get; init; }
+    public required StatusLancamento Status { get; init; }
 }
 
-public sealed class LancamentosResponse
+public sealed record LancamentosResponse
 {
     public required IReadOnlyList<LancamentoDto> Items { get; init; }
     public int Total { get; init; }
@@ -26,6 +26,8 @@ public sealed class LancamentosResponse
     public int PageSize { get; init; }
     public int TotalPages { get; init; }
 }
+
+public sealed record GetLancamentoQuery(Guid Id) : IRequest<LancamentoDto?>;
 
 public sealed record ListLancamentosQuery(int Page, int PageSize, string? Search, string? Status,
     string? Finalidade, DateOnly? Vencimento) : IRequest<LancamentosResponse>;
@@ -43,14 +45,14 @@ public sealed class RegistrarLancamentoRequest : IRequest<RegistrarLancamentoRes
     public Guid? MembroId { get; set; }
     public required string Finalidade { get; set; }
     public string? Descricao { get; set; }
-    public required string Categoria { get; set; }
+    public required CategoriaLancamento Categoria { get; set; }
     public TipoFluxoLancamento TipoFluxo { get; set; }
     public decimal Valor { get; set; }
     public DateOnly Vencimento { get; set; }
     public bool AplicarATodosOsMembros { get; set; }
 }
 
-public sealed class LancamentoGeralResponse
+public sealed record LancamentoGeralResponse
 {
     public Guid OperacaoId { get; init; }
     public int UsuariosProcessados { get; init; }
@@ -66,11 +68,11 @@ public sealed class UpdateLancamentoRequest : IRequest<LancamentoDto?>
     [JsonIgnore] public Guid UsuarioResponsavelId { get; set; }
     public string? Finalidade { get; set; }
     public string? Descricao { get; set; }
-    public string? Categoria { get; set; }
+    public CategoriaLancamento? Categoria { get; set; }
     public TipoFluxoLancamento? TipoFluxo { get; set; }
     public decimal? Valor { get; set; }
     public DateOnly? Vencimento { get; set; }
-    public string? Status { get; set; }
+    public StatusLancamento? Status { get; set; }
 }
 
 public sealed class DeleteLancamentoRequest : IRequest<bool>

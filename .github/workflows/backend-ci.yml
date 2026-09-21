@@ -2,34 +2,128 @@ name: Backend CI
 
 on:
   push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+    branches: [main, develop]
   pull_request:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+    branches: [main, develop]
+
+# Checks obrigatórios não usam paths: até uma alteração só em SQL/nginx/docs recebe resultado.
+# Código de PR só roda em máquinas descartáveis do GitHub, sem segredos/volumes de deploy.
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
-    # Pinado em Windows: agora também existe um runner self-hosted Linux (Pop!_OS)
-    # para deploy, e "runs-on: self-hosted" sozinho poderia cair nele.
-    runs-on: [self-hosted, Windows]
-
+    runs-on: windows-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout do commit em revisão
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-      # actions/setup-dotnet tries to install the SDK under C:\Program Files\dotnet,
-      # which the runner account can't write to. The .NET 10 SDK is already installed
-      # on this self-hosted runner, so we use it directly instead.
+      - name: Instalar .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Restore
         run: dotnet restore backend/Almirante.slnx
 
       - name: Build
         run: dotnet build backend/Almirante.slnx --configuration Release --no-restore
 
-      - name: Test
-        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
+      - name: Testes sem dependências externas
+        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --filter "Category!=RequiresDocker&Category!=RequiresSqlServer" --logger "trx;LogFileName=unit.trx" --results-directory TestResults
+
+      - name: Resultados vinculados ao commit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: TestResults/*.trx
+          if-no-files-found: error
+          retention-days: 14
+
+  sqlserver-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout do commit em revisão
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Instalar .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Senha aleatória por execução; SQL exclusivo deste runner, porta só em loopback,
+      # sem volumes persistentes e sem usar qualquer credencial do ambiente publicado.
+      - name: Iniciar SQL Server descartável
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MSSQL_SA_PASSWORD="$(openssl rand -hex 24)Aa1!"
+          echo "::add-mask::$MSSQL_SA_PASSWORD"
+          docker run --detach --name almirante-ci-sql --publish 127.0.0.1::1433 \
+            --env ACCEPT_EULA=Y --env MSSQL_PID=Developer --env MSSQL_SA_PASSWORD \
+            mcr.microsoft.com/mssql/server:2022-latest
+          port=$(docker port almirante-ci-sql 1433/tcp | cut -d: -f2)
+          echo "ALMIRANTE_TEST_SQLSERVER=Server=127.0.0.1,$port;User ID=sa;Password=$MSSQL_SA_PASSWORD;Encrypt=True;TrustServerCertificate=True" >> "$GITHUB_ENV"
+          for attempt in $(seq 1 60); do
+            if docker exec almirante-ci-sql bash -c 'SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -Q "SELECT 1"' > /dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "SQL Server não ficou pronto dentro do prazo." >&2
+          exit 1
+
+      - name: Testes SQL Server (inclui concorrência, migrations e privilégios)
+        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --filter "Category=RequiresSqlServer" --logger "trx;LogFileName=sqlserver.trx" --results-directory TestResults
+
+      - name: Resultados vinculados ao commit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sqlserver-${{ github.event.pull_request.head.sha || github.sha }}
+          path: TestResults/*.trx
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remover SQL Server descartável
+        if: always()
+        run: docker rm --force almirante-ci-sql
+
+  deploy-scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout do commit em revisão
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Testar leitura e preflight do deploy
+        run: bash scripts/tests/deploy-config.test.sh
+
+      - name: Testar política dos workflows
+        run: bash scripts/tests/workflows.test.sh
+
+      # Separação de identidades SQL: a API nunca recebe o segredo do sa, não há fallback para sa e o bootstrap
+      # (único a usar o sa, fora da API) não põe senha na linha de comando. Sem subir nada.
+      - name: Testar bootstrap SQL e separação de identidades no Compose
+        run: |
+          bash scripts/tests/sql-bootstrap.test.sh
+          bash scripts/tests/compose-sql-identities.test.sh
+
+      - name: Testar nginx HTTP, HTTPS e rate limiting em containers descartáveis
+        run: bash scripts/tests/nginx.test.sh

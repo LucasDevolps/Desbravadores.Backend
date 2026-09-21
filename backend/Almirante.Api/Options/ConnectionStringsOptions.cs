@@ -8,4 +8,7 @@ public sealed class ConnectionStringsOptions
     public const string SectionName = "ConnectionStrings";
 
     public string? Almirante { get; init; }
+
+    // Conexão administrativa (migrations + rotação de senha do usuário da aplicação); ver DbCredentialOptions.
+    public string? AlmiranteAdmin { get; init; }
 }

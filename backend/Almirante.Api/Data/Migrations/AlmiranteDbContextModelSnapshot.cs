@@ -120,10 +120,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("AtualizadoPorUsuarioId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Categoria")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                    b.Property<int>("Categoria")
+                        .HasColumnType("int");
 
                     b.Property<DateTime?>("DataAtualizacao")
                         .HasColumnType("datetime2");
@@ -146,15 +144,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
 
-                    b.Property<string>("TipoFluxo")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("TipoFluxo")
+                        .HasColumnType("int");
 
                     b.Property<decimal>("Valor")
                         .HasColumnType("decimal(18,2)");
@@ -178,7 +172,14 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("Vencimento");
 
-                    b.ToTable("Lancamentos", (string)null);
+                    b.ToTable("Lancamentos", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
+
+                            t.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+                        });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
@@ -189,10 +190,8 @@ namespace Almirante.Api.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Categoria")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                    b.Property<int>("Categoria")
+                        .HasColumnType("int");
 
                     b.Property<DateTime>("DataCriacaoOriginal")
                         .HasColumnType("datetime2");
@@ -224,15 +223,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
 
-                    b.Property<string>("TipoFluxo")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("TipoFluxo")
+                        .HasColumnType("int");
 
                     b.Property<Guid>("UsuarioResponsavelId")
                         .HasColumnType("uniqueidentifier");
@@ -249,7 +244,14 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("UsuarioResponsavelId");
 
-                    b.ToTable("lancamentos_deletados", (string)null);
+                    b.ToTable("lancamentos_deletados", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_lancamentos_deletados_Categoria", "[Categoria] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_lancamentos_deletados_Status", "[Status] IN (0, 1, 2)");
+
+                            t.HasCheckConstraint("CK_lancamentos_deletados_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+                        });
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.LancamentoOperacao", b =>
@@ -258,10 +260,8 @@ namespace Almirante.Api.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Categoria")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                    b.Property<int>("Categoria")
+                        .HasColumnType("int");
 
                     b.Property<DateTime>("CriadoEmUtc")
                         .HasColumnType("datetime2");
@@ -291,10 +291,8 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<string>("TipoFluxo")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("TipoFluxo")
+                        .HasColumnType("int");
 
                     b.Property<int>("UsuariosProcessados")
                         .HasColumnType("int");
@@ -312,7 +310,12 @@ namespace Almirante.Api.Data.Migrations
                     b.HasIndex("IdempotencyKey")
                         .IsUnique();
 
-                    b.ToTable("LancamentosOperacoes", (string)null);
+                    b.ToTable("LancamentosOperacoes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_LancamentosOperacoes_Categoria", "[Categoria] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_LancamentosOperacoes_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+                        });
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
@@ -397,6 +400,7 @@ namespace Almirante.Api.Data.Migrations
                         .HasColumnType("nvarchar(200)");
 
                     b.Property<long>("SecurityVersion")
+                        .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
                     b.Property<string>("SenhaHash")

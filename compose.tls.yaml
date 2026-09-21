@@ -17,10 +17,27 @@
 # .env; os mapeamentos de porta dos dois arquivos se somam (Compose não substitui a lista), então
 # manter o padrão 8090 aqui só deixaria as duas portas redirecionando, sem nenhum problema de
 # segurança, mas exigindo abrir as duas no firewall/roteador à toa.
+#
+# HTTPS pública só em 443 (fixo, sem variável de porta alternativa): o redirecionamento 80->443 do
+# nginx.tls.conf sempre aponta para a porta padrão do esquema (443 implícito em "https://"), então
+# publicar HTTPS em outra porta aqui produziria um redirect para o host sem a porta certa. Se 443 já
+# estiver ocupada neste host, este overlay não é utilizável sem uma solução de infraestrutura
+# separada (ex.: outro IP, ou um balanceador na frente que já resolva isso) — não introduza aqui um
+# mecanismo próprio de porta customizada só para contornar isso.
 services:
   nginx:
     ports:
-      - "${TLS_HTTPS_HOST_PORT:-443}:443"
+      - "443:443"
+    # Healthcheck próprio: com nginx.tls.conf, http://127.0.0.1/health (herdado de compose.yaml)
+    # cairia no redirect 308 para HTTPS, e o certificado (emitido para o domínio público) falharia
+    # a verificação de identidade contra "127.0.0.1". /internal-health é servido em texto plano,
+    # só para 127.0.0.1 (nginx/nginx.tls.conf), sem depender do redirecionamento.
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/internal-health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     volumes:
       # read_only + bind (não volume nomeado): o certificado/chave vivem fora do Git e fora de
       # qualquer volume gerenciado pelo Docker, no caminho que o operador do ambiente escolher via
@@ -38,3 +55,31 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # Host aceito/canônico (gerado por scripts/deploy-config.sh gerar-host-tls a partir de
+      # TLS_PUBLIC_HOST; o workflow de deploy já faz isso). Sem o arquivo o Compose recusa subir.
+      - type: bind
+        source: ./nginx/generated/tls-host.conf
+        target: /etc/nginx/almirante-host/host.conf
+        read_only: true
+        bind:
+          create_host_path: false
+  api:
+    environment:
+      # A API só recebe o Host canônico (o nginx o fixa); qualquer outro é rejeitado (400) pelo
+      # HostFiltering. localhost/127.0.0.1 continuam aceitos para o healthcheck interno do container.
+      AllowedHosts: "${TLS_PUBLIC_HOST:?defina TLS_PUBLIC_HOST (nome DNS do certificado) no arquivo .env deste ambiente};localhost;127.0.0.1"
+      # Ambiente publicado usa a mesma política TLS do SQL Server de Production (Encrypt=True e
+      # TrustServerCertificate=False). O padrão aqui é "true" (fecha por default): este overlay
+      # existe para ambiente publicado de verdade, e um default permissivo fazia um
+      # "Development publicado" aceitar TrustServerCertificate=True em silêncio.
+      #
+      # ORDEM IMPORTA: instale/valide o certificado do SQL Server nos clientes (SAN igual ao nome
+      # usado na connection string) e deixe SQL_TRUST_SERVER_CERTIFICATE=False ANTES do primeiro
+      # deploy com este overlay. Se ainda não instalou, a API recusa iniciar com uma mensagem clara
+      # — comportamento desejado. Para adiar conscientemente, defina
+      # SQL_REQUIRE_TRUSTED_CERTIFICATE=false no .env deste ambiente.
+      Security__RequireTrustedSqlServerCertificate: ${SQL_REQUIRE_TRUSTED_CERTIFICATE:-true}
+      # HSTS também em Development publicado (a API só o emite em HTTPS e fora de localhost).
+      Hsts__EnabledInDevelopment: "true"
+      # Ambiente publicado não serve Swagger/OpenAPI, mesmo rodando como Development.
+      Swagger__Enabled: ${SWAGGER_ENABLED:-false}
