@@ -124,5 +124,12 @@ public sealed class ListEventosQueryValidator : AbstractValidator<ListEventosQue
         RuleFor(x => x).Must(x => x.DataInicial!.Value <= x.DataFinal!.Value)
             .WithName("dataInicial").WithMessage("dataInicial não pode ser posterior a dataFinal.")
             .When(x => x.DataInicial.HasValue && x.DataFinal.HasValue);
+
+        // A listagem não é paginada: o período limita o volume de eventos, participantes e lançamentos devolvidos.
+        RuleFor(x => x).Must(x => x.DataFinal!.Value.DayNumber - x.DataInicial!.Value.DayNumber < PeriodoMaximoDias)
+            .WithName("dataFinal").WithMessage($"O período consultado não pode ultrapassar {PeriodoMaximoDias} dias.")
+            .When(x => x.DataInicial.HasValue && x.DataFinal.HasValue && x.DataInicial.Value <= x.DataFinal.Value);
     }
+
+    public const int PeriodoMaximoDias = 366;
 }

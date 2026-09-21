@@ -89,7 +89,7 @@ public sealed class LancamentosService(
 
         if (entity.EventoId is { } eventoId && statusMudou && db.Database.IsRelational())
         {
-            await SalvarTocandoEventoAsync(eventoId, agora, ct);
+            await SalvarTocandoEventoAsync(eventoId, entity.Id, agora, ct);
         }
         else
         {
@@ -102,7 +102,7 @@ public sealed class LancamentosService(
     // A mudança de status de um lançamento de evento altera a versão (rowversion) do cadastro: um PUT/DELETE do
     // evento feito com a versão anterior ao pagamento recebe 409 em vez de sobrescrever a situação financeira.
     // O evento é tocado ANTES do lançamento, a mesma ordem de locks de EventosService (evita deadlock).
-    private async Task SalvarTocandoEventoAsync(Guid eventoId, DateTime agora, CancellationToken ct)
+    private async Task SalvarTocandoEventoAsync(Guid eventoId, Guid lancamentoId, DateTime agora, CancellationToken ct)
     {
         var strategy = db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -114,6 +114,14 @@ public sealed class LancamentosService(
             {
                 // O evento foi excluído (ou desativado) entre a leitura do lançamento e o lock: nada de gravar status
                 // numa cobrança que já foi desativada junto com o cadastro. O rollback desfaz qualquer coisa pendente.
+                db.ChangeTracker.Clear();
+                throw ApiProblemException.NotFound("Lançamento não encontrado.");
+            }
+
+            // Com o evento travado, um PUT concorrente que removeu este participante já foi confirmado: a entidade
+            // em memória pode estar obsoleta, então o Ativo é relido do banco antes de gravar o status.
+            if (!await db.Lancamentos.AsNoTracking().AnyAsync(l => l.Id == lancamentoId && l.Ativo, ct))
+            {
                 db.ChangeTracker.Clear();
                 throw ApiProblemException.NotFound("Lançamento não encontrado.");
             }

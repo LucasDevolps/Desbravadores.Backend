@@ -19,7 +19,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [HttpGet]
     [EndpointSummary("Lista os cadastros de eventos ativos no período.")]
     [EndpointDescription("Sem parâmetros: do primeiro dia do mês atual menos 30 dias até o último dia do mês atual mais 30 dias (UTC). " +
-        "Com filtro, dataInicial e dataFinal (yyyy-MM-dd, inclusivas) são obrigatórias juntas e podem cobrir períodos históricos. " +
+        "Com filtro, dataInicial e dataFinal (yyyy-MM-dd, inclusivas) são obrigatórias juntas e podem cobrir períodos históricos, com no máximo 366 dias. " +
         "Lista vazia devolve items: [] (nunca 404). dataMinimaCadastro é o primeiro dia do mês corrente (UTC).")]
     [ProducesResponseType<EventosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

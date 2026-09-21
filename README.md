@@ -431,7 +431,8 @@ e `EventoId`; nada disso (nem responsável, IP, total) vem do cliente.
 **Datas.** `dataEvento` mínima = primeiro dia do **mês atual na referência UTC** (`TimeProvider`,
 independente do fuso da máquina) — não "hoje". O `GET` sem filtro usa
 `[1º dia do mês − 30 dias, último dia do mês + 30 dias]` (setembro/2026: 02/08 a 30/10); com filtro
-exige as duas datas (`dataInicial <= dataFinal`) e aceita períodos históricos. Lista vazia é `items: []`.
+exige as duas datas (`dataInicial <= dataFinal`) e aceita períodos históricos de **até 366 dias** (a listagem não é
+paginada; período maior devolve `400`). Lista vazia é `items: []`.
 
 **Idempotência.** Chave UUID + usuário autenticado (tabela `eventos_operacoes`, separada de
 `LancamentosOperacoes`). O hash usa apenas dados normalizados: data, local (trim + espaços
@@ -457,7 +458,8 @@ lançamentos (mesma ordem de locks nos dois caminhos, sem deadlock).
 novos ganham lançamento pendente e removidos são desativados (participação + lançamento, com auditoria
 do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. Com algum lançamento
 `Pago`/`Atrasado`: `409` para valor, participantes ou data (pagamentos nunca voltam a pendente nem
-geram estorno); só o **local** pode ser corrigido. Data/local não mudam por PUT isolado quando o passeio
+geram estorno); só o **local** pode ser corrigido (a descrição de todos os lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo
+local; valor, vencimento e status do pagamento não mudam). Data/local não mudam por PUT isolado quando o passeio
 tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.
 
 **DELETE** `{ "motivo": "...", "versao": "..." }`: exclusão lógica (`Ativo = false`) do cadastro, das
@@ -520,10 +522,21 @@ audiência, algoritmo, expiração, tamanho), matriz RBAC (401/403/sucesso por c
 lockout, forwarded headers, segredos/política de senha, cabeçalhos de segurança e descoberta das
 migrations.
 
-Os testes de eventos (`EventosRegrasTests`, `EventosApiTests`) rodam sem banco; `EventosSqlServerTests`,
+Os testes de eventos (`EventosRegrasTests`, `EventosApiTests`) e `ModelBindingErrorsTests` (sanitização dos erros `400` de
+model binding, sem nomes de tipos CLR) rodam sem banco; `EventosSqlServerTests`,
 `EventosMigrationTests` e `ApiProcessEventosTests` (`Category=RequiresSqlServer`) exigem `ALMIRANTE_TEST_SQLSERVER`
 e provam transação/rollback, `rowversion`, índice único filtrado, triggers, `SESSION_CONTEXT`, concorrência,
 Up/Down da migration e o fluxo no processo real da API com a identidade de runtime de menor privilégio.
+A corrida entre mudança de status de um lançamento e o PUT que remove o participante também é coberta: o status nunca
+é gravado em lançamento já desativado (o `Ativo` é relido do banco depois do lock do evento).
+
+Sem `ALMIRANTE_TEST_SQLSERVER`, todos os testes `RequiresSqlServer` falham de propósito com `Defina ALMIRANTE_TEST_SQLSERVER`
+(no `dotnet test` puro isso aparece como ~145 falhas). Para rodar localmente sem tocar na instância do Windows, use um SQL Server
+descartável em contêiner e a conexão `sa` no formato do CI:
+
+```bash
+ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx
+```
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
 lockout concorrente, corrida login/reset, modelo de identidades SQL sem `sa`, rotação de senha com pools,

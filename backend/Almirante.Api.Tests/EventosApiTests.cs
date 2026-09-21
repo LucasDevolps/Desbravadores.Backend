@@ -204,6 +204,19 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
     }
 
     [Fact]
+    public async Task Get_PeriodoNoLimiteDe366Dias_Retorna200_EAcimaDele400()
+    {
+        using var client = await ClienteAsync();
+        // 2026-01-01 até 2027-01-01 = 366 dias de diferença (ano com 365 dias + 1): limite aceito
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Eventos?dataInicial=2026-01-01&dataFinal=2027-01-01")).StatusCode);
+
+        var acima = await client.GetAsync("/api/Eventos?dataInicial=2026-01-01&dataFinal=2027-01-02");
+        Assert.Equal(HttpStatusCode.BadRequest, acima.StatusCode);
+        Assert.Contains("366", await acima.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/Eventos?dataInicial=2000-01-01&dataFinal=2100-12-31")).StatusCode);
+    }
+
+    [Fact]
     public async Task Get_PorIdInexistente_Retorna404()
     {
         using var client = await ClienteAsync();

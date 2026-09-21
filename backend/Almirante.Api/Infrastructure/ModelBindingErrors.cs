@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -8,7 +9,7 @@ namespace Almirante.Api.Infrastructure;
 // convertem ("The JSON value could not be converted to System.Nullable`1[System.Decimal]") revela nomes de tipos
 // CLR e namespaces da aplicação a qualquer cliente. Mantém o nome do campo e mensagens próprias da API (validators
 // e conversores); troca só o que expõe tipos internos por um texto genérico.
-public static class ModelBindingErrors
+public static partial class ModelBindingErrors
 {
     private const string MensagemGenerica = "O valor informado é inválido ou está em formato incorreto para este campo.";
 
@@ -37,9 +38,13 @@ public static class ModelBindingErrors
         }
 
         var revelaTipos = mensagem.Contains("could not be converted", StringComparison.OrdinalIgnoreCase)
-            || mensagem.Contains("System.", StringComparison.Ordinal)
-            || mensagem.Contains("Almirante.", StringComparison.Ordinal)
-            || mensagem.Contains("Exception", StringComparison.Ordinal);
+            || NomeDeTipoClr().IsMatch(mensagem);
         return revelaTipos ? MensagemGenerica : mensagem;
     }
+
+    // Nome qualificado de tipo CLR (System.Nullable`1[System.Decimal], Almirante.Api.Dtos.X, Microsoft.…) ou de
+    // exceção (FooException). Casa a forma do vazamento, não prefixos soltos, então frases da API como
+    // "membros inválidos." passam intactas.
+    [GeneratedRegex(@"\b[A-Za-z_]\w*(\.[A-Za-z_]\w*)*\.[A-Z]\w*(`\d+)?|\b\w+Exception\b")]
+    private static partial Regex NomeDeTipoClr();
 }

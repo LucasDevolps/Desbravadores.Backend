@@ -771,8 +771,8 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var lanc = Assert.Single(await LancamentosDe(dto.Id));
         Assert.Equal((StatusLancamento.Pago, 20m), (lanc.Status, lanc.Valor));
-        // o lançamento pago não é tocado pela correção de local (descrição original preservada)
-        Assert.Equal($"Evento - Parque Ibirapuera - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
+        // valor e status do pagamento não são tocados, mas a descrição acompanha o local corrigido
+        Assert.Equal($"Evento - Parque Ibirapuera (corrigido) - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
     }
 
     [Fact]
@@ -1285,4 +1285,59 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         Assert.Equal(1, await TestHelpers.WithDbAsync(factory, db => db.LancamentosDeletados.CountAsync(d => d.Motivo == "remoção")));
     }
+    [Fact]
+    public async Task Put_CorrigirSoOLocal_AtualizaDescricaoDePagosEPendentes_SemTocarValorNemStatus()
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m);
+        var pago = dto.Lancamentos.First(l => l.MembroId == m[0]).Id;
+        await PagarAsync(pago);
+        dto = await ObterAsync(dto.Id);
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { m[0], m[1] }, local: "Parque Novo"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var esperada = $"Evento - Parque Novo - {dto.DataEvento:dd/MM/yyyy}";
+        var lancamentos = await LancamentosDe(dto.Id);
+        Assert.All(lancamentos, l => Assert.Equal(esperada, l.Descricao));
+        Assert.All(lancamentos, l => Assert.Equal(dto.ValorPorMembro, l.Valor));
+        Assert.Equal(StatusLancamento.Pago, lancamentos.Single(l => l.Id == pago).Status);
+        Assert.Equal(StatusLancamento.Pendente, lancamentos.Single(l => l.Id != pago).Status);
+    }
+
+    [Fact]
+    public async Task Concorrencia_PagamentoEPutQueRemoveOParticipante_NuncaGravaStatusEmLancamentoDesativado()
+    {
+        for (var rodada = 0; rodada < 8; rodada++)
+        {
+            var m = await MembrosAsync(2);
+            var dto = await CriarAsync(m);
+            var removido = dto.Lancamentos.Single(l => l.MembroId == m[1]).Id;
+
+            var pagar = Client.PutAsJsonAsync($"/api/Lancamentos/{removido}", new { status = "Pago" });
+            var remover = EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m[0], motivo: "corrida"));
+            await Task.WhenAll(pagar, remover);
+
+            var pagou = (await pagar).StatusCode;
+            var removeu = (await remover).StatusCode;
+            Assert.DoesNotContain(HttpStatusCode.InternalServerError, new[] { pagou, removeu });
+
+            var lancamento = (await LancamentosDe(dto.Id)).Single(l => l.Id == removido);
+            if (removeu == HttpStatusCode.OK)
+            {
+                // remoção venceu: a cobrança está inativa e o pagamento não pode ter sido gravado nela
+                Assert.False(lancamento.Ativo);
+                Assert.Equal(StatusLancamento.Pendente, lancamento.Status);
+                Assert.Equal(HttpStatusCode.NotFound, pagou);
+            }
+            else
+            {
+                // pagamento venceu: a versão mudou e a remoção foi recusada (409); a cobrança segue ativa e paga
+                Assert.Equal(HttpStatusCode.Conflict, removeu);
+                Assert.True(lancamento.Ativo);
+                Assert.Equal(StatusLancamento.Pago, lancamento.Status);
+            }
+        }
+    }
+
 }

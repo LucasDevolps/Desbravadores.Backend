@@ -229,7 +229,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 // (1) valida a versão e trava o cadastro; a partir daqui pagamentos/versão não mudam até o commit.
                 await TravarCadastroAsync(id, versao, request.UsuarioResponsavelId, agora, ct);
                 var evento = await db.Eventos.Include(e => e.Membros.Where(m => m.Ativo)).SingleAsync(e => e.Id == id, ct);
-                var participantes = evento.Membros.Where(m => m.Ativo).ToList();
+                var participantes = evento.Membros.ToList(); // o Include já traz só os ativos
                 var lancamentos = await db.Lancamentos.Where(l => l.EventoId == id && l.Ativo).ToListAsync(ct);
 
                 var atuais = participantes.Select(p => p.MembroId).ToHashSet();
@@ -290,17 +290,18 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                         continue;
                     }
 
-                    // Pago/Atrasado: só chega aqui quando a alteração é apenas do local; o pagamento não é tocado.
-                    if (lancamento.Status != StatusLancamento.Pendente)
+                    // Pago/Atrasado: só chega aqui quando a alteração é apenas do local. Valor, vencimento e status
+                    // não são tocados, mas a descrição acompanha o local corrigido, como nos lançamentos pendentes.
+                    var pendente = lancamento.Status == StatusLancamento.Pendente;
+                    if (lancamento.Descricao != descricao ||
+                        (pendente && (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento)))
                     {
-                        continue;
-                    }
+                        if (pendente)
+                        {
+                            lancamento.Valor = conteudo.ValorPorMembro;
+                            lancamento.Vencimento = conteudo.DataEvento;
+                        }
 
-                    if (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento ||
-                        lancamento.Descricao != descricao)
-                    {
-                        lancamento.Valor = conteudo.ValorPorMembro;
-                        lancamento.Vencimento = conteudo.DataEvento;
                         lancamento.Descricao = descricao;
                         lancamento.DataAtualizacao = agora;
                         lancamento.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
