@@ -44,7 +44,7 @@ GET {{baseUrl}}/api/Cargos
 Authorization: Bearer {{token}}
 
 ### 6. Listar lançamentos (com paginação e filtros)
-GET {{baseUrl}}/api/Lancamentos?page=1&pageSize=10&search=guilherme&status=Pago&tipo=Mensalidade
+GET {{baseUrl}}/api/Lancamentos?page=1&pageSize=10&search=guilherme&status=Pago&finalidade=Mensalidade
 Authorization: Bearer {{token}}
 
 ### 7. Registrar lançamento individual
@@ -95,3 +95,25 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 { "motivo": "Correção de cadastro" }
+
+### 11. Consultar lançamento (use também a URL do header Location retornado pelo POST)
+GET {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+
+### 12. Atualizar usando códigos: Evento, Pago e Saída
+PUT {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "categoria": 0,
+  "status": 1,
+  "tipoFluxo": 1
+}
+
+### 13. Enum inválido: retorna 400
+PUT {{baseUrl}}/api/Lancamentos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "status": 3 }

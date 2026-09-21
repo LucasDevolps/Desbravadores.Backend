@@ -49,12 +49,24 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         if (verified == PasswordVerificationResult.SuccessRehashNeeded)
             user.SenhaHash = passwordHasher.HashPassword(user, senha);
 
+        // O UPDATE de Usuarios é sempre emitido e filtrado por SecurityVersion (token de concorrência).
+        // Se um reset de senha concluiu depois de lermos o usuário, o UPDATE não casa nenhuma linha, o
+        // SaveChanges inteiro (sessão + refresh + rehash) é revertido e o login falha: nenhuma sessão
+        // baseada na senha anterior é persistida, nem o hash antigo é restaurado por um rehash.
+        db.Entry(user).Property(x => x.SecurityVersion).IsModified = true;
+
         var session = new AuthSession { Id = Guid.NewGuid(), UsuarioId = user.Id, CreatedAtUtc = now,
             LastRenewedAtUtc = now, AbsoluteExpiresAtUtc = now.AddDays(_options.AbsoluteSessionDays), SecurityVersion = user.SecurityVersion };
         var raw = CreateRefreshToken();
         var refresh = NewRefresh(session.Id, raw, now, session.AbsoluteExpiresAtUtc);
         db.AddRange(session, refresh);
-        await db.SaveChangesAsync(ct);
+        try { await db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Credenciais invalidadas por um reset concorrente: não repete a autenticação.
+            db.ChangeTracker.Clear();
+            return null;
+        }
         return Issue(user.Id, user.Cargo.Role, session, raw, refresh.ExpiresAtUtc);
     }
 

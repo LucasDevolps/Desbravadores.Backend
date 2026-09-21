@@ -41,7 +41,7 @@ public class SqlServerConnectionSecurityTests
     {
         const string senha = "SegredoSuperSecreto123";
         var falhas = SqlServerConnectionSecurityValidator.Validate(
-            $"Server=host;Database=almirante;User Id=sa;Password={senha};Encrypt=True;TrustServerCertificate=True", isProduction: true).ToList();
+            $"Server=host;Database=almirante;User Id=app_user;Password={senha};Encrypt=True;TrustServerCertificate=True", isProduction: true).ToList();
 
         Assert.Single(falhas);
         Assert.Contains("TrustServerCertificate", falhas[0]);
@@ -53,7 +53,7 @@ public class SqlServerConnectionSecurityTests
     {
         const string senha = "OutroSegredo456";
         var falhas = SqlServerConnectionSecurityValidator.Validate(
-            $"Server=host;Database=almirante;User Id=sa;Password={senha};Encrypt=False", isProduction: true).ToList();
+            $"Server=host;Database=almirante;User Id=app_user;Password={senha};Encrypt=False", isProduction: true).ToList();
 
         Assert.Single(falhas);
         Assert.Contains("Encrypt", falhas[0]);

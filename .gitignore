@@ -77,3 +77,6 @@ graphify-out/
 *.crt
 secrets.json
 appsettings.*.local.json
+
+# Config do nginx gerada no deploy a partir de TLS_PUBLIC_HOST (scripts/deploy-config.sh)
+nginx/generated/

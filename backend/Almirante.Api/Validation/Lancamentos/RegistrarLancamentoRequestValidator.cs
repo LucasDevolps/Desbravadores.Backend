@@ -6,7 +6,8 @@ public sealed class RegistrarLancamentoRequestValidator : AbstractValidator<Regi
     public RegistrarLancamentoRequestValidator(TimeProvider clock)
     {
         RuleFor(x => x.Finalidade).LancamentoFinalidadeValida();
-        RuleFor(x => x.Categoria).LancamentoCategoriaValida();
+        RuleFor(x => x.Categoria).IsInEnum();
+        RuleFor(x => x.TipoFluxo).IsInEnum();
         RuleFor(x => x.Valor).LancamentoValorValido();
         RuleFor(x => x.Vencimento).NotEmpty().WithMessage("Vencimento é obrigatório.")
             // A API persiste/audita em UTC. Usar a mesma referência aqui evita que "hoje"
@@ -17,6 +18,7 @@ public sealed class RegistrarLancamentoRequestValidator : AbstractValidator<Regi
             .WithMessage("membroId não pode ser informado quando aplicarATodosOsMembros é true.");
         RuleFor(x => x.MembroId).NotNull().When(x => !x.AplicarATodosOsMembros)
             .WithMessage("membroId é obrigatório quando aplicarATodosOsMembros é false.");
+        RuleFor(x => x.IdempotencyKey).MaximumLength(100);
         RuleFor(x => x.IdempotencyKey).Must(x => !string.IsNullOrWhiteSpace(x)).When(x => x.AplicarATodosOsMembros)
             .WithMessage("Informe o header Idempotency-Key ao aplicar a todos os membros.");
     }

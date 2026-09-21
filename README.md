@@ -23,7 +23,7 @@ O backend está em fase de **MVP funcional** e possui:
 - Nginx como reverse proxy no Docker Compose, com rate limit no login e encaminhamento do IP real do cliente;
 - execução local com Docker Compose ou .NET Aspire;
 - testes de integração da autenticação, dos lançamentos e do encaminhamento de IP real;
-- integração contínua com GitHub Actions em runner self-hosted.
+- integração contínua com GitHub Actions em runners hospedados e descartáveis.
 
 ## Tecnologias
 
@@ -76,7 +76,8 @@ cp .env.example .env
 
 Altere no `.env`, no mínimo, os valores de:
 
-- `SQL_SA_PASSWORD`;
+- `SQL_SA_PASSWORD` (só o SQL Server e o bootstrap a conhecem; a API nunca a recebe);
+- `SQL_ADMIN_USER` e `SQL_ADMIN_PASSWORD` (identidade administrativa dedicada da API, obrigatórias, nunca `sa`; 16+ caracteres, diferente da senha do `sa`);
 - `JWT_KEY_V1` (Base64 de no mínimo 32 bytes) e `JWT_ACTIVE_KEY_ID`;
 - `SEED_ADMIN_SENHA` (política: 12–128 caracteres, não trivial; ver [`docs/authentication-security.md`](docs/authentication-security.md)).
 
@@ -251,14 +252,15 @@ O AppHost:
 
 - inicia um SQL Server em contêiner;
 - utiliza o volume persistente `almirante-sqlserver-data`;
-- cria o banco lógico `almirante`;
-- aguarda o banco ficar disponível;
-- inicia a API e exibe os endereços dos recursos no painel do Aspire.
+- executa o contêiner `sql-bootstrap` (o mesmo `scripts/sql-bootstrap.sh` do Compose), que cria o banco `almirante` e as identidades SQL da API (administrativa dedicada e de runtime, sem privilégio de servidor);
+- aguarda o bootstrap terminar;
+- inicia a API com essas identidades (o AppHost não repassa o `sa` a ela) e exibe os endereços dos recursos no painel do Aspire.
 
 Nenhuma credencial fica versionada. Antes da primeira execução, defina os segredos locais fora do Git:
 
 ```bash
-dotnet user-secrets set "Parameters:sql-password" "<senha do SQL Server>" --project backend/Almirante.AppHost
+dotnet user-secrets set "Parameters:sql-password" "<senha do sa do SQL Server>" --project backend/Almirante.AppHost
+dotnet user-secrets set "Parameters:sql-admin-password" "<senha administrativa dedicada, 16+ caracteres>" --project backend/Almirante.AppHost
 dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project backend/Almirante.Api
 dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project backend/Almirante.Api
 dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project backend/Almirante.Api
@@ -272,7 +274,9 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 
 | Variável | Finalidade | Padrão no Compose |
 | --- | --- | --- |
-| `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server | obrigatória |
+| `SQL_SA_PASSWORD` | senha do usuário `sa` do SQL Server; usada só pelos serviços `sqlserver` e `sql-bootstrap` — a API não a recebe e recusa iniciar se receber | obrigatória |
+| `SQL_ADMIN_USER` / `SQL_ADMIN_PASSWORD` | identidade administrativa dedicada da API (usuário contido criado pelo `sql-bootstrap`: migrations, concessões e rotação da senha de runtime; sem privilégio de servidor). Sem padrão e sem fallback para `sa` | obrigatórias |
+| `SQL_APP_USER` / `SQL_APP_PASSWORD_ROTATION_HOURS` | identidade de runtime da API (senha aleatória rotacionada em memória) e intervalo da rotação | `almirante_user_bd` / `24` |
 | `SQL_HOST_PORT` | porta do SQL Server publicada no host | `14330` |
 | `SQL_TRUST_SERVER_CERTIFICATE` | aceita o certificado autoassinado do SQL Server do container; **só para desenvolvimento** — `True` em `Production` faz a API recusar iniciar (#36) | `False` |
 | `API_HOST_PORT` | porta HTTP publicada no host pelo nginx (reverse proxy da API) | `8090` |
@@ -334,6 +338,7 @@ O agregado financeiro possui um único fluxo de criação, protegido pelas roles
 | Método | Rota | Finalidade |
 |---|---|---|
 | `GET` | `/api/Lancamentos` | Lista somente lançamentos ativos, com paginação e filtros |
+| `GET` | `/api/Lancamentos/{id}` | Consulta um lançamento ativo; destino do `Location` da criação individual |
 | `POST` | `/api/Lancamentos/Registrar` | Registra para um membro ou, atomicamente, para todos |
 | `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos |
 | `DELETE` | `/api/Lancamentos/{id}` | Exclusão lógica auditada, com motivo |
@@ -358,21 +363,48 @@ nome por `Usuarios`, define novos lançamentos como `Pendente` e trabalha exclus
 por isso nome, status e moeda não fazem parte do request. `Vencimento` é `DateOnly` e não aceita
 datas passadas.
 
-No modo geral (`aplicarATodosOsMembros: true`), `Idempotency-Key` é obrigatório. Uma única
+No modo geral (`aplicarATodosOsMembros: true`), `Idempotency-Key` é obrigatório e limitado a 100 caracteres. Uma única
 operação carrega os IDs elegíveis, insere o lote com `AddRange`/`SaveChanges` atômico e registra
 `OperacaoId`. Repetir chave e payload devolve a operação existente; mudar o payload resulta em
 `409 Conflict`. O hash inclui finalidade, descrição, categoria, fluxo, valor e vencimento.
 
 `DELETE` recebe `{ "motivo": "..." }`, apenas muda `Ativo` para `false` e mantém a auditoria por
 trigger/`SESSION_CONTEXT`. Listagens projetam o nome com JOIN, sem armazená-lo em `Lancamentos` e
-sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Despesa) é a
+sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Saida) é a
 direção financeira, portanto ambos permanecem.
+
+Categoria, status e fluxo são enums com valores explícitos e `Description`:
+
+| Campo | Valores |
+|---|---|
+| `CategoriaLancamento` | `0 = Evento`, `1 = Clube` |
+| `StatusLancamento` | `0 = Pendente`, `1 = Pago`, `2 = Atrasado` |
+| `TipoFluxoLancamento` | `0 = Entrada`, `1 = Saida` (descrição: “Saída”) |
+
+O JSON continua retornando nomes textuais; criação e atualização aceitam tanto nomes quanto
+os códigos numéricos correspondentes e rejeitam valores fora do enum. `status` na listagem
+aceita nome, código ou `Todos`. Clientes que enviavam `tipoFluxo: "Despesa"` devem passar a
+usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no JSON é `Saida`.
+
+`LancamentosService` coordena consultas e alterações individuais. `LancamentoGeralService`
+cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
+contexto SQL de auditoria. `LancamentoMapping` centraliza a projeção das respostas.
 
 ## Banco de dados e migrations
 
 Migrations são aplicadas incrementalmente no startup. `UnifyLancamentosFlow` renomeia `Tipo` para
 `Finalidade`, remove `MembroNome`/`Moeda`, cria a FK restritiva para `Usuarios`, atualiza índices e
 o trigger de auditoria sem apagar o histórico de migrations.
+
+`ConvertLancamentoEnums` converte as colunas nas tabelas `Lancamentos`, `LancamentosOperacoes`
+e `lancamentos_deletados` para `int`, sem recriar tabelas nem apagar registros. Também cria
+constraints para limitar os códigos aceitos. Dados legados fora das categorias/status/fluxos
+conhecidos interrompem a migração transacionalmente para que sejam corrigidos antes de tentar
+novamente. O rollback restaura os textos anteriores, inclusive `Despesa`.
+
+O hash histórico da idempotência é mantido: uma operação antiga de saída continua sendo
+reconhecida mesmo após a mudança de nome de `Despesa` para `Saida`. Não executar versões
+antiga e nova da API simultaneamente contra o schema convertido.
 
 ## Testes
 
@@ -387,7 +419,11 @@ lockout, forwarded headers, segredos/política de senha, cabeçalhos de seguran�
 migrations.
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
-lockout concorrente e auditoria por trigger). Cada teste cria e remove um banco `almirante_test_<guid>`:
+lockout concorrente, corrida login/reset, modelo de identidades SQL sem `sa`, rotação de senha com pools,
+privilégios e auditoria por trigger, startup real da API). Cada teste cria e remove bancos exclusivos e os
+usuários/logins de teste. A conexão de `ALMIRANTE_TEST_SQLSERVER` é do *harness* (cria e remove o ambiente, como o
+bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o CI usa um contêiner com `sa` descartável).
+A API sob teste nunca usa essa conexão. Exemplo com Windows Auth:
 
 ```bash
 ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx --filter Category=RequiresSqlServer
@@ -427,21 +463,20 @@ done
 
 ## Integração contínua
 
-O workflow `.github/workflows/backend-ci.yml` é executado em um runner **self-hosted** quando há:
+O workflow `.github/workflows/backend-ci.yml` roda em pushes e PRs para `main` e `develop`,
+sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo GitHub:
 
-- push para `main` com alterações em `backend/**` ou no próprio workflow;
-- pull request direcionada à `main` com alterações nesses mesmos caminhos.
+- `build-and-test`: instala .NET 10, compila a solução no Windows e executa os testes sem
+  dependências externas.
+- `sqlserver-integration`: executa **todos** os testes `Category=RequiresSqlServer` em Linux,
+  com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
+- `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
+  com certificados de teste e containers descartáveis.
 
-O pipeline utiliza o SDK .NET 10 já instalado no runner e executa:
-
-```bash
-dotnet restore backend/Almirante.slnx
-dotnet build backend/Almirante.slnx --configuration Release --no-restore
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --verbosity normal --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
-```
-
-A execução atual realiza validação de compilação e testes. O filtro exclui os testes que exigem
-Docker ou SQL Server real, indisponíveis neste runner (ver [Testes](#testes)).
+Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
+Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
+No ruleset de `main` e `develop`, configure os três jobs como checks obrigatórios antes de merge.
+Essa configuração depende das permissões administrativas do repositório; o YAML sozinho não a ativa.
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 

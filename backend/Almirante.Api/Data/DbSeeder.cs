@@ -35,7 +35,7 @@ public static class DbSeeder
     // existence check can occasionally race with SQL Server still settling right after a restart
     // and attempt CREATE DATABASE again. Retrying once, now that the database is visible, makes
     // startup idempotent instead of crashing the whole process on an unhandled SqlException.
-    private static async Task MigrateWithRetryAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
+    public static async Task MigrateWithRetryAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
     {
         try
         {
@@ -108,8 +108,8 @@ public static class DbSeeder
         db.Lancamentos.Add(new Lancamento
         {
             Id = Guid.NewGuid(), MembroId = membroId, Finalidade = LancamentoFinalidades.Mensalidade,
-            Descricao = "Mensalidade do clube", Categoria = LancamentoCategorias.Clube, Valor = 20m,
-            Vencimento = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30), Status = LancamentoStatuses.Pendente,
+            Descricao = "Mensalidade do clube", Categoria = CategoriaLancamento.Clube, Valor = 20m,
+            Vencimento = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30), Status = StatusLancamento.Pendente,
             TipoFluxo = TipoFluxoLancamento.Entrada
         });
         await db.SaveChangesAsync(cancellationToken);

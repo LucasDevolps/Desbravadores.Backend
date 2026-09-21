@@ -36,7 +36,7 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         var response = await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id,false));
         Assert.Equal(HttpStatusCode.Created,response.StatusCode);
         var dto=await response.Content.ReadFromJsonAsync<LancamentoDto>();
-        Assert.Equal("Nome confiável",dto!.MembroNome); Assert.Equal("Pendente",dto.Status); Assert.Equal(membro.Id,dto.MembroId);
+        Assert.Equal("Nome confiável",dto!.MembroNome); Assert.Equal(StatusLancamento.Pendente,dto.Status); Assert.Equal(membro.Id,dto.MembroId);
     }
 
     [Fact]

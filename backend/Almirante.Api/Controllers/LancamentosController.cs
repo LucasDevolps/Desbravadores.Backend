@@ -13,7 +13,6 @@ namespace Almirante.Api.Controllers;
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
-
     [HttpGet]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -32,11 +31,21 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         return Ok(response);
     }
 
+    [HttpGet("{id:guid}")]
+    [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<LancamentoDto>> GetById(Guid id, CancellationToken cancellationToken)
+    {
+        var lancamento = await mediator.Send(new GetLancamentoQuery(id), cancellationToken);
+        return lancamento is null ? NotFound() : Ok(lancamento);
+    }
+
     [HttpPost("Registrar")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<LancamentoGeralResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Registrar(
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         [FromBody] RegistrarLancamentoRequest request,
@@ -55,13 +64,13 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
 
         return resultado.Outcome switch
         {
-            RegistrarLancamentoOutcome.LancamentoUnicoCriado => CreatedAtAction(nameof(List), new { }, resultado.Lancamento),
+            RegistrarLancamentoOutcome.LancamentoUnicoCriado => CreatedAtAction(nameof(GetById), new { id = resultado.Lancamento!.Id }, resultado.Lancamento),
             RegistrarLancamentoOutcome.GeralCriado => Ok(resultado.Geral),
             RegistrarLancamentoOutcome.GeralReutilizado => Ok(resultado.Geral),
             RegistrarLancamentoOutcome.GeralConflitoIdempotencia => Conflict(new ProblemDetails
             {
                 Title = "Chave de idempotência já usada com dados diferentes.",
-                Detail = "O header Idempotency-Key informado já foi usado em uma operação anterior com tipo, categoria, tipo de fluxo, valor ou vencimento diferentes.",
+                Detail = "O header Idempotency-Key informado já foi usado em uma operação anterior com finalidade, descrição, categoria, tipo de fluxo, valor ou vencimento diferentes.",
                 Status = StatusCodes.Status409Conflict,
             }),
             RegistrarLancamentoOutcome.MembroNaoEncontrado => NotFound(new ProblemDetails
@@ -92,6 +101,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid id, [FromBody] DeleteLancamentoRequest request, CancellationToken cancellationToken)
