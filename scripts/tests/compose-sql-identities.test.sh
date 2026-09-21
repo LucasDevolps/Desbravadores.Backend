@@ -57,7 +57,8 @@ bloco_servico() {
 }
 
 # 1. Variáveis administrativas obrigatórias: sem elas o Compose recusa (não existe valor padrão / fallback).
-base_env > "$TMP/sem-admin.env"
+# Omite apenas o usuário: com ambas ausentes, o Compose pode reportar a senha primeiro.
+{ base_env; printf 'SQL_ADMIN_PASSWORD=%s\n' "$ADMIN_SENTINEL"; } > "$TMP/sem-admin.env"
 saida=$(compose_config "$TMP/sem-admin.env")
 if [[ $? -ne 0 && "$saida" == *"SQL_ADMIN_USER"* ]]; then ok "sem SQL_ADMIN_USER o Compose recusa (nenhum fallback para sa)"; else falha "SQL_ADMIN_USER obrigatório" "$saida"; fi
 
