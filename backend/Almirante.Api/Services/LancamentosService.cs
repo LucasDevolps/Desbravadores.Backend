@@ -1,6 +1,7 @@
 using Almirante.Api.Data;
 using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
+using Almirante.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
@@ -73,12 +74,71 @@ public sealed class LancamentosService(
             return null;
         }
 
+        // Lançamento gerado por evento: valor, vencimento, finalidade, categoria e fluxo só mudam via /api/Eventos.
+        // O status continua neste fluxo financeiro.
+        if (entity.EventoId is not null)
+        {
+            ExigirSemAlteracaoDeEvento(entity, request);
+        }
+
+        var statusMudou = request.Status.HasValue && request.Status.Value != entity.Status;
         AplicarAlteracoes(entity, request);
-        entity.DataAtualizacao = clock.GetUtcNow().UtcDateTime;
+        var agora = clock.GetUtcNow().UtcDateTime;
+        entity.DataAtualizacao = agora;
         entity.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
-        await db.SaveChangesAsync(ct);
+
+        if (entity.EventoId is { } eventoId && statusMudou && db.Database.IsRelational())
+        {
+            await SalvarTocandoEventoAsync(eventoId, agora, ct);
+        }
+        else
+        {
+            await db.SaveChangesAsync(ct);
+        }
+
         return LancamentoMapping.ToDto(entity);
     }
+
+    // A mudança de status de um lançamento de evento altera a versão (rowversion) do cadastro: um PUT/DELETE do
+    // evento feito com a versão anterior ao pagamento recebe 409 em vez de sobrescrever a situação financeira.
+    // O evento é tocado ANTES do lançamento, a mesma ordem de locks de EventosService (evita deadlock).
+    private async Task SalvarTocandoEventoAsync(Guid eventoId, DateTime agora, CancellationToken ct)
+    {
+        var strategy = db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var tocados = await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE dbo.eventos SET AtualizadoEmUtc = {agora} WHERE Id = {eventoId} AND Ativo = 1", ct);
+            if (tocados == 0)
+            {
+                // O evento foi excluído (ou desativado) entre a leitura do lançamento e o lock: nada de gravar status
+                // numa cobrança que já foi desativada junto com o cadastro. O rollback desfaz qualquer coisa pendente.
+                db.ChangeTracker.Clear();
+                throw ApiProblemException.NotFound("Lançamento não encontrado.");
+            }
+
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        });
+    }
+
+    private static void ExigirSemAlteracaoDeEvento(Lancamento entity, UpdateLancamentoRequest request)
+    {
+        var altera = (request.Finalidade is not null && request.Finalidade != entity.Finalidade)
+            || (request.Categoria.HasValue && request.Categoria.Value != entity.Categoria)
+            || (request.TipoFluxo.HasValue && request.TipoFluxo.Value != entity.TipoFluxo)
+            || (request.Valor.HasValue && request.Valor.Value != entity.Valor)
+            || (request.Vencimento.HasValue && request.Vencimento.Value != entity.Vencimento);
+        if (altera)
+        {
+            throw LancamentoDeEventoConflito();
+        }
+    }
+
+    internal static ApiProblemException LancamentoDeEventoConflito() => ApiProblemException.Conflict(
+        "Lançamento vinculado a um evento.",
+        "Valor, membro, vencimento, finalidade, categoria e exclusão de um lançamento gerado por evento devem ser feitos por meio de /api/Eventos. Apenas o status pode ser alterado aqui.");
 
     public Task<bool> DeleteAsync(DeleteLancamentoRequest request, CancellationToken ct) => exclusao.DeleteAsync(request, ct);
 
@@ -92,7 +152,7 @@ public sealed class LancamentosService(
                 .Where(c => c.ToString().ToLowerInvariant().Contains(term)).ToArray();
             query = query.Where(l => (l.Membro != null && l.Membro.Nome.ToLower().Contains(term)) ||
                 (l.Descricao != null && l.Descricao.ToLower().Contains(term)) ||
-                l.Finalidade.ToLower().Contains(term) || categorias.Contains(l.Categoria));
+                (l.Finalidade != null && l.Finalidade.ToLower().Contains(term)) || categorias.Contains(l.Categoria));
         }
 
         if (!string.IsNullOrWhiteSpace(status) && status != "Todos")

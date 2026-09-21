@@ -25,7 +25,7 @@ public sealed class LancamentoDeletado
     // Snapshot do lançamento imediatamente antes da exclusão (valores "deleted" do trigger),
     // preservado mesmo que o lançamento original venha a ser alterado depois.
     public Guid? MembroId { get; set; }
-    public required string Finalidade { get; set; }
+    public string? Finalidade { get; set; }
     public required CategoriaLancamento Categoria { get; set; }
     public required TipoFluxoLancamento TipoFluxo { get; set; }
     public decimal Valor { get; set; }
@@ -33,4 +33,5 @@ public sealed class LancamentoDeletado
     public required StatusLancamento Status { get; set; }
     public Guid? OperacaoId { get; set; }
     public DateTime DataCriacaoOriginal { get; set; }
+    public Guid? EventoId { get; set; }
 }

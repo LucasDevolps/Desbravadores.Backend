@@ -9,13 +9,15 @@ public sealed record LancamentoDto
     public Guid Id { get; init; }
     public Guid? MembroId { get; init; }
     public required string MembroNome { get; init; }
-    public required string Finalidade { get; init; }
+    public string? Finalidade { get; init; }
     public string? Descricao { get; init; }
     public required CategoriaLancamento Categoria { get; init; }
     public TipoFluxoLancamento TipoFluxo { get; init; }
     public decimal Valor { get; init; }
     public DateOnly Vencimento { get; init; }
     public required StatusLancamento Status { get; init; }
+    // Preenchido quando o lançamento foi gerado por um cadastro de evento (edição só via /api/Eventos).
+    public Guid? EventoId { get; init; }
 }
 
 public sealed record LancamentosResponse

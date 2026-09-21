@@ -72,6 +72,7 @@ public class DbCredentialManagerUnitTests
         Assert.DoesNotContain("ON SCHEMA::dbo TO", sql);
         Assert.Contains("GRANT SELECT, INSERT, UPDATE ON OBJECT::dbo.", sql);
         Assert.Contains("DENY INSERT, UPDATE, DELETE ON OBJECT::dbo.lancamentos_deletados TO [almirante_app_role]", sql);
+        Assert.Contains("DENY INSERT, UPDATE, DELETE ON OBJECT::dbo.historico_eventos TO [almirante_app_role]", sql);
         Assert.Contains("GRANT DELETE ON OBJECT::dbo.AuthSessions TO [almirante_app_role]", sql);
         Assert.DoesNotContain("db_owner", sql);
         Assert.DoesNotContain("db_datawriter", sql);
