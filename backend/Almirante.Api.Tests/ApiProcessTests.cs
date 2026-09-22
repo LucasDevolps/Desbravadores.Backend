@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using Microsoft.Data.SqlClient;
 using static Almirante.Api.Tests.SqlIdentityEnvironment;
 
@@ -160,5 +161,127 @@ public class ApiProcessSqlServerTests
         NoSecret.Assert(api.Output, senha);
         await using var verificacao = await OpenHarnessAsync(env.Database);
         Assert.Equal(0, await ScalarAsync(verificacao, "SELECT COUNT(*) FROM sys.tables"));
+    }
+}
+
+// /api/Eventos (issue #56) no binário REAL da API: Kestrel de verdade (RemoteIpAddress real, sem o cabeçalho
+// de teste), execution strategy/retry do Aspire, identidade de runtime SEM DELETE e SEM escrita direta em
+// historico_eventos. Prova que a exclusão auditada funciona só pela cadeia de propriedade do trigger.
+[Trait("Category", "RequiresSqlServer")]
+public class ApiProcessEventosTests
+{
+    [Fact]
+    public async Task Api_Real_EventosDePonta_APonta_ComIdentidadeDeRuntimeDeMenorPrivilegio()
+    {
+        await using var env = new SqlIdentityEnvironment();
+        await env.BootstrapAsync();
+        var config = ApiProcess.BaseEnvironment();
+        config["ConnectionStrings__almirante"] = env.AppCs;
+        config["ConnectionStrings__AlmiranteAdmin"] = env.AdminCs;
+        config["DbCredentials__AppUser"] = env.AppUser;
+
+        await using var api = ApiProcess.Start(config);
+        var (started, exitCode) = await api.WaitAsync(TimeSpan.FromSeconds(120));
+        Assert.True(started, $"a API deveria subir (código {exitCode}). Saída:\n{api.Output}");
+        using var client = api.CreateClient(await api.Listening);
+
+        async Task CsrfAsync()
+        {
+            var response = await client.GetAsync("/api/Auth/csrf");
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            client.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
+            client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", json.GetProperty("csrfToken").GetString());
+        }
+        await CsrfAsync();
+        var login = await client.PostAsJsonAsync("/api/Auth/login", new { email = ApiProcess.AdminEmail, senha = ApiProcess.AdminSenha });
+        login.EnsureSuccessStatusCode();
+        var token = (await login.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("token").GetProperty("accessToken").GetString()!;
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+        // membros criados pela conexão do harness (a API só conhece o seed)
+        var membros = new List<Guid>();
+        await using (var harness = await SqlIdentityEnvironment.OpenHarnessAsync(env.Database))
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                var id = Guid.NewGuid();
+                membros.Add(id);
+                await SqlIdentityEnvironment.ExecAsync(harness, $"""
+                    INSERT INTO dbo.Usuarios (Id, Nome, Email, EmailNormalizado, SenhaHash, CargoId, DataCriacao, SecurityVersion, FalhasLoginConsecutivas)
+                    SELECT TOP 1 '{id}', N'Membro real {i}', N'real{i}-{id:N}@local.dev', N'REAL{i}-{id:N}@LOCAL.DEV', N'x', Id, SYSUTCDATETIME(), 0, 0 FROM dbo.Cargos WHERE Role = N'DS'
+                    """);
+            }
+        }
+
+        async Task<HttpResponseMessage> Post(object membrosJson, string chave)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/api/Eventos")
+            {
+                Content = JsonContent.Create(EventosTestKit.Corpo(membrosJson)),
+            };
+            request.Headers.Add("Idempotency-Key", chave);
+            return await client.SendAsync(request);
+        }
+
+        // POST com GUID único e replay com array de um elemento (mesma operação): 201 e depois 200
+        var chave = Guid.NewGuid().ToString();
+        var criado = await Post(membros[0], chave);
+        Assert.Equal(System.Net.HttpStatusCode.Created, criado.StatusCode);
+        var evento = await EventosTestKit.LerAsync(criado);
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await Post(new[] { membros[0] }, chave)).StatusCode);
+
+        // POST com vários membros (outro passeio) e GET
+        var chaveVarios = Guid.NewGuid().ToString();
+        var varios = await EventosTestKit.LerAsync(await Post(new[] { membros[1], membros[2] }, chaveVarios));
+        Assert.Equal((20m, 40m), (varios.ValorPorMembro, varios.Total));
+        var lista = await client.GetFromJsonAsync<Almirante.Api.Dtos.EventosResponse>("/api/Eventos");
+        Assert.Contains(evento.Id, lista!.Items.Select(i => i.Id));
+
+        // PUT removendo um participante (motivo) e conflito de versão desatualizada
+        var put = await client.PutAsJsonAsync($"/api/Eventos/{varios.Id}",
+            EventosTestKit.Corpo(membros[1], varios.DataEvento, varios.Local, 12m, versao: varios.Versao, motivo: "removido no teste real"));
+        Assert.Equal(System.Net.HttpStatusCode.OK, put.StatusCode);
+        var editado = await EventosTestKit.LerAsync(put);
+        Assert.Equal((22m, 22m), (editado.ValorPorMembro, editado.Total));
+        Assert.Equal(System.Net.HttpStatusCode.Conflict,
+            (await client.PutAsJsonAsync($"/api/Eventos/{varios.Id}", EventosTestKit.Corpo(membros[1], versao: varios.Versao))).StatusCode);
+
+        // replay depois da edição: resultado ORIGINAL (2 participantes, valor 20, versão original), gravado na mesma transação do POST
+        var replay = await Post(new[] { membros[2], membros[1] }, chaveVarios);
+        Assert.Equal(System.Net.HttpStatusCode.OK, replay.StatusCode);
+        var replayDto = await EventosTestKit.LerAsync(replay);
+        Assert.Equal((varios.Versao, 20m, 2), (replayDto.Versao, replayDto.ValorPorMembro, replayDto.QuantidadeMembros));
+
+        // POST com eventoReferenciaId: o lock de coordenação do passeio (sp_getapplock) funciona com a identidade de menor privilégio
+        var referenciando = new HttpRequestMessage(HttpMethod.Post, "/api/Eventos")
+        {
+            Content = JsonContent.Create(EventosTestKit.Corpo(membros[2], referencia: varios.Id)),
+        };
+        referenciando.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var segundoGrupo = await client.SendAsync(referenciando);
+        Assert.Equal(System.Net.HttpStatusCode.Created, segundoGrupo.StatusCode);
+        Assert.Equal(varios.EventoGrupoId, (await EventosTestKit.LerAsync(segundoGrupo)).EventoGrupoId);
+
+        // DELETE: exclusão lógica + histórico gravado pelo trigger com o IP real da conexão
+        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{evento.Id}")
+        {
+            Content = JsonContent.Create(new { motivo = "exclusao no processo real", versao = evento.Versao }),
+        };
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, (await client.SendAsync(delete)).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, (await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{evento.Id}")
+        {
+            Content = JsonContent.Create(new { motivo = "de novo", versao = evento.Versao }),
+        })).StatusCode);
+
+        await using var verificacao = await SqlIdentityEnvironment.OpenHarnessAsync(env.Database);
+        Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.historico_eventos WHERE EventoId = '{evento.Id}' AND IpResponsavel = '127.0.0.1' AND Motivo = N'exclusao no processo real'"));
+        Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.lancamentos_deletados WHERE EventoId = '{evento.Id}' AND Finalidade IS NULL"));
+        Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.lancamentos_deletados WHERE EventoId = '{varios.Id}' AND Motivo = N'removido no teste real'"));
+
+        // a identidade de runtime só enxerga as duas identidades da aplicação e nada de "sa"
+        var logins = await SqlIdentityEnvironment.ColumnAsync(verificacao, $"SELECT DISTINCT LOWER(login_name) FROM sys.dm_exec_sessions WHERE host_process_id = {api.ProcessId} AND is_user_process = 1");
+        Assert.DoesNotContain("sa", logins);
+        NoSecret.Assert(api.Output, env.AdminPassword);
     }
 }

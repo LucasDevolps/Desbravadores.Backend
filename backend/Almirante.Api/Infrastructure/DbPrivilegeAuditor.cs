@@ -13,6 +13,9 @@ namespace Almirante.Api.Infrastructure;
 public static class DbPrivilegeAuditor
 {
     public const string AuditTable = "lancamentos_deletados";
+    // Tabelas de auditoria escritas somente por trigger (cadeia de propriedade dbo): a aplicação só lê.
+    public const string EventosAuditTable = "historico_eventos";
+    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable];
     public const string SessionsTable = "AuthSessions";
 
     private static readonly string[] ServerRoles =
@@ -75,7 +78,7 @@ public static class DbPrivilegeAuditor
         // pode ser escrita diretamente — só o trigger (cadeia de propriedade) grava nela.
         findings.AddRange(await TablesAsync(connection, "DELETE", $"t.name <> N'{SessionsTable}'", "DELETE em", cancellationToken));
         foreach (var permission in new[] { "INSERT", "UPDATE", "DELETE" })
-            findings.AddRange(await TablesAsync(connection, permission, $"t.name = N'{AuditTable}'", $"{permission} direto na tabela de auditoria", cancellationToken));
+            findings.AddRange(await TablesAsync(connection, permission, $"t.name IN ({string.Join(", ", AuditTables.Select(t => $"N'{t}'"))})", $"{permission} direto na tabela de auditoria", cancellationToken));
         foreach (var permission in new[] { "ALTER", "CONTROL", "REFERENCES", "TAKE OWNERSHIP" })
             findings.AddRange(await TablesAsync(connection, permission, "1 = 1", $"{permission} em", cancellationToken));
 
