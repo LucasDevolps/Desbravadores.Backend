@@ -49,11 +49,18 @@ public sealed class LancamentoExclusaoService(AlmiranteDbContext db, ILogger<Lan
         }
         finally
         {
-            var limpo = await sessao.LimparAsync(logger);
-            await db.Database.CloseConnectionAsync();
-            if (!limpo && conexao is not null)
+            try
             {
-                SqlConnection.ClearPool(conexao);
+                var limpo = await sessao.LimparAsync(logger);
+                if (!limpo && conexao is not null)
+                {
+                    // Marcar a conexão ainda emprestada para descarte ANTES de devolvê-la ao pool.
+                    SqlConnection.ClearPool(conexao);
+                }
+            }
+            finally
+            {
+                await db.Database.CloseConnectionAsync();
             }
         }
     }
