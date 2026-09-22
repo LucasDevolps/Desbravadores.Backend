@@ -4,6 +4,7 @@ using Almirante.Api.Data;
 using Almirante.Api.Dtos;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
@@ -12,7 +13,8 @@ namespace Almirante.Api.Tests;
 // (ex.: "Server=localhost;Trusted_Connection=True;TrustServerCertificate=True"); cada fábrica cria um
 // banco descartável almirante_test_<guid>, aplica TODAS as migrations pelo startup real e o remove
 // no Dispose. Executados no job sqlserver-integration do CI, contra um SQL Server descartável.
-public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides = null, Action<DbContextOptionsBuilder>? configureDb = null) : AlmiranteApiFactory
+public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides = null, Action<DbContextOptionsBuilder>? configureDb = null,
+    Action<SqlServerDbContextOptionsBuilder>? configureSql = null, Action<IServiceCollection>? configureServices = null) : AlmiranteApiFactory
 {
     public const string EnvironmentVariable = "ALMIRANTE_TEST_SQLSERVER";
     private readonly string _connectionString = BuildConnectionString();
@@ -68,8 +70,10 @@ public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides 
         foreach (var (key, value) in overrides ?? new Dictionary<string, string?>()) settings[key] = value;
     }
 
+    protected override void ConfigureTestServices(IServiceCollection services) => configureServices?.Invoke(services);
+
     protected override void ConfigureDatabase(IServiceCollection services) =>
-        services.AddDbContext<AlmiranteDbContext>(options => { options.UseSqlServer(_connectionString); configureDb?.Invoke(options); });
+        services.AddDbContext<AlmiranteDbContext>(options => { options.UseSqlServer(_connectionString, configureSql); configureDb?.Invoke(options); });
 
     protected override void Dispose(bool disposing)
     {

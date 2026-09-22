@@ -5,7 +5,7 @@ public sealed class Lancamento
     public Guid Id { get; set; }
     public Guid? MembroId { get; set; }
     public Usuario? Membro { get; set; }
-    public required string Finalidade { get; set; }
+    public string? Finalidade { get; set; }
     public string? Descricao { get; set; }
     public required CategoriaLancamento Categoria { get; set; }
     public decimal Valor { get; set; }
@@ -19,4 +19,8 @@ public sealed class Lancamento
     public Guid? AtualizadoPorUsuarioId { get; set; }
     public bool Ativo { get; set; } = true;
     public Guid? OperacaoId { get; set; }
+
+    // Vínculo explícito com o cadastro de evento que gerou a cobrança (null nos lançamentos avulsos).
+    // Lançamentos vinculados só mudam valor/vencimento/participante via /api/Eventos.
+    public Guid? EventoId { get; set; }
 }

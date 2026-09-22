@@ -4,6 +4,7 @@ using Almirante.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Almirante.Api.Data.Migrations
 {
     [DbContext(typeof(AlmiranteDbContext))]
-    partial class AlmiranteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260921160617_AddEventos")]
+    partial class AddEventos
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -261,9 +264,6 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<string>("RespostaJson")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<Guid>("UsuarioId")
                         .HasColumnType("uniqueidentifier");
 
@@ -274,10 +274,7 @@ namespace Almirante.Api.Data.Migrations
                     b.HasIndex("UsuarioId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.ToTable("eventos_operacoes", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_eventos_operacoes_RespostaJson", "[RespostaJson] IS NULL OR ISJSON([RespostaJson]) = 1");
-                        });
+                    b.ToTable("eventos_operacoes", (string)null);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.HistoricoEvento", b =>

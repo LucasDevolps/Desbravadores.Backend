@@ -390,6 +390,126 @@ usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no J
 cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
 contexto SQL de auditoria. `LancamentoMapping` centraliza a projeção das respostas.
 
+## Eventos
+
+`/api/Eventos` cadastra **grupos de cobrança** de passeios/eventos. Cada `POST` cria um cadastro
+(uma composição de custos + uma lista de membros) e gera **um lançamento pendente por membro**,
+reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Mesma
+política dos lançamentos (`Policies.GestaoFinanceira`: `ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401`
+sem autenticação, `403` sem permissão). Contrato completo, exemplos e códigos no Swagger.
+
+| Método | Rota | Resultado |
+|---|---|---|
+| `GET` | `/api/Eventos[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` | `200` `{ items, dataInicial, dataFinal, dataMinimaCadastro }` |
+| `GET` | `/api/Eventos/{id}` | `200` / `404` (destino do `Location`) |
+| `POST` | `/api/Eventos` (header `Idempotency-Key: <UUID>`) | `201` criado, `200` reenvio idempotente |
+| `PUT` | `/api/Eventos/{id}` | `200` com cadastro e lançamentos atualizados |
+| `DELETE` | `/api/Eventos/{id}` | `204` após exclusão lógica auditada |
+
+**Campo `membros` = `GUID | GUID[]`.** Um único GUID (`"membros": "1111…"`) e um array
+(`"membros": ["1111…", "2222…"]`) são a mesma operação: o `MembrosJsonConverter` normaliza para
+`IReadOnlyList<Guid>` na desserialização e toda validação/regra/hash acontece depois disso, no
+POST e no PUT (um único conversor). São recusados (400): `null`, `[]`, GUID vazio/inválido, tipos
+JSON diferentes, repetidos (o erro cita os IDs; nada é removido em silêncio) e IDs inexistentes.
+No OpenAPI o schema é `oneOf [string/uuid, array de uuid]`, com exemplos das duas formas. A
+resposta devolve sempre um array.
+
+**Cálculo** (`decimal` / `decimal(18,2)`, ≥ 0, no máximo 2 casas):
+
+```text
+valorPorMembro = (transporte.ehGratis ? 0 : transporte.valor)
+               + (alimentacao.individual ? 0 : alimentacao.valor) + seguroObrigatorio
+total          = valorPorMembro × quantidadeMembros        # nunca gravado no lançamento individual
+```
+
+Os cinco campos (`ehGratis`, `individual` e os três valores) são obrigatórios no corpo — zero/`false`
+são válidos; valor ignorado por um booleano é normalizado para zero antes das validações. Todos
+zerados gera lançamentos pendentes de R$ 0,00. O lançamento nasce com `Finalidade = NULL` real,
+`Categoria = Evento`, `Status = Pendente`, `TipoFluxo = Entrada`, `Vencimento = dataEvento`, `Ativo`
+e `EventoId`; nada disso (nem responsável, IP, total) vem do cliente.
+
+**Datas.** `dataEvento` mínima = primeiro dia do **mês atual na referência UTC** (`TimeProvider`,
+independente do fuso da máquina) — não "hoje". O `GET` sem filtro usa
+`[1º dia do mês − 30 dias, último dia do mês + 30 dias]` (setembro/2026: 02/08 a 30/10); com filtro
+exige as duas datas (`dataInicial <= dataFinal`) e aceita períodos históricos de **até 366 dias** (a listagem não é
+paginada; período maior devolve `400`). Lista vazia é `items: []`.
+
+**Idempotência.** Chave UUID + usuário autenticado (tabela `eventos_operacoes`, separada de
+`LancamentosOperacoes`). O hash usa apenas dados normalizados: data, local (trim + espaços
+colapsados), booleanos, valores efetivos, seguro, `eventoReferenciaId` e membros **ordenados**;
+GUID único ≡ array de um elemento, e a ordem dos membros não importa. Mesma chave + mesma operação →
+`200` com o **resultado original do POST** (o mesmo DTO, com a **versão original**) — não o estado atual: se o
+cadastro foi editado ou pago depois, o `GET` mostra o estado atual e o replay continua devolvendo o original
+(uma edição feita a partir dele leva `409`, pois a versão original ficou antiga). O DTO original é gravado em
+`eventos_operacoes.RespostaJson` na **mesma transação** do evento, dos participantes e dos lançamentos (dois
+`SaveChanges`, um commit; a rowversion só existe depois do INSERT). O replay é resolvido **antes** da regra
+"data a partir do 1º dia do mês", que vale só para operações novas (reenviar em outubro um POST válido de
+setembro dá `200`; chave nova com a mesma data antiga dá `400`). Dados diferentes → `409` (inclusive depois
+da virada do mês); chave ausente/inválida → `400`; operação cujo evento foi excluído → `409` (nunca reativa).
+Falha em qualquer etapa desfaz tudo (mesma transação), então o retry não duplica cobrança.
+
+**Operações anteriores à resposta original.** Chaves registradas antes da coluna `RespostaJson` não têm fonte
+confiável do resultado original (o estado atual pode já ter mudado), então nada é inventado: o replay delas
+devolve `409` com `codigo = EVENTO_IDEMPOTENCIA_SEM_RESPOSTA_ORIGINAL` e `eventoId`, orientando a consultar
+o evento existente (`GET /api/Eventos/{id}`); a chave não é apagada e nada é recriado.
+
+**Mesmo passeio, preços diferentes.** `eventoReferenciaId` (opcional) aponta para um cadastro ativo;
+o servidor mantém o `eventoGrupoId`, exige mesma data e local (`400` por campo) e responde `404` se
+a referência não existe/está inativa. Um membro só pode estar em **um** cadastro ativo por
+`eventoGrupoId` (`409` com os IDs; garantido também no banco por índice único filtrado
+`UX_evento_membros_grupo_membro_ativo`). Exemplo Ibirapuera: 8 × R$ 20 + 2 × R$ 5 = R$ 170.
+
+**Concorrência.** `versao` (base64 do `rowversion`) vem em toda resposta e é exigida no PUT/DELETE
+(`409` se desatualizada). A **mudança de status de um lançamento do evento também altera a versão**,
+então um PUT/DELETE feito com versão anterior ao pagamento é recusado. Ordem única de locks, sem deadlock:
+(1) coordenador do passeio — `sp_getapplock` exclusivo por `eventoGrupoId`, preso à transação, com espera
+limitada (`409` ao esgotar) — em POST com `eventoReferenciaId`, PUT e DELETE; (2) linha do cadastro (`UPDATE`
+com a `versao`); (3) participações e lançamentos. O pagamento usa só (2) e (3). Cada tentativa do retry do
+pagamento recarrega o estado sob o lock e, se o commit falhar de forma ambígua, verifica no banco se ele
+foi efetivado antes de responder sucesso.
+
+**PUT.** Campos editáveis = os do POST + `versao` (+ `motivo`); não altera `id`, `eventoGrupoId`,
+`eventoReferenciaId`, total, valor por membro nem status. Com tudo pendente: mantidos são atualizados,
+novos ganham lançamento pendente e removidos são desativados (participação + lançamento, com auditoria
+do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. Com algum lançamento
+`Pago`/`Atrasado`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
+`individual`, seguro — não só o total), participantes ou data (pagamentos nunca voltam a pendente nem
+geram estorno); só o **local** pode ser corrigido (a descrição de todos os lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo
+local; valor, vencimento e status do pagamento não mudam). Data/local não mudam por PUT isolado quando o passeio
+tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.
+
+**DELETE** `{ "motivo": "...", "versao": "..." }`: exclusão lógica (`Ativo = false`) do cadastro, das
+participações e dos lançamentos pendentes, na mesma transação; outros grupos do passeio permanecem.
+`Pago`/`Atrasado` → `409` sem alterar nada; inexistente/já excluído → `404`.
+
+**Auditoria (`historico_eventos`).** Trigger `TR_eventos_AuditoriaExclusaoLogica` (`AFTER UPDATE`, só na
+transição `Ativo 1 → 0`, várias linhas) grava snapshot completo (IDs, grupo/referência, data, local,
+booleanos, valores, valor por membro, total, participantes e lançamentos em JSON), responsável, IP,
+motivo e horário UTC do banco. A aplicação **nunca** insere nessa tabela (o usuário de runtime tem
+`DENY` de escrita, como em `lancamentos_deletados`) e a trigger falha (`THROW 50011`) sem
+`SESSION_CONTEXT`. Responsável = claims validadas; IP = `HttpContext.Connection.RemoteIpAddress`
+(depois do middleware de proxies confiáveis; `X-Forwarded-For` nunca é lido à mão). O contexto é
+limpo no `finally` na mesma conexão física e, se a limpeza falhar, o pool dessa conexão é descartado.
+
+**Lançamentos vinculados a evento** (`EventoId != null`): `PUT /api/Lancamentos/{id}` só aceita mudar
+`status`/`descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
+`409` orientando o uso de `/api/Eventos`. As exceções de eventos (finalidade nula, valor zero, data
+passada no mês) **não** se aplicam a `POST /api/Lancamentos/Registrar`. `Lancamento.Finalidade` e
+`lancamentos_deletados.Finalidade` agora aceitam `NULL`; ambos ganharam `EventoId`.
+
+**Migration `AddEventos`** (incremental, sem reescrever migrations aplicadas): cria `eventos`,
+`evento_membros`, `eventos_operacoes` e `historico_eventos`, índices (`Ativo+DataEvento`,
+`EventoGrupoId`, `EventoReferenciaId`, `Lancamentos.EventoId`, participantes, índice único filtrado),
+constraints (`CK_eventos_*`: não negativos, valores normalizados e soma exata, grupo coerente; FK
+composta `evento_membros(EventoId, EventoGrupoId)`), recria `TR_Lancamentos_AuditoriaExclusaoLogica`
+(copia `EventoId`, aceita `Finalidade` nula) e cria o trigger de eventos. `Down` é reversível
+(lançamentos de evento voltam com `Finalidade = ''`). Aplicação pelo startup como as demais; nenhuma
+variável de ambiente, porta ou credencial nova.
+
+**Frontend (issue #57).** Use `GET /api/Usuarios` para os IDs; envie `membros` como GUID ou array;
+guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
+retentativas da mesma tentativa; aplique `dataMinimaCadastro` no seletor de data do cadastro.
+
 ## Banco de dados e migrations
 
 Migrations são aplicadas incrementalmente no startup. `UnifyLancamentosFlow` renomeia `Tipo` para
@@ -417,6 +537,22 @@ conflito de chave, soft delete, contrato de login/`/Me`, validação do JWT (ass
 audiência, algoritmo, expiração, tamanho), matriz RBAC (401/403/sucesso por cargo), rate limiting e
 lockout, forwarded headers, segredos/política de senha, cabeçalhos de segurança e descoberta das
 migrations.
+
+Os testes de eventos (`EventosRegrasTests`, `EventosApiTests`) e `ModelBindingErrorsTests` (sanitização dos erros `400` de
+model binding, sem nomes de tipos CLR) rodam sem banco; `EventosSqlServerTests`,
+`EventosMigrationTests` e `ApiProcessEventosTests` (`Category=RequiresSqlServer`) exigem `ALMIRANTE_TEST_SQLSERVER`
+e provam transação/rollback, `rowversion`, índice único filtrado, triggers, `SESSION_CONTEXT`, concorrência,
+Up/Down da migration e o fluxo no processo real da API com a identidade de runtime de menor privilégio.
+A corrida entre mudança de status de um lançamento e o PUT que remove o participante também é coberta: o status nunca
+é gravado em lançamento já desativado (o `Ativo` é relido do banco depois do lock do evento).
+
+Sem `ALMIRANTE_TEST_SQLSERVER`, todos os testes `RequiresSqlServer` falham de propósito com `Defina ALMIRANTE_TEST_SQLSERVER`
+(no `dotnet test` puro isso aparece como ~145 falhas). Para rodar localmente sem tocar na instância do Windows, use um SQL Server
+descartável em contêiner e a conexão `sa` no formato do CI:
+
+```bash
+ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx
+```
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
 lockout concorrente, corrida login/reset, modelo de identidades SQL sem `sa`, rotação de senha com pools,

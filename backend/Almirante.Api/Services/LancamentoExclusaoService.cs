@@ -1,5 +1,7 @@
 using Almirante.Api.Data;
 using Almirante.Api.Dtos;
+using Almirante.Api.Infrastructure;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
@@ -8,6 +10,12 @@ public sealed class LancamentoExclusaoService(AlmiranteDbContext db, ILogger<Lan
 {
     public async Task<bool> DeleteAsync(DeleteLancamentoRequest request, CancellationToken ct)
     {
+        // Excluir isoladamente um lançamento de evento desalinharia participantes, total e valor por membro.
+        if (await db.Lancamentos.AnyAsync(l => l.Id == request.Id && l.Ativo && l.EventoId != null, ct))
+        {
+            throw LancamentosService.LancamentoDeEventoConflito();
+        }
+
         if (!db.Database.IsRelational())
         {
             var entity = await db.Lancamentos.SingleOrDefaultAsync(l => l.Id == request.Id && l.Ativo, ct);
@@ -21,12 +29,14 @@ public sealed class LancamentoExclusaoService(AlmiranteDbContext db, ILogger<Lan
             return true;
         }
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // Conexão fixada: SESSION_CONTEXT definido e limpo na MESMA conexão física (ver SessaoAuditoria).
+        var sessao = new SessaoAuditoria(db);
+        await db.Database.OpenConnectionAsync(ct);
+        var conexao = db.Database.GetDbConnection() as SqlConnection;
         try
         {
-            await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={request.UsuarioResponsavelId};", ct);
-            await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={request.IpResponsavel};", ct);
-            await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value={request.Motivo.Trim()};", ct);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, request.Motivo.Trim(), ct);
             var affected = await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.Lancamentos SET Ativo=0 WHERE Id={request.Id} AND Ativo=1;", ct);
             if (affected == 0)
             {
@@ -41,15 +51,16 @@ public sealed class LancamentoExclusaoService(AlmiranteDbContext db, ILogger<Lan
         {
             try
             {
-                await db.Database.ExecuteSqlRawAsync("""
-                    EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=NULL;
-                    EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value=NULL;
-                    EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value=NULL;
-                    """, CancellationToken.None);
+                var limpo = await sessao.LimparAsync(logger);
+                if (!limpo && conexao is not null)
+                {
+                    // Marcar a conexão ainda emprestada para descarte ANTES de devolvê-la ao pool.
+                    SqlConnection.ClearPool(conexao);
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                logger.LogWarning(ex, "Falha ao limpar SESSION_CONTEXT.");
+                await db.Database.CloseConnectionAsync();
             }
         }
     }

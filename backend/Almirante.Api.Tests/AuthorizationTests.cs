@@ -27,6 +27,10 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         "POST /api/Lancamentos/Registrar" => new(HttpMethod.Post, "/api/Lancamentos/Registrar") { Content = JsonContent.Create(NovoLancamento(Guid.NewGuid())) },
         "PUT /api/Lancamentos/{id}" => new(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { status = "Pago" }) },
         "DELETE /api/Lancamentos/{id}" => new(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { motivo = "rbac" }) },
+        "GET /api/Eventos" => new(HttpMethod.Get, "/api/Eventos"),
+        "POST /api/Eventos" => new(HttpMethod.Post, "/api/Eventos") { Content = JsonContent.Create(EventosTestKit.Corpo(Guid.NewGuid())) },
+        "PUT /api/Eventos/{id}" => new(HttpMethod.Put, $"/api/Eventos/{Guid.NewGuid()}") { Content = JsonContent.Create(EventosTestKit.Corpo(Guid.NewGuid(), versao: "AAAAAAAAB9E=")) },
+        "DELETE /api/Eventos/{id}" => new(HttpMethod.Delete, $"/api/Eventos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { motivo = "rbac", versao = "AAAAAAAAB9E=" }) },
         _ => throw new ArgumentOutOfRangeException(nameof(nome)),
     };
 
@@ -34,6 +38,7 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
     {
         "GET /api/Usuarios", "GET /api/Cargos", "GET /api/Lancamentos", "GET /api/Lancamentos/{id}", "POST /api/Lancamentos/Registrar",
         "PUT /api/Lancamentos/{id}", "DELETE /api/Lancamentos/{id}",
+        "GET /api/Eventos", "POST /api/Eventos", "PUT /api/Eventos/{id}", "DELETE /api/Eventos/{id}",
     };
 
     [Theory]
@@ -86,6 +91,7 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Usuarios")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Cargos")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Eventos")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Lancamentos")).StatusCode);
 
         var criado = await client.PostAsJsonAsync("/api/Lancamentos/Registrar", NovoLancamento(membro.Id));

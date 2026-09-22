@@ -117,3 +117,69 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 { "status": 3 }
+
+### 14. Eventos: cadastrar com VÁRIOS membros (membros como array) — Idempotency-Key obrigatório
+POST {{baseUrl}}/api/Eventos
+Authorization: Bearer {{token}}
+Content-Type: application/json
+Idempotency-Key: 6f1c0c9e-2d9e-4a53-9a55-0d6c2f6b7a01
+
+{
+  "dataEvento": "2026-10-18",
+  "local": "Parque Ibirapuera",
+  "transporte": { "valor": 10.00, "ehGratis": false },
+  "alimentacao": { "individual": false, "valor": 8.00 },
+  "seguroObrigatorio": 2.00,
+  "membros": [
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222"
+  ],
+  "eventoReferenciaId": null
+}
+
+### 15. Eventos: cadastrar com UM membro (membros como GUID) — mesma operação de ["GUID"]
+POST {{baseUrl}}/api/Eventos
+Authorization: Bearer {{token}}
+Content-Type: application/json
+Idempotency-Key: 6f1c0c9e-2d9e-4a53-9a55-0d6c2f6b7a02
+
+{
+  "dataEvento": "2026-10-18",
+  "local": "Parque Ibirapuera",
+  "transporte": { "valor": 10.00, "ehGratis": false },
+  "alimentacao": { "individual": false, "valor": 8.00 },
+  "seguroObrigatorio": 2.00,
+  "membros": "11111111-1111-4111-8111-111111111111",
+  "eventoReferenciaId": null
+}
+
+### 16. Eventos: listar (período padrão) e com filtro
+GET {{baseUrl}}/api/Eventos
+Authorization: Bearer {{token}}
+
+###
+GET {{baseUrl}}/api/Eventos?dataInicial=2026-09-01&dataFinal=2026-09-30
+Authorization: Bearer {{token}}
+
+### 17. Eventos: atualizar (versao vem da resposta; motivo só é obrigatório ao remover participantes)
+PUT {{baseUrl}}/api/Eventos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "dataEvento": "2026-10-18",
+  "local": "Parque Ibirapuera",
+  "transporte": { "valor": 12.00, "ehGratis": false },
+  "alimentacao": { "individual": false, "valor": 8.00 },
+  "seguroObrigatorio": 2.00,
+  "membros": "11111111-1111-4111-8111-111111111111",
+  "versao": "COLE_AQUI_A_VERSAO",
+  "motivo": "Membro desistiu"
+}
+
+### 18. Eventos: exclusão lógica auditada por trigger
+DELETE {{baseUrl}}/api/Eventos/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "motivo": "Grupo cancelado pela diretoria", "versao": "COLE_AQUI_A_VERSAO" }

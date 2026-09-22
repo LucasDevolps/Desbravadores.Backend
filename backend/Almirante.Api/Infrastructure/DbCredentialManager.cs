@@ -192,6 +192,9 @@ public sealed partial class DbCredentialManager(
     {
         EnsureValidUserName(user);
         const string role = AppRoleName;
+        var auditTablesSql = string.Join(", ", DbPrivilegeAuditor.AuditTables.Select(t => $"N'{t}'"));
+        var denyAuditSql = string.Join(" ", DbPrivilegeAuditor.AuditTables.Select(t =>
+            $"IF OBJECT_ID(N'dbo.{t}', N'U') IS NOT NULL SET @cmd += N'DENY INSERT, UPDATE, DELETE ON OBJECT::dbo.{t} TO [{role}]; ';"));
         return $"""
             IF DATABASE_PRINCIPAL_ID(N'{user}') IS NULL OR DATABASE_PRINCIPAL_ID(N'{role}') IS NULL
                 THROW 51001, N'Identidade de runtime ou role ausente: execute o bootstrap (docs/sql/criar-usuario-admin-app.sql).', 1;
@@ -204,16 +207,15 @@ public sealed partial class DbCredentialManager(
 
             SELECT @cmd += N'GRANT SELECT, INSERT, UPDATE ON OBJECT::dbo.' + QUOTENAME(t.name) + N' TO [{role}]; '
             FROM sys.tables t
-            WHERE t.schema_id = SCHEMA_ID(N'dbo') AND t.name NOT IN (N'{DbPrivilegeAuditor.AuditTable}', N'__EFMigrationsHistory');
+            WHERE t.schema_id = SCHEMA_ID(N'dbo') AND t.name NOT IN ({auditTablesSql}, N'__EFMigrationsHistory');
 
             SELECT @cmd += N'GRANT SELECT ON OBJECT::dbo.' + QUOTENAME(t.name) + N' TO [{role}]; '
             FROM sys.tables t
-            WHERE t.schema_id = SCHEMA_ID(N'dbo') AND t.name IN (N'{DbPrivilegeAuditor.AuditTable}', N'__EFMigrationsHistory');
+            WHERE t.schema_id = SCHEMA_ID(N'dbo') AND t.name IN ({auditTablesSql}, N'__EFMigrationsHistory');
 
             IF OBJECT_ID(N'dbo.{DbPrivilegeAuditor.SessionsTable}', N'U') IS NOT NULL
                 SET @cmd += N'GRANT DELETE ON OBJECT::dbo.{DbPrivilegeAuditor.SessionsTable} TO [{role}]; ';
-            IF OBJECT_ID(N'dbo.{DbPrivilegeAuditor.AuditTable}', N'U') IS NOT NULL
-                SET @cmd += N'DENY INSERT, UPDATE, DELETE ON OBJECT::dbo.{DbPrivilegeAuditor.AuditTable} TO [{role}]; ';
+            {denyAuditSql}
 
             EXEC sys.sp_executesql @cmd;
             """;

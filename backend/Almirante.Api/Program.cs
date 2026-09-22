@@ -125,6 +125,8 @@ builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
 builder.Services.AddScoped<LancamentoGeralService>();
 builder.Services.AddScoped<LancamentoExclusaoService>();
+builder.Services.AddSingleton(new EventosLockOptions());
+builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
@@ -160,9 +162,12 @@ builder.Services.AddControllersWithViews().AddJsonOptions(options =>
     // Janela de compatibilidade "Despesa" -> "Saida" (ver Entities/TipoFluxoLancamentoJsonConverter.cs).
     options.JsonSerializerOptions.Converters.Add(new Almirante.Api.Entities.TipoFluxoLancamentoJsonConverter(
         builder.Configuration.GetValue<bool>("Compatibility:LegacyTipoFluxoDespesa")));
-});
+})
+    // 400 de model binding sem tipos CLR/namespaces internos (ver Infrastructure/ModelBindingErrors.cs).
+    .ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = ModelBindingErrors.Responder);
 
 builder.Services.AddExceptionHandler<ValidationExceptionHandler>();
+builder.Services.AddExceptionHandler<ApiProblemExceptionHandler>();
 builder.Services.AddProblemDetails();
 var dataProtectionPath = builder.Configuration["DataProtection:KeysPath"];
 if (!string.IsNullOrWhiteSpace(dataProtectionPath))
@@ -266,6 +271,10 @@ builder.Services.AddSwaggerGen(options =>
         Title = "Almirante API",
         Version = "v1",
     });
+
+    // /api/Eventos: "membros" documentado como GUID | GUID[] (oneOf), exemplos e header Idempotency-Key.
+    options.SchemaFilter<MembrosSchemaFilter>();
+    options.OperationFilter<EventosOperationFilter>();
 
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {

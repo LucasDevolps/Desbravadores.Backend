@@ -19,6 +19,7 @@ internal static class LancamentoMapping
         Valor = lancamento.Valor,
         Vencimento = lancamento.Vencimento,
         Status = lancamento.Status,
+        EventoId = lancamento.EventoId,
     };
 
     public static readonly Func<Lancamento, LancamentoDto> ToDto = Projection.Compile();
