@@ -1,0 +1,58 @@
+name: Dívida técnica
+description: Registre um problema técnico interno que não é um bug visível, mas custa manutenção ou traz risco.
+title: "[TECH DEBT] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use este formulário para código, testes, configuração ou infraestrutura que precisam de melhoria sem que haja um comportamento incorreto.
+        Se algo está funcionando errado, use o formulário de bug.
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: Problema técnico
+      description: O que está inadequado? Aponte arquivos, componentes ou padrões envolvidos.
+    validations:
+      required: true
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+      description: Opcional. Como se chegou a essa situação e issues ou PRs relacionados.
+    validations:
+      required: false
+
+  - type: textarea
+    id: impacto
+    attributes:
+      label: Impacto atual
+      description: Como isso atrapalha hoje (manutenção, desempenho, testes lentos ou frágeis, duplicação)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: resultado
+    attributes:
+      label: Solução ou resultado desejado
+    validations:
+      required: true
+
+  - type: textarea
+    id: riscos
+    attributes:
+      label: Riscos de não tratar
+      description: Opcional.
+    validations:
+      required: false
+
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Critérios de aceite
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
