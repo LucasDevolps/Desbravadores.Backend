@@ -52,6 +52,9 @@ O backend está em fase de **MVP funcional** e possui:
 ```text
 .
 ├── .github/
+│   ├── ISSUE_TEMPLATE/             # formulários de bug, feature, segurança e dívida técnica
+│   ├── CODEOWNERS
+│   ├── pull_request_template.md
 │   └── workflows/
 │       └── backend-ci.yml          # restore, build e testes do backend
 ├── backend/
@@ -64,6 +67,8 @@ O backend está em fase de **MVP funcional** e possui:
 │   └── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
 ├── compose.yaml
 ├── .env.example
+├── CONTRIBUTING.md
+├── SECURITY.md
 └── README.md
 ```
 
@@ -641,6 +646,15 @@ Como o merge de `develop` em `main` cria um merge commit que só existe em `main
 seguinte `develop → main` aparece desatualizado. O botão "Update branch" desse PR tentaria
 um push direto em `develop` e é bloqueado. Nesse caso, abra antes um PR `main → develop`
 (back-merge) e faça o merge dele.
+
+## Contribuição e governança
+
+Antes de contribuir, consulte:
+
+- [Guia de contribuição](CONTRIBUTING.md) — branches, commits, Pull Requests, testes e regras para banco e segurança;
+- [Política de segurança](SECURITY.md) — como reportar vulnerabilidades de forma privada.
+
+Pull Requests e issues têm templates próprios em `.github/`.
 
 ## Observabilidade e saúde
 

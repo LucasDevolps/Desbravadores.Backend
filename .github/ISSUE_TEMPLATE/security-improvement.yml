@@ -1,0 +1,73 @@
+name: Melhoria de segurança
+description: Proponha uma melhoria preventiva de segurança que possa ser discutida publicamente.
+title: "[SECURITY] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Atenção:** este formulário é destinado a melhorias públicas de segurança (endurecer configuração, reduzir privilégios, ampliar auditoria ou testes, adicionar análise estática etc.).
+        > Se você encontrou uma **vulnerabilidade sensível ou explorável**, não publique detalhes aqui. Consulte o `SECURITY.md` e utilize o canal privado recomendado.
+
+        Não inclua senhas, tokens, cookies, chaves, connection strings, IPs internos ou outros segredos.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área afetada
+      multiple: true
+      options:
+        - Autenticação / sessão / JWT
+        - Autorização / cargos
+        - Cookies / CSRF
+        - Banco de dados / permissões SQL
+        - Auditoria / logs
+        - Nginx / TLS / cabeçalhos
+        - Docker / Compose
+        - CI/CD / GitHub Actions
+        - Segredos / configuração
+        - Dependências
+        - Outra
+    validations:
+      required: true
+
+  - type: textarea
+    id: melhoria
+    attributes:
+      label: Melhoria proposta
+    validations:
+      required: true
+
+  - type: textarea
+    id: risco
+    attributes:
+      label: Risco mitigado
+      description: Que ameaça ou classe de problema a melhoria reduz?
+    validations:
+      required: true
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+      description: Opcional. Estado atual, referências (OWASP, documentação) ou issues relacionadas.
+    validations:
+      required: false
+
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Critérios de aceite
+      description: Inclua testes de regressão esperados, quando aplicável.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibilidade
+    attributes:
+      label: Possíveis impactos e compatibilidade
+      description: Opcional. Mudanças de configuração, migrations, quebra de contrato com o frontend ou necessidade de rotação de segredos.
+    validations:
+      required: false
