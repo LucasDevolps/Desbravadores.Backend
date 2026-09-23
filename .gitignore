@@ -51,6 +51,10 @@ CodeCoverage/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
 
+# Relatórios de cobertura gerados localmente (scripts/coverage.sh; docs/test-coverage.md)
+coverage-report/
+coverage-input/
+
 # NUnit
 *.VisualState.xml
 TestResult.xml

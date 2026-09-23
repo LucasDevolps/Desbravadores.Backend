@@ -77,6 +77,49 @@ for arquivo in "$WF"/*.yml "$WF"/*.yaml; do
   done < <(jobs_de "$arquivo")
 done
 
+# 4. backend-ci.yml: cobertura das duas suítes, relatório, resumo e quality gate (#67), sem perder a integração
+#    SQL Server real. Verifica comandos/propriedades dentro de cada job, não posições no YAML.
+CI="$WF/backend-ci.yml"
+exige() { # JOB TRECHO DESCRICAO
+  if bloco_do_job "$CI" "$1" | grep -qF -- "$2"; then
+    ok "backend-ci.yml/$1: $3"
+  else
+    erro "backend-ci.yml/$1: $3 (não encontrado: '$2')."
+  fi
+}
+if [[ -f "$CI" ]]; then
+  for job in build-and-test sqlserver-integration; do
+    exige "$job" '--collect "XPlat Code Coverage"' "coleta cobertura"
+    exige "$job" '--settings backend/coverage.runsettings' "usa backend/coverage.runsettings"
+    exige "$job" 'path: TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
+  done
+  exige build-and-test 'Category!=RequiresDocker&Category!=RequiresSqlServer' "roda os testes sem dependências externas"
+  exige sqlserver-integration 'Category=RequiresSqlServer' "roda os testes RequiresSqlServer"
+  exige sqlserver-integration 'mcr.microsoft.com/mssql/server:2022' "usa SQL Server 2022 descartável"
+  exige sqlserver-integration 'openssl rand' "gera senha aleatória por execução"
+  exige sqlserver-integration '--publish 127.0.0.1::1433' "expõe o SQL só em loopback"
+  if bloco_do_job "$CI" sqlserver-integration | grep -B2 -F 'docker rm --force almirante-ci-sql' | grep -qF 'if: always()'; then
+    ok "backend-ci.yml/sqlserver-integration: remove o container mesmo em falha"
+  else
+    erro "backend-ci.yml/sqlserver-integration: a remoção do SQL descartável precisa de 'if: always()'."
+  fi
+  exige coverage 'needs: [build-and-test, sqlserver-integration]' "consolida as duas suítes"
+  exige coverage 'dotnet tool restore' "usa o ReportGenerator fixado no manifesto local"
+  exige coverage 'bash scripts/coverage.sh report' "gera o relatório consolidado"
+  exige coverage 'bash scripts/coverage.sh gate' "aplica o quality gate"
+  exige coverage 'backend/coverage-baseline.json' "compara com o baseline versionado"
+  exige coverage 'GITHUB_STEP_SUMMARY' "escreve o Job Summary"
+  exige coverage 'name: coverage-${{' "publica o artifact de cobertura"
+  exige deploy-scripts 'bash scripts/tests/coverage.test.sh' "testa o script de cobertura"
+  if grep -qE '^[[:space:]]*continue-on-error:' "$CI"; then
+    erro "backend-ci.yml: 'continue-on-error' esconderia falha de teste ou do quality gate."
+  else
+    ok "backend-ci.yml: nenhum passo com continue-on-error"
+  fi
+else
+  erro "backend-ci.yml não encontrado."
+fi
+
 if ((falhas > 0)); then
   echo
   echo "$falhas verificação(ões) de política falharam." >&2

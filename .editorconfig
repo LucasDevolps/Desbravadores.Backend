@@ -1,0 +1,19 @@
+# Consistência básica de espaçamento entre editores (VS, Rider, VS Code), refletindo o que o código já segue.
+# Sem regras de análise/severidade (dotnet_diagnostic, estilo C#): não gera warnings nem muda o build.
+# Sem charset/end_of_line de propósito: o BOM é misto no código atual e o EOL é tratado pelo .gitattributes.
+root = true
+
+[*]
+indent_style = space
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.cs]
+indent_size = 4
+
+[*.{csproj,props,targets,runsettings,xml,json,yml,yaml,sh}]
+indent_size = 2
+
+[*.md]
+# Dois espaços no fim da linha são quebra de linha em Markdown.
+trim_trailing_whitespace = false
