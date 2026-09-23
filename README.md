@@ -45,6 +45,9 @@ O backend está em fase de **MVP funcional** e possui:
 ```text
 .
 ├── .github/
+│   ├── ISSUE_TEMPLATE/             # formulários de bug, feature, segurança e dívida técnica
+│   ├── CODEOWNERS
+│   ├── pull_request_template.md
 │   └── workflows/
 │       └── backend-ci.yml          # restore, build e testes do backend
 ├── backend/
@@ -57,6 +60,8 @@ O backend está em fase de **MVP funcional** e possui:
 │   └── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
 ├── compose.yaml
 ├── .env.example
+├── CONTRIBUTING.md
+├── SECURITY.md
 └── README.md
 ```
 
@@ -611,10 +616,38 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
 
 Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
 Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
-No ruleset de `main` e `develop`, configure os três jobs como checks obrigatórios antes de merge.
-Essa configuração depende das permissões administrativas do repositório; o YAML sozinho não a ativa.
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
+
+### Proteção de branches
+
+`main` e `develop` têm Repository Rulesets ativos (`Protect main` e `Protect develop`, um por
+branch, `enforcement: active`). As demais branches (`feature/*`, `fix/*`, `chore/*`...) não têm regras.
+
+- Push direto não é aceito: toda alteração entra por Pull Request (merge, squash ou rebase).
+- Force push e exclusão das duas branches estão bloqueados.
+- Todas as conversations do PR precisam estar resolvidas antes do merge.
+- Não há aprovação humana obrigatória (0 aprovações) enquanto o projeto é mantido
+  individualmente; o quality gate é o CI.
+- Checks obrigatórios, todos verdes, publicados pelo GitHub Actions: `build-and-test`,
+  `sqlserver-integration` e `deploy-scripts`. Os jobs de `backend-deploy.yml` não são checks de PR.
+- A branch do PR precisa estar atualizada com a branch de destino (`strict`).
+- Sem bypass: nenhum usuário, admin, app ou deploy key ignora as regras. Mudanças de política
+  são feitas conscientemente nas configurações do ruleset.
+
+Como o merge de `develop` em `main` cria um merge commit que só existe em `main`, o PR
+seguinte `develop → main` aparece desatualizado. O botão "Update branch" desse PR tentaria
+um push direto em `develop` e é bloqueado. Nesse caso, abra antes um PR `main → develop`
+(back-merge) e faça o merge dele.
+
+## Contribuição e governança
+
+Antes de contribuir, consulte:
+
+- [Guia de contribuição](CONTRIBUTING.md) — branches, commits, Pull Requests, testes e regras para banco e segurança;
+- [Política de segurança](SECURITY.md) — como reportar vulnerabilidades de forma privada.
+
+Pull Requests e issues têm templates próprios em `.github/`.
 
 ## Observabilidade e saúde
 
