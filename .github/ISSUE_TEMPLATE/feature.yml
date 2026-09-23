@@ -1,0 +1,61 @@
+name: Sugerir funcionalidade
+description: Proponha uma nova funcionalidade partindo do problema ou da necessidade.
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Comece pelo **problema**, não pela solução. "Quero um endpoint X" é menos útil que "o tesoureiro precisa de Y porque Z".
+        Não inclua dados reais de membros, senhas ou outros segredos.
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: Problema ou necessidade
+      description: Que situação hoje é difícil, impossível ou manual? Quem é afetado?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solucao
+    attributes:
+      label: Solução proposta
+      description: Como você imagina resolver? Endpoints, regras e permissões por cargo, se souber.
+    validations:
+      required: true
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto
+      description: Regras de negócio envolvidas, telas do frontend que dependem disso, issues relacionadas.
+    validations:
+      required: false
+
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Critérios de aceite
+      description: Condições verificáveis para considerar a funcionalidade pronta.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: impacto
+    attributes:
+      label: Impacto esperado
+      description: Opcional. Benefício esperado e possíveis efeitos em banco, segurança ou contratos existentes.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+      description: Opcional.
+    validations:
+      required: false
