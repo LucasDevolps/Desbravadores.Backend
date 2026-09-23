@@ -620,6 +620,10 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
   com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
 - `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
   com certificados de teste e containers descartáveis.
+- `coverage`: consolida a cobertura (Coverlet) das duas suítes de teste com o ReportGenerator, mostra
+  linhas e branches no Job Summary, publica o relatório HTML/Cobertura (`coverage-<sha>`) e aplica um
+  quality gate contra regressão em relação ao baseline medido. Detalhes, baseline e política em
+  [docs/test-coverage.md](docs/test-coverage.md).
 
 Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
 Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
