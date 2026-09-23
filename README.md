@@ -1,6 +1,13 @@
 # Desbravadores.Backend
 
-Backend do projeto **Almirante**, responsável pela autenticação, consulta de usuários e gerenciamento de lançamentos financeiros dos Desbravadores. A aplicação é uma API HTTP construída com ASP.NET Core, persiste os dados no SQL Server por meio do Entity Framework Core e protege os recursos com autenticação JWT Bearer.
+[![Backend CI](https://github.com/LucasDevolps/Desbravadores.Backend/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/LucasDevolps/Desbravadores.Backend/actions/workflows/backend-ci.yml)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+
+Backend (API HTTP) do projeto **Almirante**, que centraliza a gestão dos Desbravadores:
+autenticação e gestão de usuários, eventos com cobranças por membro e lançamentos financeiros.
+
+- **Stack:** .NET 10 / ASP.NET Core, SQL Server com Entity Framework Core, autenticação JWT Bearer.
+- **Estado:** MVP funcional, com CI no GitHub Actions — detalhes em [Estado atual](#estado-atual).
 
 ## Estado atual
 
