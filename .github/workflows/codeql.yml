@@ -1,0 +1,58 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Semanal: novas queries/CVEs do CodeQL também valem para código que não mudou.
+  schedule:
+    - cron: "0 9 * * 1" # segunda, 06:00 (America/Sao_Paulo)
+  workflow_dispatch:
+
+# Só análise estática (não publica, não faz deploy). Sem paths: toda mudança em C# é analisada.
+# Código de PR só roda em runner descartável do GitHub, sem segredos; em PR de fork o GitHub já
+# rebaixa o GITHUB_TOKEN para leitura.
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-csharp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # security-events: write só neste job e só para publicar o resultado no Code Scanning.
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Instalar .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: '10.0.x'
+
+      # Build manual (não autobuild): compila exatamente a solução .slnx com o SDK .NET 10 fixado acima.
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          languages: csharp
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build da solução
+        run: |
+          dotnet restore backend/Almirante.slnx
+          dotnet build backend/Almirante.slnx --configuration Release --no-restore -p:UseSharedCompilation=false
+
+      - name: Analisar com CodeQL
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          category: /language:csharp

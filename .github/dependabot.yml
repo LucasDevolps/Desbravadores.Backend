@@ -1,0 +1,73 @@
+# Atualizações de dependências (#68). Semanal e agrupado para não gerar ruído: minor/patch em um PR por
+# ecossistema; majors em PRs próprios, para revisão individual.
+#
+# target-branch: develop segue o fluxo do CONTRIBUTING.md (merge em develop dispara o deploy: revise como
+# publicação). Security updates do Dependabot ignoram target-branch e sempre miram a branch padrão (main);
+# elas não são bloqueadas nem agrupadas aqui, para chegarem o mais rápido possível.
+version: 2
+updates:
+  # /backend contém Almirante.slnx: o Dependabot o usa como ponto de entrada e atualiza os quatro .csproj
+  # referenciados, além de .config/dotnet-tools.json (procurado a partir de /backend até a raiz).
+  - package-ecosystem: nuget
+    directory: /backend
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      nuget-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Pacotes versionados junto com o runtime .NET: o major (11.x) exige trocar o TargetFramework e as
+      # imagens base; essa migração é feita de propósito, em PR próprio, não por bump automático.
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.EntityFrameworkCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+
+  # Os workflows pinam actions por SHA de 40 caracteres com a versão em comentário; o Dependabot atualiza
+  # o SHA e o comentário juntos, mantendo a política de scripts/tests/workflows.test.sh.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # Imagens base do Dockerfile da API (sdk e aspnet sobem juntas). As tags "10.0" já recebem os patches
+  # do .NET; o major (11.0) é ignorado porque o runtime precisa casar com o TargetFramework (net10.0).
+  - package-ecosystem: docker
+    directory: /backend/Almirante.Api
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      dotnet-images:
+        patterns: ["dotnet/*"]
+    ignore:
+      - dependency-name: "dotnet/*"
+        update-types: ["version-update:semver-major"]

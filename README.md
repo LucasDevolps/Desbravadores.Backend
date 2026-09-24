@@ -54,9 +54,12 @@ O backend está em fase de **MVP funcional** e possui:
 ├── .github/
 │   ├── ISSUE_TEMPLATE/             # formulários de bug, feature, segurança e dívida técnica
 │   ├── CODEOWNERS
+│   ├── dependabot.yml              # atualizações semanais de NuGet, Actions e imagens Docker
 │   ├── pull_request_template.md
 │   └── workflows/
-│       └── backend-ci.yml          # restore, build e testes do backend
+│       ├── backend-ci.yml          # restore, build e testes do backend
+│       ├── codeql.yml              # análise estática CodeQL (C#)
+│       └── container-security.yml  # scan da imagem da API (Trivy) e SBOM CycloneDX
 ├── backend/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
 │   ├── Almirante.Api.Tests/        # testes de integração

@@ -120,6 +120,12 @@ relatório e reprova regressões acima da tolerância em relação ao baseline. 
 "passar" um PR: a política e como atualizá-lo legitimamente estão em
 [`docs/test-coverage.md`](docs/test-coverage.md).
 
+Além do CI, todo push e PR para `main` e `develop` passa pelos workflows de segurança da cadeia de
+suprimentos: `codeql.yml` (CodeQL para C#) e `container-security.yml` (scan da imagem da API com Trivy e
+SBOM CycloneDX). O scan reprova HIGH/CRITICAL com correção disponível. O Dependabot abre PRs semanais para
+`develop`. Política, exceções e como ver os findings estão em
+[`docs/supply-chain-security.md`](docs/supply-chain-security.md).
+
 Para reproduzir localmente o check `build-and-test`:
 
 ```bash

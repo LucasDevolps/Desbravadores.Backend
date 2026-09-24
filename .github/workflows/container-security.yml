@@ -1,0 +1,171 @@
+name: Container Security
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Semanal: CVEs novos aparecem sem mudança no código, e a tag base (aspnet:10.0) recebe patches.
+  schedule:
+    - cron: "30 9 * * 1" # segunda, 06:30 (America/Sao_Paulo)
+  workflow_dispatch:
+
+# Constrói a imagem da API num runner descartável do GitHub (nunca na máquina de deploy, sem .env, sem
+# registry privado nem segredos), analisa a imagem FINAL com Trivy e gera a SBOM dela. O job que executa
+# código da PR (docker build) só lê o repositório; a publicação no Code Scanning fica num job à parte,
+# sem build, que só baixa o SARIF deste run.
+permissions:
+  contents: read
+
+concurrency:
+  group: container-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: almirante-api:${{ github.sha }}
+  # Binário oficial de um release imutável do GitHub, com SHA256 conferido antes de executar. Não usamos
+  # aquasecurity/trivy-action nem setup-trivy: suas tags foram sequestradas em mar/2026 (GHSA-69fq-xp46-6x23).
+  # Ao subir de versão, troque as duas linhas juntas; o hash está em trivy_<versão>_checksums.txt do release.
+  TRIVY_VERSION: 0.74.0
+  TRIVY_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+  TRIVY_NO_PROGRESS: "true"
+
+jobs:
+  image-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      sarif: ${{ steps.relatorios.outputs.sarif }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Mesmo Dockerfile e contexto (backend/) do deploy; --pull pega o patch mais recente das imagens base.
+      - name: Build da imagem da API
+        run: docker build --pull -f backend/Almirante.Api/Dockerfile -t "$IMAGE" backend
+
+      - name: Instalar Trivy (SHA256 conferido)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/trivy"
+          mkdir -p "$dir"
+          curl -fsSLo "$dir/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  $dir/trivy.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$dir/trivy.tar.gz" -C "$dir" trivy
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # Relatório completo (todas as severidades, com e sem correção): pacotes do SO e bibliotecas (.deps.json).
+      - name: Analisar a imagem (relatório completo)
+        run: |
+          mkdir -p reports
+          trivy image --scanners vuln --pkg-types os,library --list-all-pkgs \
+            --format json --output reports/trivy-image.json "$IMAGE"
+
+      # SARIF só com HIGH/CRITICAL (inclusive sem correção, para ficarem visíveis); o resto fica no JSON.
+      - name: Gerar SARIF e resumo
+        id: relatorios
+        run: |
+          set -euo pipefail
+          trivy convert --format sarif --severity HIGH,CRITICAL --output reports/trivy-image.sarif reports/trivy-image.json
+          echo "sarif=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Vulnerabilidades da imagem \`$IMAGE\` (Trivy $TRIVY_VERSION)"
+            echo
+            echo "Bloqueia: **HIGH/CRITICAL com correção disponível**. Findings sem correção são reportados, não bloqueiam."
+            echo
+            echo '| Severidade | Total | Com correção |'
+            echo '|---|---|---|'
+            jq -r '[.Results[]?.Vulnerabilities[]?] as $v
+              | ["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"][] as $s
+              | "| \($s) | \([$v[] | select(.Severity == $s)] | length) | \([$v[] | select(.Severity == $s and (.FixedVersion // "") != "")] | length) |"' \
+              reports/trivy-image.json
+            echo
+            echo '<details><summary>Alvos analisados (SO e bibliotecas)</summary>'
+            echo
+            echo '```text'
+            trivy convert --format table --scanners vuln --table-mode summary reports/trivy-image.json
+            echo '```'
+            echo '</details>'
+            echo
+            echo '<details><summary>Detalhe HIGH/CRITICAL (inclusive sem correção)</summary>'
+            echo
+            echo '```text'
+            trivy convert --format table --scanners vuln --table-mode detailed --severity HIGH,CRITICAL reports/trivy-image.json
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # SBOM CycloneDX do artefato realmente entregue (a imagem final), não do código-fonte.
+      - name: Gerar SBOM da imagem (CycloneDX)
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          arquivo="sbom/almirante-api-${GITHUB_SHA}.cdx.json"
+          trivy image --format cyclonedx --output "$arquivo" "$IMAGE"
+          componentes=$(jq -e 'select(.bomFormat == "CycloneDX") | .components | length' "$arquivo")
+          if (( componentes == 0 )); then
+            echo "SBOM gerada sem componentes." >&2
+            exit 1
+          fi
+          echo "SBOM CycloneDX gerada com $componentes componentes: \`$arquivo\`." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-almirante-api-${{ github.sha }}
+          path: sbom/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publicar relatórios do scan
+        if: always() && steps.relatorios.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: container-scan-${{ github.sha }}
+          path: reports/
+          if-no-files-found: error
+          retention-days: 14
+
+      # Gate: reprova o CI com HIGH/CRITICAL que JÁ têm correção (atualizar pacote ou imagem base resolve).
+      # --ignore-unfixed: sem correção publicada não há ação possível no repositório; continuam no SARIF,
+      # no resumo e no JSON. Exceções só via .trivyignore, com justificativa e data de expiração.
+      - name: Gate de vulnerabilidades (HIGH/CRITICAL com correção)
+        run: |
+          trivy image --scanners vuln --pkg-types os,library --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile .trivyignore --exit-code 1 --format table "$IMAGE"
+
+  # Publica o SARIF no Code Scanning (aba Security e anotações da PR). Não faz checkout de código para
+  # executar nada nem build: só baixa o SARIF deste run. Em PR de fork o GITHUB_TOKEN é somente leitura,
+  # então o upload é pulado; lá os findings ficam no resumo do job, no artifact e no gate.
+  upload-sarif:
+    needs: image-scan
+    if: >-
+      always() && needs.image-scan.outputs.sarif == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout (metadados do commit para o Code Scanning)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Baixar SARIF
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: container-scan-${{ github.sha }}
+          path: reports
+
+      - name: Enviar ao Code Scanning
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          sarif_file: reports/trivy-image.sarif
+          category: container-image-almirante-api
