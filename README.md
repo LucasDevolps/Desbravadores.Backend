@@ -8,6 +8,7 @@ autenticação e gestão de usuários, eventos com cobranças por membro e lanç
 
 - **Stack:** .NET 10 / ASP.NET Core, SQL Server com Entity Framework Core, autenticação JWT Bearer.
 - **Estado:** MVP funcional, com CI no GitHub Actions — detalhes em [Estado atual](#estado-atual).
+- **Arquitetura:** diagramas C4 e decisões arquiteturais (ADRs) em [`docs/architecture`](docs/architecture/README.md).
 
 ## Estado atual
 
