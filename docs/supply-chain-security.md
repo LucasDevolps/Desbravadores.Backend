@@ -9,6 +9,7 @@ e com o `GITHUB_TOKEN` no menor privilégio.
 | Dependabot (NuGet, GitHub Actions, Docker) | `.github/dependabot.yml` | semanal (segunda, 06:00 BRT) |
 | CodeQL para C# | `.github/workflows/codeql.yml`, job `analyze-csharp` | push e PR para `main`/`develop`, semanal |
 | Scan da imagem + SBOM | `.github/workflows/container-security.yml`, jobs `image-scan` e `upload-sarif` | push e PR para `main`/`develop`, semanal |
+| Imagem de release no GHCR (scan + SBOM + publicação) | `.github/workflows/release.yml` | push de tag `vMAJOR.MINOR.PATCH` em commit de `main` |
 
 Os workflows não usam filtro de caminhos: toda mudança em C#, no Dockerfile ou em dependências é analisada.
 
@@ -72,7 +73,7 @@ workflow antes de executá-lo, o mesmo padrão do Nginx em `backend-deploy.yml`.
 
 **Para atualizar o Trivy** (o Dependabot não cobre esse binário): escolha uma versão com release imutável,
 pegue o hash de `trivy_<versão>_Linux-64bit.tar.gz` em `trivy_<versão>_checksums.txt` do release e troque
-`TRIVY_VERSION` e `TRIVY_SHA256` juntos em `container-security.yml`.
+`TRIVY_VERSION` e `TRIVY_SHA256` juntos em `container-security.yml` e `release.yml`.
 
 ## SBOM
 
@@ -86,6 +87,39 @@ pegue o hash de `trivy_<versão>_Linux-64bit.tar.gz` em `trivy_<versão>_checksu
   certificados ou dados do ambiente de deploy, e a SBOM lista apenas pacotes e versões.
 - O job falha se a SBOM sair sem componentes.
 
+## Imagem de release (GHCR)
+
+O `container-security.yml` escaneia a imagem de cada push e PR, mas não publica nada. A imagem que vai
+para o registry é gerada pelo `release.yml` (issue #70), só a partir de uma tag SemVer num commit de
+`main`. Ela passa pelos mesmos controles:
+
+```text
+tag vX.Y.Z → commit (^{commit}, contido em main)
+  → docker build (mesmo Dockerfile e contexto, --pull, rótulos OCI source/revision/version)
+  → gate Trivy (mesmo binário/SHA256 e política HIGH/CRITICAL com correção, mesmo .trivyignore)
+  → SBOM CycloneDX da mesma imagem
+  → docker save → docker load (ID conferido) → push ghcr.io/lucasdevolps/almirante-api:vX.Y.Z e :sha-<commit>
+  → digest sha256 conferido nas duas tags → GitHub Release (digest + SBOM anexada)
+```
+
+- **O que é escaneado é o que é publicado.** Build e scan acontecem uma vez. O job de publicação não
+  reconstrói (`--pull` poderia trazer outra imagem base): carrega a imagem exportada e confere o ID
+  antes do push.
+- **Separação de privilégios.** O job que executa o build tem só `contents: read`. `packages: write` e
+  `contents: write` ficam em jobs que não fazem checkout nem build. O GHCR usa o `GITHUB_TOKEN`
+  (login via stdin), sem PAT nem secret, e nenhum job roda em runner self-hosted.
+- **Identidade imutável.** Deploy e rollback devem usar o **digest** (`@sha256:...`), registrado na
+  release. As tags `vX.Y.Z` e `sha-<commit>` não são sobrescritas pelo workflow e não existe `latest`.
+- **SBOM da release.** A SBOM da imagem publicada vai anexada à GitHub Release
+  (`almirante-api-vX.Y.Z.cdx.json`). As SBOMs dos pushes comuns continuam como artifact do run, com
+  retenção de 90 dias.
+- **Mesmo Trivy nos dois workflows.** `TRIVY_VERSION` e `TRIVY_SHA256` precisam ser iguais em
+  `container-security.yml` e `release.yml`, e o teste de política exige isso. Ao atualizar, troque os
+  dois arquivos no mesmo PR.
+- Attestations de proveniência (SLSA) não são geradas hoje.
+
+Processo, rollback e migrations: [`docs/release-process.md`](release-process.md).
+
 ## Política verificada automaticamente
 
 `scripts/tests/workflows.test.sh` (check `deploy-scripts`) reprova um PR que, entre outras coisas:
@@ -96,4 +130,8 @@ pegue o hash de `trivy_<versão>_Linux-64bit.tar.gz` em `trivy_<versão>_checksu
 - remova do scan o gate HIGH/CRITICAL `--ignore-unfixed --exit-code 1`, a análise de SO e bibliotecas, a
   conferência do SHA256 ou a publicação da SBOM;
 - use `continue-on-error` nos workflows de segurança;
-- deixe de monitorar NuGet, GitHub Actions ou Docker no Dependabot.
+- deixe de monitorar NuGet, GitHub Actions ou Docker no Dependabot;
+- afrouxe o `release.yml`: gatilho além de tag SemVer, escrita fora dos jobs de publicação, runner
+  self-hosted, publicação sem o gate ou sem conferir a imagem escaneada, `latest`, secrets ou Trivy
+  diferente do `container-security.yml` (lista completa em
+  [`docs/release-process.md`](release-process.md#política-verificada-automaticamente)).

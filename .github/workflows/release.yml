@@ -1,0 +1,386 @@
+name: Release
+
+# Release oficial (issue #70): uma tag SemVer vMAJOR.MINOR.PATCH, criada a partir de um commit de main, gera
+# UMA imagem da API, que é escaneada e publicada no GHCR, e a GitHub Release correspondente. Processo e
+# rollback: docs/release-process.md.
+#
+# Só tags disparam este workflow: não há gatilho de PR (nem pull_request_target) e nenhum job usa runner
+# self-hosted. O glob abaixo é só um filtro grosso; a validação efetiva do formato está no job "validate".
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Menor privilégio: o workflow só lê. Escrita é concedida por job, e só a jobs que não executam código do
+# repositório: "publish" (packages: write) e "github-release" (contents: write).
+permissions:
+  contents: read
+
+# Uma execução por tag; uma release em andamento nunca é cancelada por outra.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Nome fixo da imagem; o owner vem do repositório e é convertido para minúsculas no job "validate"
+  # (referências de imagem não aceitam maiúsculas: LucasDevolps -> lucasdevolps).
+  IMAGE_NAME: almirante-api
+  # Única forma aceita de versão: vMAJOR.MINOR.PATCH, sem zeros à esquerda, sem pré-release nem build.
+  SEMVER_REGEX: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  # Mesmo binário e hash de container-security.yml (scripts/tests/workflows.test.sh exige que sejam iguais).
+  TRIVY_VERSION: 0.74.0
+  TRIVY_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+  TRIVY_NO_PROGRESS: "true"
+
+jobs:
+  # Valida a tag e fixa o commit. Nada é construído nem publicado aqui.
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      commit: ${{ steps.commit.outputs.commit }}
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      # O nome da tag é dado controlado por quem a criou: entra só por env e é validado antes de qualquer uso.
+      - name: Validar a tag SemVer
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" != "tag" ]]; then
+            echo "::error::Release só é criada a partir de tag (ref_type recebido: '$REF_TYPE')."
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Tag fora do formato vMAJOR.MINOR.PATCH (ex.: v0.1.0). Nada foi publicado."
+            exit 1
+          fi
+          image="ghcr.io/${OWNER,,}/${IMAGE_NAME}"
+          if [[ ! "$image" =~ ^ghcr\.io/[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
+            echo "::error::Referência de imagem inválida: $image"
+            exit 1
+          fi
+          {
+            echo "version=$RELEASE_TAG"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+
+      # Histórico completo: necessário para provar que o commit pertence a main.
+      - name: Checkout da tag (histórico completo)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Tag anotada aponta para um objeto tag, lightweight aponta direto para o commit: "^{commit}" resolve os
+      # dois casos para o mesmo commit. A tag, o HEAD do checkout e o SHA do evento precisam concordar.
+      # O commit precisa estar na história de origin/main (branch protegida: só recebe código por PR com CI).
+      - name: Resolver o commit da tag e exigir que pertença a main
+        id: commit
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.version }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          commit=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          head=$(git rev-parse --verify "HEAD^{commit}")
+          evento=$(git rev-parse --verify "${EVENT_SHA}^{commit}")
+          if [[ "$commit" != "$head" || "$commit" != "$evento" ]]; then
+            echo "::error::Commit divergente: tag=$commit checkout=$head evento=$evento."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
+            echo "::error::O commit $commit não pertence à história de main. Crie a tag a partir de main (docs/release-process.md)."
+            exit 1
+          fi
+          echo "Tag $RELEASE_TAG -> commit $commit (contido em main)."
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      # Uma versão publicada não é refeita: se a GitHub Release já existe, para aqui (a imagem é conferida no
+      # job "publish", depois do login, porque o package pode ser privado).
+      - name: Recusar versão que já tem GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "::error::A GitHub Release $RELEASE_TAG já existe. Versões publicadas são imutáveis: crie uma nova versão."
+            exit 1
+          fi
+
+  # Constrói a imagem UMA vez a partir do commit da tag, aplica o mesmo gate do container-security.yml, gera a
+  # SBOM e entrega a própria imagem (docker save) ao job de publicação. Só leitura: sem token de escrita
+  # enquanto o build executa código do repositório.
+  build-scan:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      image-id: ${{ steps.build.outputs.image-id }}
+    steps:
+      - name: Checkout do commit da tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+
+      # Mesmo Dockerfile e contexto (backend/) do container-security.yml e do Compose. Os rótulos OCI ligam a
+      # imagem ao repositório (o GHCR usa "source" para associar o package), ao commit e à versão.
+      - name: Build da imagem da API
+        id: build
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          created=$(git log -1 --format=%cI "$COMMIT")
+          docker build --pull -f backend/Almirante.Api/Dockerfile -t "release/${IMAGE_NAME}:${COMMIT}" \
+            --label "org.opencontainers.image.title=${IMAGE_NAME}" \
+            --label "org.opencontainers.image.description=API do backend Almirante (Desbravadores)" \
+            --label "org.opencontainers.image.source=${SOURCE_URL}" \
+            --label "org.opencontainers.image.revision=${COMMIT}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.created=${created}" \
+            backend
+          echo "image-id=$(docker image inspect --format '{{.Id}}' "release/${IMAGE_NAME}:${COMMIT}")" >> "$GITHUB_OUTPUT"
+
+      - name: Instalar Trivy (SHA256 conferido)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/trivy"
+          mkdir -p "$dir"
+          curl -fsSLo "$dir/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  $dir/trivy.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$dir/trivy.tar.gz" -C "$dir" trivy
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # Mesma política do container-security.yml: HIGH/CRITICAL com correção disponível reprova e nada é
+      # publicado. Exceções só via .trivyignore (com justificativa e expiração).
+      - name: Gate de vulnerabilidades (HIGH/CRITICAL com correção)
+        env:
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          trivy image --scanners vuln --pkg-types os,library --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile .trivyignore --exit-code 1 --format table "release/${IMAGE_NAME}:${COMMIT}"
+
+      # SBOM CycloneDX da imagem que será publicada; vai anexada à GitHub Release.
+      - name: Gerar SBOM da imagem (CycloneDX)
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          arquivo="sbom/${IMAGE_NAME}-${VERSION}.cdx.json"
+          trivy image --format cyclonedx --output "$arquivo" "release/${IMAGE_NAME}:${COMMIT}"
+          componentes=$(jq -e 'select(.bomFormat == "CycloneDX") | .components | length' "$arquivo")
+          if (( componentes == 0 )); then
+            echo "SBOM gerada sem componentes." >&2
+            exit 1
+          fi
+
+      - name: Exportar a imagem construída
+        env:
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p image
+          docker save -o image/image.tar "release/${IMAGE_NAME}:${COMMIT}"
+
+      - name: Guardar a imagem para a publicação
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image-${{ needs.validate.outputs.commit }}
+          path: image/image.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Guardar a SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-sbom-${{ needs.validate.outputs.version }}
+          path: sbom/
+          if-no-files-found: error
+          retention-days: 90
+
+  # Publica no GHCR exatamente a imagem escaneada (confere o ID depois do docker load). Não faz checkout nem
+  # build: não executa código do repositório com o token de escrita.
+  publish:
+    needs: [validate, build-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # packages: write só para o push da imagem no GHCR com o GITHUB_TOKEN (sem PAT nem secret extra).
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Baixar a imagem construída
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-image-${{ needs.validate.outputs.commit }}
+          path: image
+
+      - name: Carregar e conferir a imagem
+        env:
+          COMMIT: ${{ needs.validate.outputs.commit }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          EXPECTED_ID: ${{ needs.build-scan.outputs.image-id }}
+        run: |
+          set -euo pipefail
+          docker load -i image/image.tar
+          local_ref="release/${IMAGE_NAME}:${COMMIT}"
+          id=$(docker image inspect --format '{{.Id}}' "$local_ref")
+          if [[ "$id" != "$EXPECTED_ID" ]]; then
+            echo "::error::A imagem carregada ($id) não é a imagem escaneada ($EXPECTED_ID)."
+            exit 1
+          fi
+          revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$local_ref")
+          version=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$local_ref")
+          if [[ "$revision" != "$COMMIT" || "$version" != "$VERSION" ]]; then
+            echo "::error::Rótulos OCI divergentes: revision=$revision version=$version."
+            exit 1
+          fi
+
+      # Token lido de variável de ambiente e passado por stdin: não aparece na linha de comando nem no log.
+      - name: Login no GHCR (GITHUB_TOKEN)
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+
+      # Imutabilidade: se a tag SemVer ou a tag do commit já existe no GHCR, nada é sobrescrito. Antes do
+      # primeiro push o package não existe e o GHCR responde "denied" em vez de "not found"; um package que
+      # existe mas que este token não lê também recusaria o push, então nada é sobrescrito nesse caso.
+      # Qualquer outra resposta (rede, 5xx) reprova, para não publicar sem saber.
+      - name: Recusar tags de imagem já publicadas
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          for tag in "$VERSION" "sha-${COMMIT}"; do
+            if saida=$(docker manifest inspect "${IMAGE}:${tag}" 2>&1); then
+              echo "::error::${IMAGE}:${tag} já existe no GHCR. Versões publicadas são imutáveis: crie uma nova versão."
+              exit 1
+            fi
+            if ! grep -qiE 'manifest unknown|not found|no such manifest|name unknown|denied' <<<"$saida"; then
+              echo "::error::Não foi possível confirmar se ${IMAGE}:${tag} existe: $saida"
+              exit 1
+            fi
+          done
+
+      # Duas identidades para a mesma imagem: a versão (vX.Y.Z) e o commit completo (sha-<40 hex>). Nenhuma tag
+      # móvel ("latest") é publicada. O digest das duas precisa ser o mesmo.
+      - name: Publicar no GHCR
+        id: push
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          local_ref="release/${IMAGE_NAME}:${COMMIT}"
+          docker tag "$local_ref" "${IMAGE}:${VERSION}"
+          docker tag "$local_ref" "${IMAGE}:sha-${COMMIT}"
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:sha-${COMMIT}"
+          digest_versao=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -r '.digest')
+          digest_commit=$(docker buildx imagetools inspect "${IMAGE}:sha-${COMMIT}" --format '{{json .Manifest}}' | jq -r '.digest')
+          if [[ ! "$digest_versao" =~ ^sha256:[0-9a-f]{64}$ || "$digest_versao" != "$digest_commit" ]]; then
+            echo "::error::Digests divergentes ou inválidos: ${VERSION}=${digest_versao} sha-${COMMIT}=${digest_commit}."
+            exit 1
+          fi
+          echo "digest=$digest_versao" >> "$GITHUB_OUTPUT"
+
+      - name: Logout do GHCR
+        if: always()
+        run: docker logout ghcr.io
+
+  # Cria a GitHub Release da tag, só depois que a imagem foi publicada e o digest conferido. Não faz checkout:
+  # a release é criada pela API, a partir da tag já existente (--verify-tag), nunca de uma branch.
+  github-release:
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # contents: write só para criar a GitHub Release e anexar a SBOM.
+      contents: write
+    steps:
+      - name: Baixar a SBOM
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-sbom-${{ needs.validate.outputs.version }}
+          path: sbom
+
+      - name: Criar a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          IMAGE: ${{ needs.validate.outputs.image }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          data=$(date -u +%Y-%m-%d)
+          {
+            echo "## Artefato"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Versão | \`${VERSION}\` (${data}) |"
+            echo "| Commit | [\`${COMMIT}\`](${SERVER_URL}/${GH_REPO}/commit/${COMMIT}) |"
+            echo "| Imagem | \`${IMAGE}:${VERSION}\` |"
+            echo "| Imagem (commit) | \`${IMAGE}:sha-${COMMIT}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Workflow | [run ${RUN_ID}](${SERVER_URL}/${GH_REPO}/actions/runs/${RUN_ID}) |"
+            echo
+            echo "Deploy e rollback por digest (imutável): \`${IMAGE}@${DIGEST}\`."
+            echo "SBOM CycloneDX da imagem anexada a esta release."
+            echo
+            echo "**Migrations:** são aplicadas automaticamente na inicialização da API. Voltar para uma imagem"
+            echo "anterior **não** reverte o schema; confira a compatibilidade antes (docs/release-process.md)."
+            echo
+          } > release-notes.md
+          gh release create "$VERSION" --verify-tag --title "$VERSION" \
+            --notes-file release-notes.md --generate-notes \
+            "sbom/${IMAGE_NAME}-${VERSION}.cdx.json"
+
+      - name: Resumo da release
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          IMAGE: ${{ needs.validate.outputs.image }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          {
+            echo "## Release \`${VERSION}\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Git tag | \`${VERSION}\` |"
+            echo "| Commit | \`${COMMIT}\` |"
+            echo "| Imagem | \`${IMAGE}:${VERSION}\` |"
+            echo "| Imagem (commit) | \`${IMAGE}:sha-${COMMIT}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| GitHub Release | ${SERVER_URL}/${REPO}/releases/tag/${VERSION} |"
+          } >> "$GITHUB_STEP_SUMMARY"

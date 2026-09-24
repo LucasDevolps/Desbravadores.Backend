@@ -1,0 +1,20 @@
+# Release: overlay opt-in que roda a API a partir da imagem PUBLICADA no GHCR (build once, deploy many), em vez
+# de construí-la na máquina. Não altera o desenvolvimento local nem o deploy contínuo de develop
+# (backend-deploy.yml), que continuam usando o "build:" do compose.yaml.
+#
+# ALMIRANTE_API_IMAGE é obrigatória e deve ser uma referência imutável de uma release (docs/release-process.md):
+#   ghcr.io/lucasdevolps/almirante-api@sha256:<digest>   (preferível: prova exatamente o que roda)
+#   ghcr.io/lucasdevolps/almirante-api:v0.1.0            (tag SemVer da release)
+# Nunca "latest": o workflow de release não publica tags móveis.
+#
+# Uso (combina com compose.tls.yaml, se for o caso; exige Docker Compose 2.24.4+ por causa do "!reset"):
+#   docker compose -f compose.yaml -f compose.release.yaml pull api
+#   docker compose -f compose.yaml -f compose.release.yaml up -d --no-build
+# Rollback: troque ALMIRANTE_API_IMAGE pela referência da release anterior e repita os dois comandos.
+services:
+  api:
+    # Remove o "build:" herdado do compose.yaml: com o overlay, um "up --build" não pode gerar localmente uma
+    # imagem com o nome da release.
+    build: !reset null
+    image: ${ALMIRANTE_API_IMAGE:?defina ALMIRANTE_API_IMAGE com a imagem da release (tag vX.Y.Z ou @sha256:digest)}
+    pull_policy: missing

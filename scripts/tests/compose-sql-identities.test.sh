@@ -26,6 +26,7 @@ JWT_KEY_V1=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 TLS_CERT_PATH=$TMP/cert.pem
 TLS_KEY_PATH=$TMP/key.pem
 TLS_PUBLIC_HOST=api.exemplo.test
+ALMIRANTE_API_IMAGE=ghcr.io/lucasdevolps/almirante-api:v0.1.0
 EOF
 }
 completo() { base_env; printf 'SQL_ADMIN_USER=almirante_admin_bd\nSQL_ADMIN_PASSWORD=%s\n' "$ADMIN_SENTINEL"; }
@@ -67,7 +68,7 @@ saida=$(compose_config "$TMP/sem-senha.env")
 if [[ $? -ne 0 && "$saida" == *"SQL_ADMIN_PASSWORD"* ]]; then ok "sem SQL_ADMIN_PASSWORD o Compose recusa (nenhum fallback para a senha do sa)"; else falha "SQL_ADMIN_PASSWORD obrigatória" "$saida"; fi
 
 # 2. Nos arquivos do Compose (sem contar comentários), nenhum "-sa" como valor padrão nem "User Id=sa".
-for arquivo in compose.yaml compose.tls.yaml compose.https.yaml; do
+for arquivo in compose.yaml compose.tls.yaml compose.https.yaml compose.release.yaml; do
   codigo=$(grep -vE '^[[:space:]]*#' "$ROOT/$arquivo")
   if grep -qiE 'SQL_ADMIN_(USER|PASSWORD):-|:-sa\b|User Id=sa\b|SQL_ADMIN_PRIVILEGE_CHECK|AdminPrivilegeCheck' <<<"$codigo"; then
     falha "$arquivo" "contém fallback para sa ou modo permissivo de auditoria"
@@ -76,7 +77,7 @@ done
 
 # 3. Configuração efetiva para cada combinação de overlays usada em produção/dev.
 completo > "$TMP/completo.env"
-combos=("-f compose.yaml" "-f compose.yaml -f compose.tls.yaml" "-f compose.yaml -f compose.https.yaml")
+combos=("-f compose.yaml" "-f compose.yaml -f compose.tls.yaml" "-f compose.yaml -f compose.https.yaml" "-f compose.yaml -f compose.tls.yaml -f compose.release.yaml")
 for combo in "${combos[@]}"; do
   # shellcheck disable=SC2086
   config=$(compose_config "$TMP/completo.env" $combo)

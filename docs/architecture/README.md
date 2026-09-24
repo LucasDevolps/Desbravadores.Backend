@@ -67,6 +67,7 @@ SQL Server 2022 ── dados, triggers de auditoria, rowversion, índices de ide
 | [0007](adr/0007-testar-integracao-com-sql-server-real-no-ci.md) | SQL Server real e descartável nos testes do CI |
 | [0008](adr/0008-usar-aspire-no-desenvolvimento-e-opentelemetry-na-api.md) | Aspire no desenvolvimento e ServiceDefaults/OpenTelemetry na API |
 | [0009](adr/0009-aplicar-migrations-na-inicializacao-da-api.md) | Migrations aplicadas na inicialização da API |
+| [0010](adr/0010-publicar-releases-como-imagem-imutavel-no-ghcr.md) | Releases SemVer publicadas como imagem imutável no GHCR |
 
 ## Documentação atual e decisão histórica
 
