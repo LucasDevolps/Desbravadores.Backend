@@ -203,5 +203,9 @@ jobs:
           bash scripts/tests/sql-bootstrap.test.sh
           bash scripts/tests/compose-sql-identities.test.sh
 
+      # Overlay de release: API a partir da imagem publicada no GHCR, sem build local e sem tag móvel (#70).
+      - name: Testar overlay de release do Compose
+        run: bash scripts/tests/compose-release.test.sh
+
       - name: Testar nginx HTTP, HTTPS e rate limiting em containers descartáveis
         run: bash scripts/tests/nginx.test.sh

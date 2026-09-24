@@ -196,6 +196,139 @@ else
   erro ".github/dependabot.yml não encontrado."
 fi
 
+# 8. Release (#70): só tag SemVer dispara; escrita só nos jobs que publicam e que não executam código do repo;
+#    a mesma imagem escaneada é publicada no GHCR com tag SemVer + tag do commit; GitHub Release da tag.
+RL="$WF/release.yml"
+if [[ -f "$RL" ]]; then
+  head=$(cabecalho "$RL")
+  gatilho=$(awk '/^on:/ { d = 1; next } /^[^[:space:]#]/ { d = 0 } d' "$RL")
+  if grep -qE '^[[:space:]]+tags:' <<<"$gatilho" && grep -qF '"v*.*.*"' <<<"$gatilho" \
+    && ! grep -qE '^[[:space:]]+(branches|branches-ignore|paths):|^[[:space:]]{2}(pull_request|pull_request_target|workflow_dispatch|workflow_run|schedule|release):' <<<"$gatilho"; then
+    ok "release.yml: disparado só por push de tag v*.*.*"
+  else
+    erro "release.yml: o gatilho deve ser apenas 'push: tags: [\"v*.*.*\"]' (sem PR, dispatch, branches ou agendamento)."
+  fi
+  if grep -A3 -E '^permissions:' <<<"$head" | grep -qE ':[[:space:]]*write'; then
+    erro "release.yml: permissão de escrita no topo; conceda só no job que publica."
+  else
+    ok "release.yml: topo só com leitura"
+  fi
+  grep -qE '^[[:space:]]+cancel-in-progress:[[:space:]]*false' <<<"$head" \
+    && ok "release.yml: release em andamento não é cancelada" || erro "release.yml: falta concurrency com cancel-in-progress: false."
+
+  # Escrita só onde precisa: packages no "publish", contents no "github-release"; nenhum outro escopo de escrita.
+  while IFS= read -r job; do
+    [[ -n "$job" ]] || continue
+    bloco=$(bloco_do_job "$RL" "$job")
+    runs=$(grep -E '^[[:space:]]*runs-on:' <<<"$bloco" | head -1)
+    [[ "$runs" =~ runs-on:[[:space:]]*ubuntu-latest[[:space:]]*$ ]] \
+      && ok "release.yml/$job: runner hospedado (ubuntu-latest)" || erro "release.yml/$job: use runs-on: ubuntu-latest (nunca self-hosted)."
+    grep -qE '^[[:space:]]*timeout-minutes:' <<<"$bloco" || erro "release.yml/$job: falta timeout-minutes."
+    grep -qE '^    permissions:' <<<"$bloco" || erro "release.yml/$job: declare permissions no job."
+    escrita=$(grep -oE '^[[:space:]]+[a-z-]+:[[:space:]]*write' <<<"$bloco" | tr -d ' ' | sort -u | tr '\n' ' ')
+    case "$job" in
+      publish) esperado="packages:write " ;;
+      github-release) esperado="contents:write " ;;
+      *) esperado="" ;;
+    esac
+    if [[ "$escrita" == "$esperado" ]]; then
+      ok "release.yml/$job: escrita '${escrita:-nenhuma}'"
+    else
+      erro "release.yml/$job: permissões de escrita '${escrita}', esperado '${esperado:-nenhuma}'."
+    fi
+    # Jobs com token de escrita não fazem checkout nem build: não executam código do repositório.
+    if [[ -n "$esperado" ]] && grep -vE '^[[:space:]]*#' <<<"$bloco" | grep -qE 'actions/checkout@|docker (image )?build[[:space:]]|docker compose'; then
+      erro "release.yml/$job: job com escrita não pode fazer checkout/build."
+    fi
+  done < <(jobs_de "$RL")
+  for job in validate build-scan publish github-release; do
+    jobs_de "$RL" | grep -qx "$job" || erro "release.yml: job '$job' não encontrado."
+  done
+  if grep -qE 'id-token:|attestations:|security-events:|actions:[[:space:]]*write' "$RL"; then
+    erro "release.yml: escopo de token não previsto (id-token/attestations/security-events/actions)."
+  fi
+
+  # Validação SemVer efetiva: extrai SEMVER_REGEX do workflow e testa exemplos válidos e inválidos.
+  regex=$(sed -nE "s/^[[:space:]]*SEMVER_REGEX:[[:space:]]*'(.*)'[[:space:]]*$/\1/p" "$RL")
+  if [[ -z "$regex" ]]; then
+    erro "release.yml: SEMVER_REGEX não encontrado."
+  else
+    semver_ok=1
+    for v in v0.1.0 v0.1.1 v0.2.0 v1.0.0 v1.2.3 v10.20.30; do [[ "$v" =~ $regex ]] || { semver_ok=0; erro "release.yml: SEMVER_REGEX recusa '$v' (válido)."; }; done
+    for v in latest teste v1 v1.2 foo-1.0 1.2.3 v1.2.3.4 v01.2.3 v1.02.3 v1.2.03 v1.0.0-rc.1 v1.0.0+build 'v1.2.3 ' "v1.2.3;id" "v1.2.3\$(id)"; do
+      [[ "$v" =~ $regex ]] && { semver_ok=0; erro "release.yml: SEMVER_REGEX aceita '$v' (inválido)."; }
+    done
+    ((semver_ok)) && ok "release.yml: SEMVER_REGEX aceita só vMAJOR.MINOR.PATCH"
+  fi
+  exige_em "$RL" validate '$SEMVER_REGEX' "valida a tag com SEMVER_REGEX"
+  exige_em "$RL" validate "github.ref_type" "exige que o ref seja uma tag"
+  exige_em "$RL" validate '^{commit}' "resolve o commit de tag anotada ou lightweight"
+  exige_em "$RL" validate 'fetch-depth: 0' "tem o histórico para verificar main"
+  exige_em "$RL" validate 'git merge-base --is-ancestor' "exige commit contido em main"
+  exige_em "$RL" validate 'gh release view' "recusa versão com GitHub Release existente"
+  exige_em "$RL" build-scan 'ref: ${{ needs.validate.outputs.commit }}' "faz checkout do commit da tag"
+  exige_em "$RL" build-scan '-f backend/Almirante.Api/Dockerfile' "constrói a imagem real da API"
+  exige_em "$RL" build-scan 'org.opencontainers.image.revision=${COMMIT}' "rotula a imagem com o commit"
+  exige_em "$RL" build-scan 'org.opencontainers.image.version=${VERSION}' "rotula a imagem com a versão"
+  exige_em "$RL" build-scan 'sha256sum --check' "confere o SHA256 do binário do Trivy"
+  exige_em "$RL" build-scan '--severity HIGH,CRITICAL --ignore-unfixed' "gate em HIGH/CRITICAL com correção"
+  exige_em "$RL" build-scan '--exit-code 1' "o gate reprova antes de publicar"
+  exige_em "$RL" build-scan '--format cyclonedx' "gera SBOM CycloneDX"
+  exige_em "$RL" build-scan 'docker save' "entrega a imagem escaneada ao publish"
+  exige_em "$RL" publish 'docker load' "publica a imagem escaneada (sem rebuild)"
+  exige_em "$RL" publish 'EXPECTED_ID: ${{ needs.build-scan.outputs.image-id }}' "confere o ID da imagem escaneada"
+  exige_em "$RL" publish 'docker login ghcr.io --username "$REGISTRY_USER" --password-stdin' "login no GHCR por stdin"
+  exige_em "$RL" publish 'REGISTRY_TOKEN: ${{ github.token }}' "usa o GITHUB_TOKEN"
+  exige_em "$RL" publish 'docker manifest inspect' "recusa tag de imagem já publicada"
+  exige_em "$RL" publish 'docker push "${IMAGE}:${VERSION}"' "publica a tag SemVer"
+  exige_em "$RL" publish 'docker push "${IMAGE}:sha-${COMMIT}"' "publica a tag do commit"
+  exige_em "$RL" publish 'digest=' "exporta o digest publicado"
+  exige_em "$RL" github-release 'needs: [validate, publish]' "só cria a release depois da imagem publicada"
+  exige_em "$RL" github-release 'gh release create "$VERSION" --verify-tag' "cria a release da tag existente"
+  exige_em "$RL" github-release '--generate-notes' "usa as release notes geradas pelo GitHub"
+  exige_em "$RL" github-release '${DIGEST}' "registra o digest na release"
+  grep -qF 'image="ghcr.io/${OWNER,,}/${IMAGE_NAME}"' "$RL" \
+    && ok "release.yml: imagem em ghcr.io com owner em minúsculas" || erro "release.yml: a imagem deve ser ghcr.io/\${OWNER,,}/\${IMAGE_NAME}."
+
+  # Mesmo Trivy do container-security.yml.
+  for var in TRIVY_VERSION TRIVY_SHA256; do
+    a=$(grep -E "^[[:space:]]+$var:" "$RL" | head -1 | tr -d ' ')
+    b=$(grep -E "^[[:space:]]+$var:" "$CS" 2>/dev/null | head -1 | tr -d ' ')
+    [[ -n "$a" && "$a" == "$b" ]] && ok "release.yml: $var igual ao container-security.yml" || erro "release.yml: $var diverge do container-security.yml."
+  done
+
+  # Sem tag móvel, sem credencial além do GITHUB_TOKEN, sem continue-on-error.
+  codigo=$(grep -vE '^[[:space:]]*#' "$RL")
+  grep -qiE ':latest\b|latest"' <<<"$codigo" && erro "release.yml: não publique a tag móvel 'latest'." || ok "release.yml: sem tag latest"
+  grep -qE 'secrets\.' <<<"$codigo" && erro "release.yml: use só o GITHUB_TOKEN (github.token), sem secrets." || ok "release.yml: nenhum secret além do GITHUB_TOKEN"
+  grep -qE -- 'docker login[^|]*(--password[[:space:]=]|-p[[:space:]])|echo[^|]*(_TOKEN|github\.token)' <<<"$codigo" \
+    && erro "release.yml: token em argumento ou impresso no log." || ok "release.yml: token nunca em argumento nem no log"
+  grep -qE '^[[:space:]]*continue-on-error:' <<<"$codigo" && erro "release.yml: 'continue-on-error' esconderia falha de release."
+  grep -qE '(^|[;&|[:space:]])(eval|source)[[:space:]]' <<<"$codigo" && erro "release.yml: não use eval/source."
+  grep -qE 'uses:[[:space:]]*actions/checkout@' <<<"$codigo" && ! grep -qE 'persist-credentials:[[:space:]]*true' <<<"$codigo" \
+    && [[ $(grep -c 'actions/checkout@' <<<"$codigo") -eq $(grep -c 'persist-credentials: false' <<<"$codigo") ]] \
+    && ok "release.yml: checkouts sem persistir credenciais" || erro "release.yml: todo checkout precisa de persist-credentials: false."
+  # Contexto do GitHub (ex.: nome da tag) só entra em scripts por env: nenhuma expressão dentro de "run:".
+  injecao=$(awk '
+    /^[[:space:]]*(- )?run:[[:space:]]*\|/ { match($0, /^[[:space:]]*/); ind = RLENGTH; bloco = 1; next }
+    bloco { match($0, /^[[:space:]]*/); if (NF > 0 && RLENGTH <= ind) bloco = 0 }
+    bloco && /\$\{\{/ { print }
+    /^[[:space:]]*(- )?run:[[:space:]]*[^|[:space:]]/ && /\$\{\{/ { print }
+  ' "$RL")
+  if [[ -n "$injecao" ]]; then
+    erro "release.yml: expressão \${{ }} dentro de run: (passe por env:): $(head -1 <<<"$injecao" | tr -s ' ')"
+  else
+    ok "release.yml: nenhuma expressão \${{ }} dentro de scripts"
+  fi
+else
+  erro "release.yml não encontrado."
+fi
+if [[ -f "$REPO/compose.release.yaml" ]] && grep -qF 'bash scripts/tests/compose-release.test.sh' "$CI"; then
+  ok "backend-ci.yml: testa o overlay compose.release.yaml"
+else
+  erro "backend-ci.yml: o check deploy-scripts deve rodar scripts/tests/compose-release.test.sh."
+fi
+
 if ((falhas > 0)); then
   echo
   echo "$falhas verificação(ões) de política falharam." >&2

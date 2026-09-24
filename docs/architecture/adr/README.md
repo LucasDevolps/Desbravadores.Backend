@@ -17,6 +17,7 @@ sistema está estruturado hoje?" ([voltar à documentação de arquitetura](../R
 | [0007](0007-testar-integracao-com-sql-server-real-no-ci.md) | Testar com SQL Server real, descartável, no CI | Accepted |
 | [0008](0008-usar-aspire-no-desenvolvimento-e-opentelemetry-na-api.md) | Usar .NET Aspire para desenvolvimento local e ServiceDefaults com OpenTelemetry na API | Accepted |
 | [0009](0009-aplicar-migrations-na-inicializacao-da-api.md) | Aplicar as migrations do EF Core na inicialização da API | Accepted |
+| [0010](0010-publicar-releases-como-imagem-imutavel-no-ghcr.md) | Publicar releases como imagem imutável no GHCR a partir de tags SemVer | Accepted |
 
 Template: [`0000-template.md`](0000-template.md).
 

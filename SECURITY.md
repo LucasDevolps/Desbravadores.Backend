@@ -3,20 +3,24 @@
 Este documento descreve como reportar vulnerabilidades do backend **Almirante**
 (`Desbravadores.Backend`) e como esses reportes são tratados.
 
-## Branches suportadas
+## Versões suportadas
 
-O projeto não publica versões numeradas. As correções de segurança são aplicadas nas branches
-mantidas atualmente:
+O projeto publica releases com Semantic Versioning (tags `vMAJOR.MINOR.PATCH` e imagem da API em
+`ghcr.io/lucasdevolps/almirante-api`), conforme [`docs/release-process.md`](docs/release-process.md).
+Enquanto estiver em `0.x`, **apenas a release mais recente** recebe correções de segurança. Não há
+backport para versões anteriores, nem suporte de longo prazo (LTS):
 
-| Branch | Suporte |
+| Versão / branch | Suporte |
 |---|---|
-| `main` | Sim — versão principal/estável |
-| `develop` | Sim — integração ativa e próxima versão |
+| Release mais recente (`vX.Y.Z`) | Sim |
+| Releases anteriores | Não: atualize para a mais recente |
+| `main` | Sim, é a origem das releases |
+| `develop` | Sim, com integração ativa e a próxima versão |
 | Demais branches (`feature/*`, `fix/*`, branches antigas) | Não garantido |
 
-Correções entram primeiro em `develop` e chegam a `main` pelo fluxo normal de Pull Request
-descrito em [`CONTRIBUTING.md`](CONTRIBUTING.md). Esta tabela pode mudar se o projeto passar a
-publicar versões.
+Correções entram primeiro em `develop`, chegam a `main` pelo fluxo normal de Pull Request descrito em
+[`CONTRIBUTING.md`](CONTRIBUTING.md) e são entregues numa **nova versão PATCH**. Uma release já
+publicada não é alterada nem republicada.
 
 ## Como reportar uma vulnerabilidade
 
@@ -44,7 +48,7 @@ Sempre que possível, informe:
 - passos para reprodução;
 - pré-condições (autenticação necessária, cargo, configuração específica);
 - impacto potencial;
-- branch e commit afetados;
+- versão (`vX.Y.Z`), branch ou commit afetados;
 - evidências relevantes (requisições e respostas **sanitizadas**, trechos de log sem dados reais);
 - possível mitigação, se conhecida.
 
@@ -76,14 +80,16 @@ validação e testes (incluindo regressão)
    ↓
 correção em develop → main
    ↓
+nova release (PATCH)
+   ↓
 divulgação responsável, quando aplicável
 ```
 
 - O projeto é mantido individualmente. Não há prazo formal de resposta ou de correção; os
   reportes são tratados com prioridade proporcional ao impacto.
 - Quem reportou é mantido informado sobre a confirmação e a correção pelo mesmo canal privado.
-- Detalhes técnicos só são publicados depois que a correção estiver disponível nas branches
-  suportadas e, quando aplicável, depois da rotação de segredos afetados.
+- Detalhes técnicos só são publicados depois que a correção estiver disponível numa release e nas
+  branches suportadas e, quando aplicável, depois da rotação de segredos afetados.
 
 Decisões de segurança já adotadas pela aplicação estão em
 [`docs/authentication-security.md`](docs/authentication-security.md).

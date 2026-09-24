@@ -282,6 +282,7 @@ aparecem nos diagramas acima.
 | [`codeql.yml`](../../.github/workflows/codeql.yml) | push e PR para `main` e `develop`, e semanal | runner hospedado | Análise CodeQL de C#. |
 | [`container-security.yml`](../../.github/workflows/container-security.yml) | push e PR para `main` e `develop`, e semanal | runner hospedado | Build da imagem da API, scan com Trivy e SBOM CycloneDX. |
 | [`backend-deploy.yml`](../../.github/workflows/backend-deploy.yml) | push em `develop` que altere backend ou infraestrutura | runners self-hosted: Linux (`popos-lucas`) e Windows | `docker compose up` no modo `http` ou `tls`, e publicação no IIS com nginx nativo. |
+| [`release.yml`](../../.github/workflows/release.yml) | push de tag `vMAJOR.MINOR.PATCH` de um commit de `main` | runner hospedado | Build único da imagem da API, gate do Trivy, SBOM, publicação no GHCR (`vX.Y.Z` e `sha-<commit>`) e GitHub Release. Ver [`docs/release-process.md`](../release-process.md). |
 
 O Dependabot ([`.github/dependabot.yml`](../../.github/dependabot.yml)) abre PRs semanais para
 `develop` com atualizações de NuGet, GitHub Actions e imagens Docker. Detalhes em
