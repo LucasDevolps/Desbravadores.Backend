@@ -1,6 +1,13 @@
 # Desbravadores.Backend
 
-Backend do projeto **Almirante**, responsável pela autenticação, consulta de usuários e gerenciamento de lançamentos financeiros dos Desbravadores. A aplicação é uma API HTTP construída com ASP.NET Core, persiste os dados no SQL Server por meio do Entity Framework Core e protege os recursos com autenticação JWT Bearer.
+[![Backend CI](https://github.com/LucasDevolps/Desbravadores.Backend/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/LucasDevolps/Desbravadores.Backend/actions/workflows/backend-ci.yml)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+
+Backend (API HTTP) do projeto **Almirante**, que centraliza a gestão dos Desbravadores:
+autenticação e gestão de usuários, eventos com cobranças por membro e lançamentos financeiros.
+
+- **Stack:** .NET 10 / ASP.NET Core, SQL Server com Entity Framework Core, autenticação JWT Bearer.
+- **Estado:** MVP funcional, com CI no GitHub Actions — detalhes em [Estado atual](#estado-atual).
 
 ## Estado atual
 
@@ -47,9 +54,12 @@ O backend está em fase de **MVP funcional** e possui:
 ├── .github/
 │   ├── ISSUE_TEMPLATE/             # formulários de bug, feature, segurança e dívida técnica
 │   ├── CODEOWNERS
+│   ├── dependabot.yml              # atualizações semanais de NuGet, Actions e imagens Docker
 │   ├── pull_request_template.md
 │   └── workflows/
-│       └── backend-ci.yml          # restore, build e testes do backend
+│       ├── backend-ci.yml          # restore, build e testes do backend
+│       ├── codeql.yml              # análise estática CodeQL (C#)
+│       └── container-security.yml  # scan da imagem da API (Trivy) e SBOM CycloneDX
 ├── backend/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
 │   ├── Almirante.Api.Tests/        # testes de integração
@@ -613,6 +623,10 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
   com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
 - `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
   com certificados de teste e containers descartáveis.
+- `coverage`: consolida a cobertura (Coverlet) das duas suítes de teste com o ReportGenerator, mostra
+  linhas e branches no Job Summary, publica o relatório HTML/Cobertura (`coverage-<sha>`) e aplica um
+  quality gate contra regressão em relação ao baseline medido. Detalhes, baseline e política em
+  [docs/test-coverage.md](docs/test-coverage.md).
 
 Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
 Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.

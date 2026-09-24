@@ -113,7 +113,18 @@ filtro de caminhos, com três checks obrigatórios:
 |---|---|
 | `build-and-test` | restore, build Release e testes sem dependências externas (Windows) |
 | `sqlserver-integration` | testes `Category=RequiresSqlServer` contra SQL Server 2022 descartável (Linux) |
-| `deploy-scripts` | testes dos scripts de deploy, política dos workflows, bootstrap SQL, Compose e Nginx |
+| `deploy-scripts` | testes dos scripts de deploy, política dos workflows, cobertura, bootstrap SQL, Compose e Nginx |
+
+Depois dos dois jobs de testes .NET, o job `coverage` consolida a cobertura das duas suítes, publica o
+relatório e reprova regressões acima da tolerância em relação ao baseline. Não baixe o baseline para
+"passar" um PR: a política e como atualizá-lo legitimamente estão em
+[`docs/test-coverage.md`](docs/test-coverage.md).
+
+Além do CI, todo push e PR para `main` e `develop` passa pelos workflows de segurança da cadeia de
+suprimentos: `codeql.yml` (CodeQL para C#) e `container-security.yml` (scan da imagem da API com Trivy e
+SBOM CycloneDX). O scan reprova HIGH/CRITICAL com correção disponível. O Dependabot abre PRs semanais para
+`develop`. Política, exceções e como ver os findings estão em
+[`docs/supply-chain-security.md`](docs/supply-chain-security.md).
 
 Para reproduzir localmente o check `build-and-test`:
 
@@ -134,6 +145,7 @@ Os scripts do check `deploy-scripts` (requerem Bash; o de Nginx também requer D
 ```bash
 bash scripts/tests/deploy-config.test.sh
 bash scripts/tests/workflows.test.sh
+bash scripts/tests/coverage.test.sh
 bash scripts/tests/sql-bootstrap.test.sh
 bash scripts/tests/compose-sql-identities.test.sh
 bash scripts/tests/nginx.test.sh
