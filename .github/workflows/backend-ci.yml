@@ -42,7 +42,7 @@ jobs:
 
       - name: Resultados vinculados ao commit
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unit-${{ github.event.pull_request.head.sha || github.sha }}
           path: TestResults/*.trx
@@ -51,7 +51,7 @@ jobs:
 
       # Só a pasta do coletor (TestResults/<guid>/): a cópia que o logger TRX põe em <máquina>/In/ duplicaria a entrada.
       - name: Cobertura bruta dos testes sem dependências externas
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-unit-${{ github.event.pull_request.head.sha || github.sha }}
           path: TestResults/*/coverage.cobertura.xml
@@ -100,7 +100,7 @@ jobs:
 
       - name: Resultados vinculados ao commit
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sqlserver-${{ github.event.pull_request.head.sha || github.sha }}
           path: TestResults/*.trx
@@ -108,7 +108,7 @@ jobs:
           retention-days: 14
 
       - name: Cobertura bruta dos testes SQL Server
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-sqlserver-${{ github.event.pull_request.head.sha || github.sha }}
           path: TestResults/*/coverage.cobertura.xml
@@ -170,7 +170,7 @@ jobs:
 
       - name: Publicar relatório de cobertura
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ github.event.pull_request.head.sha || github.sha }}
           path: coverage-report/
