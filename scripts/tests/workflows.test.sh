@@ -10,6 +10,8 @@
 #
 # Sem exceções para build/testes: compilar uma PR também executa código vindo dela.
 set -uo pipefail
+# Com pipefail, `produtor | grep -q` é intermitente: o grep -q sai no primeiro acerto, o produtor leva
+# SIGPIPE (141) e o pipeline "falha" mesmo tendo achado. Em pipelines use `grep ... >/dev/null`.
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 WF="$REPO/.github/workflows"
@@ -81,7 +83,7 @@ done
 #    SQL Server real. Verifica comandos/propriedades dentro de cada job, não posições no YAML.
 CI="$WF/backend-ci.yml"
 exige() { # JOB TRECHO DESCRICAO
-  if bloco_do_job "$CI" "$1" | grep -qF -- "$2"; then
+  if bloco_do_job "$CI" "$1" | grep -F -- "$2" >/dev/null; then
     ok "backend-ci.yml/$1: $3"
   else
     erro "backend-ci.yml/$1: $3 (não encontrado: '$2')."
@@ -98,7 +100,7 @@ if [[ -f "$CI" ]]; then
   exige sqlserver-integration 'mcr.microsoft.com/mssql/server:2022' "usa SQL Server 2022 descartável"
   exige sqlserver-integration 'openssl rand' "gera senha aleatória por execução"
   exige sqlserver-integration '--publish 127.0.0.1::1433' "expõe o SQL só em loopback"
-  if bloco_do_job "$CI" sqlserver-integration | grep -B2 -F 'docker rm --force almirante-ci-sql' | grep -qF 'if: always()'; then
+  if bloco_do_job "$CI" sqlserver-integration | grep -B2 -F 'docker rm --force almirante-ci-sql' | grep -F 'if: always()' >/dev/null; then
     ok "backend-ci.yml/sqlserver-integration: remove o container mesmo em falha"
   else
     erro "backend-ci.yml/sqlserver-integration: a remoção do SQL descartável precisa de 'if: always()'."
@@ -142,7 +144,7 @@ done
 QL="$WF/codeql.yml"
 CS="$WF/container-security.yml"
 exige_em() { # ARQUIVO JOB TRECHO DESCRICAO
-  if bloco_do_job "$1" "$2" | grep -qF -- "$3"; then
+  if bloco_do_job "$1" "$2" | grep -F -- "$3" >/dev/null; then
     ok "$(basename "$1")/$2: $4"
   else
     erro "$(basename "$1")/$2: $4 (não encontrado: '$3')."
@@ -165,12 +167,12 @@ if [[ -f "$CS" ]]; then
   exige_em "$CS" image-scan '--exit-code 1' "o gate reprova o job"
   exige_em "$CS" image-scan '--format cyclonedx' "gera SBOM CycloneDX"
   exige_em "$CS" image-scan 'name: sbom-almirante-api-${{ github.sha }}' "publica a SBOM como artifact do commit"
-  if bloco_do_job "$CS" image-scan | grep -qE 'security-events:[[:space:]]*write'; then
+  if bloco_do_job "$CS" image-scan | grep -E 'security-events:[[:space:]]*write' >/dev/null; then
     erro "container-security.yml/image-scan: o job que executa o build da PR não pode ter security-events: write."
   else
     ok "container-security.yml/image-scan: build da PR sem permissão de escrita"
   fi
-  if grep -E '^[[:space:]]*-?[[:space:]]*uses:' "$CS" | grep -qE 'aquasecurity/(trivy-action|setup-trivy)'; then
+  if grep -E '^[[:space:]]*-?[[:space:]]*uses:' "$CS" | grep -E 'aquasecurity/(trivy-action|setup-trivy)' >/dev/null; then
     erro "container-security.yml: use o binário do Trivy com SHA256 conferido (tags das actions foram sequestradas, GHSA-69fq-xp46-6x23)."
   fi
 else
@@ -208,7 +210,7 @@ if [[ -f "$RL" ]]; then
   else
     erro "release.yml: o gatilho deve ser apenas 'push: tags: [\"v*.*.*\"]' (sem PR, dispatch, branches ou agendamento)."
   fi
-  if grep -A3 -E '^permissions:' <<<"$head" | grep -qE ':[[:space:]]*write'; then
+  if grep -A3 -E '^permissions:' <<<"$head" | grep -E ':[[:space:]]*write' >/dev/null; then
     erro "release.yml: permissão de escrita no topo; conceda só no job que publica."
   else
     ok "release.yml: topo só com leitura"
@@ -237,12 +239,12 @@ if [[ -f "$RL" ]]; then
       erro "release.yml/$job: permissões de escrita '${escrita}', esperado '${esperado:-nenhuma}'."
     fi
     # Jobs com token de escrita não fazem checkout nem build: não executam código do repositório.
-    if [[ -n "$esperado" ]] && grep -vE '^[[:space:]]*#' <<<"$bloco" | grep -qE 'actions/checkout@|docker (image )?build[[:space:]]|docker compose'; then
+    if [[ -n "$esperado" ]] && grep -vE '^[[:space:]]*#' <<<"$bloco" | grep -E 'actions/checkout@|docker (image )?build[[:space:]]|docker compose' >/dev/null; then
       erro "release.yml/$job: job com escrita não pode fazer checkout/build."
     fi
   done < <(jobs_de "$RL")
   for job in validate build-scan publish github-release; do
-    jobs_de "$RL" | grep -qx "$job" || erro "release.yml: job '$job' não encontrado."
+    jobs_de "$RL" | grep -x "$job" >/dev/null || erro "release.yml: job '$job' não encontrado."
   done
   if grep -qE 'id-token:|attestations:|security-events:|actions:[[:space:]]*write' "$RL"; then
     erro "release.yml: escopo de token não previsto (id-token/attestations/security-events/actions)."
