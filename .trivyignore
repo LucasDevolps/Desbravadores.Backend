@@ -1,0 +1,13 @@
+# Exceções do gate de vulnerabilidades da imagem da API (.github/workflows/container-security.yml).
+#
+# O gate só reprova HIGH/CRITICAL que JÁ têm correção (--ignore-unfixed). Uma exceção aqui é para o caso
+# raro em que a correção existe mas não se aplica a este projeto (ex.: código vulnerável comprovadamente
+# inalcançável). Não use este arquivo só para deixar o CI verde.
+#
+# Cada exceção precisa de: justificativa, link para a análise (issue/PR) e data de expiração (exp:), para
+# que o finding volte a bloquear se ninguém revisar. Formato:
+#
+#   # <por que não se aplica> — <issue/PR com a análise>
+#   CVE-AAAA-NNNNN exp:AAAA-MM-DD
+#
+# Sem exceções no momento.

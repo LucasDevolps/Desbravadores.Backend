@@ -120,6 +120,82 @@ else
   erro "backend-ci.yml não encontrado."
 fi
 
+# 5. Supply chain (#68): nenhum workflow com permissões amplas nem gatilho que dê segredos/escrita a código de fork.
+antes=$falhas
+for arquivo in "$WF"/*.yml "$WF"/*.yaml; do
+  [[ -e "$arquivo" ]] || continue
+  nome=$(basename "$arquivo")
+  if grep -qE '^[[:space:]]*permissions:[[:space:]]*write-all' "$arquivo"; then
+    erro "$nome: 'permissions: write-all' viola o menor privilégio."
+  fi
+  if grep -qE '^[[:space:]]*pull_request_target:' "$arquivo"; then
+    erro "$nome: 'pull_request_target' roda com segredos e token de escrita no contexto de PRs de fork."
+  fi
+  # security-events: write só por job (quem publica no Code Scanning), nunca herdado pelo workflow inteiro.
+  if grep -qE '^[[:space:]]+security-events:[[:space:]]*write' <<<"$(cabecalho "$arquivo")"; then
+    erro "$nome: 'security-events: write' no topo do workflow; conceda só no job que publica o resultado."
+  fi
+done
+((falhas == antes)) && ok "nenhum workflow com write-all, pull_request_target ou security-events: write global"
+
+# 6. CodeQL (C#), scan da imagem final com gate e SBOM publicada (#68).
+QL="$WF/codeql.yml"
+CS="$WF/container-security.yml"
+exige_em() { # ARQUIVO JOB TRECHO DESCRICAO
+  if bloco_do_job "$1" "$2" | grep -qF -- "$3"; then
+    ok "$(basename "$1")/$2: $4"
+  else
+    erro "$(basename "$1")/$2: $4 (não encontrado: '$3')."
+  fi
+}
+if [[ -f "$QL" ]]; then
+  grep -qE '^[[:space:]]{2}pull_request:' "$QL" && ok "codeql.yml: analisa PRs" || erro "codeql.yml: falta gatilho pull_request."
+  exige_em "$QL" analyze-csharp 'languages: csharp' "analisa C#"
+  exige_em "$QL" analyze-csharp 'dotnet build backend/Almirante.slnx' "compila a solução"
+  exige_em "$QL" analyze-csharp 'github/codeql-action/analyze@' "publica a análise"
+else
+  erro "codeql.yml não encontrado."
+fi
+if [[ -f "$CS" ]]; then
+  grep -qE '^[[:space:]]{2}pull_request:' "$CS" && ok "container-security.yml: analisa PRs" || erro "container-security.yml: falta gatilho pull_request."
+  exige_em "$CS" image-scan '-f backend/Almirante.Api/Dockerfile' "constrói a imagem real da API"
+  exige_em "$CS" image-scan 'sha256sum --check' "confere o SHA256 do binário do Trivy"
+  exige_em "$CS" image-scan '--pkg-types os,library' "analisa pacotes do SO e bibliotecas"
+  exige_em "$CS" image-scan '--severity HIGH,CRITICAL --ignore-unfixed' "gate em HIGH/CRITICAL com correção"
+  exige_em "$CS" image-scan '--exit-code 1' "o gate reprova o job"
+  exige_em "$CS" image-scan '--format cyclonedx' "gera SBOM CycloneDX"
+  exige_em "$CS" image-scan 'name: sbom-almirante-api-${{ github.sha }}' "publica a SBOM como artifact do commit"
+  if bloco_do_job "$CS" image-scan | grep -qE 'security-events:[[:space:]]*write'; then
+    erro "container-security.yml/image-scan: o job que executa o build da PR não pode ter security-events: write."
+  else
+    ok "container-security.yml/image-scan: build da PR sem permissão de escrita"
+  fi
+  if grep -E '^[[:space:]]*-?[[:space:]]*uses:' "$CS" | grep -qE 'aquasecurity/(trivy-action|setup-trivy)'; then
+    erro "container-security.yml: use o binário do Trivy com SHA256 conferido (tags das actions foram sequestradas, GHSA-69fq-xp46-6x23)."
+  fi
+else
+  erro "container-security.yml não encontrado."
+fi
+for arquivo in "$QL" "$CS"; do
+  if [[ -f "$arquivo" ]] && grep -qE '^[[:space:]]*continue-on-error:' "$arquivo"; then
+    erro "$(basename "$arquivo"): 'continue-on-error' esconderia findings de segurança."
+  fi
+done
+
+# 7. Dependabot cobre os ecossistemas usados (#68).
+DB="$REPO/.github/dependabot.yml"
+if [[ -f "$DB" ]]; then
+  for eco in nuget github-actions docker; do
+    if grep -qE "^[[:space:]]*-[[:space:]]*package-ecosystem:[[:space:]]*\"?$eco\"?[[:space:]]*$" "$DB"; then
+      ok "dependabot.yml: monitora $eco"
+    else
+      erro "dependabot.yml: não monitora $eco."
+    fi
+  done
+else
+  erro ".github/dependabot.yml não encontrado."
+fi
+
 if ((falhas > 0)); then
   echo
   echo "$falhas verificação(ões) de política falharam." >&2
