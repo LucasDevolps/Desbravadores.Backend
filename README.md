@@ -32,6 +32,7 @@ O backend está em fase de **MVP funcional** e possui:
 - execução local com Docker Compose ou .NET Aspire;
 - testes de integração da autenticação, dos lançamentos e do encaminhamento de IP real;
 - integração contínua com GitHub Actions em runners hospedados e descartáveis.
+- releases SemVer a partir de tags, com a imagem da API publicada no GHCR e rollback por digest.
 
 ## Tecnologias
 
@@ -56,11 +57,13 @@ O backend está em fase de **MVP funcional** e possui:
 │   ├── ISSUE_TEMPLATE/             # formulários de bug, feature, segurança e dívida técnica
 │   ├── CODEOWNERS
 │   ├── dependabot.yml              # atualizações semanais de NuGet, Actions e imagens Docker
+│   ├── release.yml                 # categorias das release notes geradas pelo GitHub
 │   ├── pull_request_template.md
 │   └── workflows/
 │       ├── backend-ci.yml          # restore, build e testes do backend
 │       ├── codeql.yml              # análise estática CodeQL (C#)
-│       └── container-security.yml  # scan da imagem da API (Trivy) e SBOM CycloneDX
+│       ├── container-security.yml  # scan da imagem da API (Trivy) e SBOM CycloneDX
+│       └── release.yml             # release: tag SemVer → imagem no GHCR + GitHub Release
 ├── backend/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
 │   ├── Almirante.Api.Tests/        # testes de integração
@@ -70,6 +73,7 @@ O backend está em fase de **MVP funcional** e possui:
 ├── nginx/
 │   └── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
 ├── compose.yaml
+├── compose.release.yaml            # overlay: API a partir da imagem de uma release (GHCR)
 ├── .env.example
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -634,6 +638,11 @@ Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não 
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
 
+O deploy de `develop` continua construindo a imagem na própria máquina e não gera versão. Versões
+numeradas são publicadas pelo `.github/workflows/release.yml`, a partir de tags SemVer em `main`, em
+runners hospedados, sem os runners self-hosted de deploy (ver
+[Releases e versionamento](#releases-e-versionamento)).
+
 ### Proteção de branches
 
 `main` e `develop` têm Repository Rulesets ativos (`Protect main` e `Protect develop`, um por
@@ -654,6 +663,23 @@ Como o merge de `develop` em `main` cria um merge commit que só existe em `main
 seguinte `develop → main` aparece desatualizado. O botão "Update branch" desse PR tentaria
 um push direto em `develop` e é bloqueado. Nesse caso, abra antes um PR `main → develop`
 (back-merge) e faça o merge dele.
+
+## Releases e versionamento
+
+O projeto usa [Semantic Versioning](https://semver.org/lang/pt-BR/). Uma release oficial é criada por
+uma tag anotada `vMAJOR.MINOR.PATCH` (ex.: `v0.1.0`) num commit de `main`. Merge em `main`, sozinho,
+não gera versão. O push da tag dispara `.github/workflows/release.yml`, que:
+
+1. valida o formato da tag e confirma que o commit pertence a `main`;
+2. constrói a imagem da API uma única vez e aplica o gate do Trivy;
+3. publica essa mesma imagem no GHCR como `ghcr.io/lucasdevolps/almirante-api:vX.Y.Z` e
+   `:sha-<commit>`, e confere o digest;
+4. cria a GitHub Release com commit, imagens, digest, SBOM e as notas geradas pelo GitHub.
+
+Não existe tag `latest`. Deploy e rollback de uma release com Docker Compose usam o overlay
+`compose.release.yaml`, de preferência com a imagem por digest. Voltar para uma imagem anterior
+**não** reverte migrations. SemVer, criação de tags, rastreabilidade, rollback, migrations e
+configuração manual no GitHub estão em [docs/release-process.md](docs/release-process.md).
 
 ## Contribuição e governança
 

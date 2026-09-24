@@ -39,6 +39,34 @@ Pontos importantes do funcionamento atual:
 - Não inicie trabalho a partir de `main`. PRs direto para `main` devem ser exceção (por exemplo, o
   back-merge `main → develop` descrito no README).
 
+## Releases
+
+Merge em `main` **não** cria versão. Uma release é uma ação explícita do mantenedor: uma tag SemVer
+anotada num commit que já está em `main`.
+
+```text
+feature/*, fix/*, security/*, ...
+   ↓ PR
+develop            (deploy contínuo, sem versão)
+   ↓ PR develop → main
+main
+   ↓ git tag -a vX.Y.Z && git push origin vX.Y.Z
+release.yml        (imagem no GHCR + GitHub Release)
+```
+
+- PATCH para correção compatível, MINOR para funcionalidade compatível e MAJOR para quebra de
+  compatibilidade a partir de `1.0.0`. Em `0.x`, uma quebra incrementa o MINOR.
+- Só o formato `vMAJOR.MINOR.PATCH` é aceito. O workflow recusa outro formato, commit fora de `main` e
+  versão já publicada.
+- Nunca crie tag de release em PR ou em branch de trabalho, nem mova ou apague a tag de uma versão
+  publicada: corrija com uma nova versão PATCH.
+- Rotule o PR (`enhancement`, `bug`, `security`, `documentation`...) para ele cair na categoria certa
+  das release notes. Mudanças incompatíveis e migrations que impedem rollback devem estar descritas no
+  PR, para entrarem nas notas.
+
+Processo completo, identidades da imagem, rollback e cuidados com migrations:
+[`docs/release-process.md`](docs/release-process.md).
+
 ## Nome de branches
 
 Use `<tipo>/<descrição-curta>`, incluindo o número da issue quando houver:
@@ -140,7 +168,7 @@ conexão administrativa usada pelo harness para criar e remover bancos e logins 
 SQL Server local). Nunca aponte essa variável para um banco de produção ou compartilhado. Veja a
 seção [Testes](README.md#testes) do README.
 
-Os scripts do check `deploy-scripts` (requerem Bash; o de Nginx também requer Docker):
+Os scripts do check `deploy-scripts` (requerem Bash; os de Compose e o de Nginx também requerem Docker):
 
 ```bash
 bash scripts/tests/deploy-config.test.sh
@@ -148,6 +176,7 @@ bash scripts/tests/workflows.test.sh
 bash scripts/tests/coverage.test.sh
 bash scripts/tests/sql-bootstrap.test.sh
 bash scripts/tests/compose-sql-identities.test.sh
+bash scripts/tests/compose-release.test.sh
 bash scripts/tests/nginx.test.sh
 ```
 

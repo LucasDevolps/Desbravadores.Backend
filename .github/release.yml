@@ -1,0 +1,17 @@
+# Categorias das release notes geradas pelo GitHub (gh release create --generate-notes, em
+# .github/workflows/release.yml). A categoria vem das labels do PR; PR sem label cai em "Outras alterações".
+# Ver docs/release-process.md.
+changelog:
+  categories:
+    - title: Segurança
+      labels: [security]
+    - title: Funcionalidades
+      labels: [enhancement]
+    - title: Correções
+      labels: [bug]
+    - title: Documentação
+      labels: [documentation]
+    - title: Dependências
+      labels: [dependencies, github_actions, .NET, docker]
+    - title: Outras alterações
+      labels: ["*"]
