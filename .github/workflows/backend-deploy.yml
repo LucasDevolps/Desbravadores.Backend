@@ -43,7 +43,7 @@ jobs:
       # Pinado por SHA (v4.2.2): tag é mutável e este job roda na máquina de deploy, com acesso ao
       # .env de produção e ao daemon Docker.
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
 
       - name: Copiar .env fixo da máquina
         run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
@@ -138,7 +138,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
 
       - name: Publish
         run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
