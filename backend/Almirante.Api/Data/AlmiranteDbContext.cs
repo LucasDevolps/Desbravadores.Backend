@@ -22,11 +22,16 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
     // Idem: historico_eventos só é escrito pelo trigger de exclusão lógica de eventos.
     public DbSet<HistoricoEvento> HistoricoEventos => Set<HistoricoEvento>();
 
+    // Idem: _usuarios_hist só é escrito pelo trigger TR_Usuarios_Historico (alteração/exclusão lógica de usuários).
+    public DbSet<UsuarioHistorico> UsuariosHistorico => Set<UsuarioHistorico>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Usuario>(entity =>
         {
-            entity.ToTable("Usuarios");
+            // Trigger AFTER UPDATE (TR_Usuarios_Historico): mesmo motivo de Lancamentos, o EF não pode usar OUTPUT
+            // nesta tabela (inclusive no UPDATE de login/lockout, que não gera histórico mas passa pelo trigger).
+            entity.ToTable("Usuarios", table => table.UseSqlOutputClause(false));
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
             entity.Property(u => u.Email).HasMaxLength(256).IsRequired();
@@ -36,7 +41,10 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             // versão, então um login/rehash baseado em credenciais anteriores a um reset falha em vez de
             // persistir uma sessão ou restaurar o hash antigo (ver AuthService.LoginAsync).
             entity.Property(u => u.SecurityVersion).IsConcurrencyToken();
+            // Garantia definitiva de e-mail único (login), inclusive entre ativos e inativos e sob concorrência: a
+            // aplicação consulta antes para dar a mensagem de negócio e traduz a violação deste índice em 409.
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
+            entity.Property(u => u.Ativo).IsRequired();
 
             entity.HasOne(u => u.Cargo)
                 .WithMany()
@@ -253,6 +261,22 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(h => h.Motivo).HasMaxLength(255).IsRequired();
             entity.HasIndex(h => h.EventoId);
             entity.HasOne<Evento>().WithMany().HasForeignKey(h => h.EventoId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioResponsavelId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<UsuarioHistorico>(entity =>
+        {
+            entity.ToTable("_usuarios_hist", table =>
+                table.HasCheckConstraint("CK__usuarios_hist_TipoOperacao", "[TipoOperacao] IN ('UPDATE', 'DELETE')"));
+            entity.HasKey(h => h.Id);
+            entity.Property(h => h.Nome).HasMaxLength(200).IsRequired();
+            entity.Property(h => h.Email).HasMaxLength(256).IsRequired();
+            entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
+            entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
+            entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();
+            entity.Property(h => h.IpResponsavel).HasColumnType("varchar(45)").IsRequired();
+            entity.HasIndex(h => h.UsuarioId);
+            entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioResponsavelId).OnDelete(DeleteBehavior.Restrict);
         });
 

@@ -14,4 +14,6 @@ public sealed class MeDto { public Guid Id { get; set; } public required string 
 
 // DTOs administrativos permanecem separados do contrato mínimo de /Me.
 public class UsuarioDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public required CargoDto Cargo { get; set; } }
-public class UsuarioListItemDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public DateTime DataCriacao { get; set; } public required CargoDto Cargo { get; set; } }
+// Funcao: nome amigável do cargo (Cargos.Nome, ex.: "Diretor"), para exibição no lugar do código técnico (Cargo.Role).
+// Cargo continua no contrato por compatibilidade com os consumidores atuais.
+public class UsuarioListItemDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public DateTime DataCriacao { get; set; } public required string Funcao { get; set; } public bool Ativo { get; set; } public required CargoDto Cargo { get; set; } }

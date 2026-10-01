@@ -1,4 +1,5 @@
 using Almirante.Api.Dtos;
+using Almirante.Api.Infrastructure;
 using Almirante.Api.Security;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -118,18 +119,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
         return NoContent();
     }
 
-    // IP observado pela conexão depois do middleware de proxies confiáveis (ForwardedHeaders); nunca lido de
-    // X-Forwarded-For manualmente nem do corpo. IPv4 mapeado em IPv6 vira IPv4 puro.
-    private string IpDeOrigem()
-    {
-        var ip = HttpContext.Connection.RemoteIpAddress;
-        if (ip is null)
-        {
-            return "0.0.0.0";
-        }
-
-        return (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString();
-    }
+    private string IpDeOrigem() => HttpContext.IpDeOrigem();
 
     // Inalcançável com o pipeline atual (OnTokenValidated exige sub GUID), mantido como defesa.
     private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails

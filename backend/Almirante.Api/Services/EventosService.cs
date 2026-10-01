@@ -536,7 +536,12 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
     private async Task ExigirMembrosExistentesAsync(IReadOnlyCollection<Guid> membros, CancellationToken ct)
     {
-        var existentes = await db.Usuarios.AsNoTracking().Where(u => membros.Contains(u.Id)).Select(u => u.Id).ToListAsync(ct);
+        // Usuário excluído logicamente (inativo) não entra como NOVO participante; participações já existentes seguem válidas.
+        // REPEATABLEREAD mantém o lock compartilhado nas linhas dos membros até o commit: uma exclusão concorrente
+        // (UsuariosService.DeleteAsync, que trava o usuário com XLOCK antes de procurar eventos futuros) espera este
+        // cadastro e passa a enxergá-lo, ou termina antes e o membro aparece aqui como inativo.
+        var existentes = await db.Usuarios.FromSqlRaw("SELECT * FROM dbo.Usuarios WITH (REPEATABLEREAD)").AsNoTracking()
+            .Where(u => u.Ativo && membros.Contains(u.Id)).Select(u => u.Id).ToListAsync(ct);
         var faltantes = membros.Except(existentes).OrderBy(m => m).ToList();
         if (faltantes.Count > 0)
         {
@@ -625,48 +630,15 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
     }
 
-    // Executa o trabalho em uma transação, sobre uma conexão FIXADA (OpenConnection): o SESSION_CONTEXT
-    // definido para os triggers e a limpeza no finally acontecem na MESMA conexão física. Se a limpeza falhar,
-    // o pool da conexão é descartado para não reaproveitar identidade/IP de outra operação.
-    // A execution strategy (retry do Aspire) exige que a unidade de trabalho inteira esteja no delegate.
-    private async Task<T> ExecutarAsync<T>(Func<SessaoAuditoria, Task<T>> trabalho, CancellationToken ct)
+    // Unidade de trabalho transacional com SESSION_CONTEXT (ver SessaoAuditoria.ExecutarEmTransacaoAsync).
+    private Task<T> ExecutarAsync<T>(Func<SessaoAuditoria, Task<T>> trabalho, CancellationToken ct)
     {
         if (!db.Database.IsRelational())
         {
             throw new NotSupportedException("Eventos exigem SQL Server (transação, rowversion, trigger e SESSION_CONTEXT).");
         }
 
-        var strategy = db.Database.CreateExecutionStrategy();
-        return await strategy.ExecuteAsync(async () =>
-        {
-            db.ChangeTracker.Clear();
-            var sessao = new SessaoAuditoria(db);
-            await db.Database.OpenConnectionAsync(ct);
-            var conexao = db.Database.GetDbConnection() as SqlConnection;
-            try
-            {
-                await using var tx = await db.Database.BeginTransactionAsync(ct);
-                var resultado = await trabalho(sessao);
-                await tx.CommitAsync(ct);
-                return resultado;
-            }
-            finally
-            {
-                try
-                {
-                    var limpo = await sessao.LimparAsync(logger);
-                    if (!limpo && conexao is not null)
-                    {
-                        // Marcar a conexão ainda emprestada para descarte ANTES de devolvê-la ao pool.
-                        SqlConnection.ClearPool(conexao);
-                    }
-                }
-                finally
-                {
-                    await db.Database.CloseConnectionAsync();
-                }
-            }
-        });
+        return SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, trabalho, ct);
     }
 
     private static ApiProblemException ConflitoInesperado() => ApiProblemException.Conflict("Conflito de concorrência.",

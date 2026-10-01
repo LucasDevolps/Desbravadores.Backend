@@ -44,7 +44,9 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
             await lockout.RegistrarFalhaAsync(user, now, ct);
             return null;
         }
-        if (user.Cargo is null || !user.Cargo.Ativo) return null;
+        // Usuário excluído logicamente não autentica; as sessões dele já foram invalidadas pelo incremento de
+        // SecurityVersion na exclusão (ver UsuariosService.DeleteAsync).
+        if (!user.Ativo || user.Cargo is null || !user.Cargo.Ativo) return null;
         LoginLockout.RegistrarSucesso(user);
         if (verified == PasswordVerificationResult.SuccessRehashNeeded)
             user.SenhaHash = passwordHasher.HashPassword(user, senha);

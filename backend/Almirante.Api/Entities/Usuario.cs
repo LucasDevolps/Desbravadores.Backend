@@ -10,6 +10,10 @@ public class Usuario
     public Guid CargoId { get; set; }
     public Cargo? Cargo { get; set; }
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
+
+    // Exclusão lógica (DELETE /api/Usuarios/{id}): o registro nunca é apagado fisicamente. Toda mudança
+    // cadastral (inclusive esta) é copiada para _usuarios_hist pelo trigger TR_Usuarios_Historico.
+    public bool Ativo { get; set; } = true;
     public long SecurityVersion { get; set; }
 
     // Bloqueio temporário por conta contra força bruta distribuída (ver Services/LoginLockout.cs).

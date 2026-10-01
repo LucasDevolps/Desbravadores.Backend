@@ -49,8 +49,8 @@ public sealed class EventosMigrationTests
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro.", CriadoPor = "Teste", Role = "DS" };
             db.Cargos.Add(cargo);
             var usuario = new Usuario { Id = Guid.NewGuid(), Nome = "Legado", Email = "legado-ev@local.dev", EmailNormalizado = "LEGADO-EV@LOCAL.DEV", SenhaHash = "x", CargoId = cargo.Id };
-            db.Usuarios.Add(usuario);
             await db.SaveChangesAsync();
+            await TestHelpers.InserirUsuarioLegadoAsync(db, usuario);
             usuarioId = usuario.Id;
 
             // lançamento legado (enums inteiros, Finalidade preenchida) ANTES da migration
@@ -144,8 +144,8 @@ public sealed class EventosMigrationTests
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro.", CriadoPor = "Teste", Role = "DS" };
             db.Cargos.Add(cargo);
             var usuario = new Usuario { Id = Guid.NewGuid(), Nome = "Legado", Email = "legado-resp@local.dev", EmailNormalizado = "LEGADO-RESP@LOCAL.DEV", SenhaHash = "x", CargoId = cargo.Id };
-            db.Usuarios.Add(usuario);
             await db.SaveChangesAsync();
+            await TestHelpers.InserirUsuarioLegadoAsync(db, usuario);
             usuarioId = usuario.Id;
         }
 

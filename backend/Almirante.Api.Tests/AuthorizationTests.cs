@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Almirante.Api.Tests;
 
 // Matriz RBAC (Security/Roles.cs): diretoria (ADM, DIR, DIRA, SEC, TES) administra lançamentos e
-// lista usuários/cargos; demais cargos só consultam o próprio perfil.
+// usuários e lista cargos; demais cargos só consultam o próprio perfil.
 public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
 {
     private readonly AlmiranteApiFactory factory;
@@ -21,6 +21,9 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
     private static HttpRequestMessage Endpoint(string nome) => nome switch
     {
         "GET /api/Usuarios" => new(HttpMethod.Get, "/api/Usuarios"),
+        "POST /api/Usuarios" => new(HttpMethod.Post, "/api/Usuarios") { Content = JsonContent.Create(new { nome = "RBAC", email = $"rbac-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = Guid.NewGuid() }) },
+        "PUT /api/Usuarios/{id}" => new(HttpMethod.Put, $"/api/Usuarios/{Guid.NewGuid()}") { Content = JsonContent.Create(new { nome = "RBAC", email = $"rbac-{Guid.NewGuid():N}@local.dev", cargoId = Guid.NewGuid() }) },
+        "DELETE /api/Usuarios/{id}" => new(HttpMethod.Delete, $"/api/Usuarios/{Guid.NewGuid()}"),
         "GET /api/Cargos" => new(HttpMethod.Get, "/api/Cargos"),
         "GET /api/Lancamentos" => new(HttpMethod.Get, "/api/Lancamentos"),
         "GET /api/Lancamentos/{id}" => new(HttpMethod.Get, $"/api/Lancamentos/{Guid.NewGuid()}"),
@@ -36,7 +39,7 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
 
     public static TheoryData<string> EndpointsAdministrativos => new()
     {
-        "GET /api/Usuarios", "GET /api/Cargos", "GET /api/Lancamentos", "GET /api/Lancamentos/{id}", "POST /api/Lancamentos/Registrar",
+        "GET /api/Usuarios", "POST /api/Usuarios", "PUT /api/Usuarios/{id}", "DELETE /api/Usuarios/{id}", "GET /api/Cargos", "GET /api/Lancamentos", "GET /api/Lancamentos/{id}", "POST /api/Lancamentos/Registrar",
         "PUT /api/Lancamentos/{id}", "DELETE /api/Lancamentos/{id}",
         "GET /api/Eventos", "POST /api/Eventos", "PUT /api/Eventos/{id}", "DELETE /api/Eventos/{id}",
     };
