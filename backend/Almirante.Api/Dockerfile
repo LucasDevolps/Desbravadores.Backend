@@ -14,7 +14,11 @@ WORKDIR /app
 
 # curl is only used by the container HEALTHCHECK/compose healthcheck to probe /health.
 # The base image already ships a non-root "app" user, so it is reused instead of creating a new one.
+# apt-get upgrade applies Ubuntu security fixes published after the last rebuild of the aspnet image
+# (e.g. CVE-2026-84782 in openssl/libssl3t64), so the image-scan gate does not depend on Microsoft's
+# rebuild cadence. --no-install-recommends keeps it from pulling packages the base image does not have.
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
