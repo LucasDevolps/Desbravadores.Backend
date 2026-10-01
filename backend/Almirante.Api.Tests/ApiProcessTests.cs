@@ -274,7 +274,19 @@ public class ApiProcessEventosTests
             Content = JsonContent.Create(new { motivo = "de novo", versao = evento.Versao }),
         })).StatusCode);
 
+        // /api/Usuarios: PUT e DELETE lógico auditados pelo trigger TR_Usuarios_Historico com a mesma identidade de runtime
+        // (sem escrita direta em _usuarios_hist). membros[0] só estava no evento excluído; membros[1] segue em evento futuro.
+        var cargoDs = (await client.GetFromJsonAsync<List<Almirante.Api.Dtos.UsuarioListItemDto>>("/api/Usuarios"))!.First(u => u.Id == membros[0]).Cargo.Id;
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await client.PutAsJsonAsync($"/api/Usuarios/{membros[0]}",
+            new { nome = "Membro real alterado", email = $"alterado-{membros[0]:N}@local.dev", cargoId = cargoDs })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/Usuarios/{membros[0]}")).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, (await client.DeleteAsync($"/api/Usuarios/{membros[1]}")).StatusCode);
+
         await using var verificacao = await SqlIdentityEnvironment.OpenHarnessAsync(env.Database);
+        Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{membros[0]}' AND TipoOperacao = 'UPDATE' AND Nome = N'Membro real 0' AND IpResponsavel = '127.0.0.1'"));
+        Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{membros[0]}' AND TipoOperacao = 'DELETE' AND Nome = N'Membro real alterado' AND IpResponsavel = '127.0.0.1'"));
+        Assert.Equal(0, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{membros[1]}'"));
+        Assert.Equal(0, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.Usuarios WHERE Id = '{membros[0]}' AND Ativo = 1"));
         Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.historico_eventos WHERE EventoId = '{evento.Id}' AND IpResponsavel = '127.0.0.1' AND Motivo = N'exclusao no processo real'"));
         Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.lancamentos_deletados WHERE EventoId = '{evento.Id}' AND Finalidade IS NULL"));
         Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.lancamentos_deletados WHERE EventoId = '{varios.Id}' AND Motivo = N'removido no teste real'"));

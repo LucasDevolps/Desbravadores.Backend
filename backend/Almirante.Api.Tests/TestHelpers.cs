@@ -104,6 +104,15 @@ public static class TestHelpers
         return usuario;
     }
 
+    // Para testes de migration que populam um schema ANTERIOR ao modelo atual: grava o usuário só com as colunas que
+    // existem desde AddLoginLockout (o SaveChanges do EF incluiria colunas mais novas, como Usuarios.Ativo).
+    // Os cargos referenciados já devem estar salvos.
+    public static Task InserirUsuarioLegadoAsync(AlmiranteDbContext db, Usuario u) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO Usuarios (Id, Nome, Email, EmailNormalizado, SenhaHash, CargoId, DataCriacao, SecurityVersion, FalhasLoginConsecutivas)
+            VALUES ({u.Id}, {u.Nome}, {u.Email}, {u.EmailNormalizado}, {u.SenhaHash}, {u.CargoId}, {u.DataCriacao}, {u.SecurityVersion}, {u.FalhasLoginConsecutivas})
+            """);
+
     public static async Task<T> WithDbAsync<T>(WebApplicationFactory<Program> factory, Func<AlmiranteDbContext, Task<T>> action)
     {
         using var scope = factory.Services.CreateScope();

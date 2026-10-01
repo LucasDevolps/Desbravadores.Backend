@@ -4,6 +4,7 @@ using Almirante.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Almirante.Api.Data.Migrations
 {
     [DbContext(typeof(AlmiranteDbContext))]
-    partial class AlmiranteDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260929213958_AddUsuariosAtivoEHistorico")]
+    partial class AddUsuariosAtivoEHistorico
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -634,28 +637,18 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid>("CargoId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Cpf")
-                        .HasMaxLength(20)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(20)");
-
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
-                    b.Property<DateOnly?>("DataNascimento")
-                        .HasColumnType("date");
-
                     b.Property<string>("Email")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
 
                     b.Property<string>("EmailNormalizado")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(100)");
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
 
                     b.Property<int>("FalhasLoginConsecutivas")
                         .HasColumnType("int");
@@ -676,22 +669,12 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Telefone")
-                        .HasMaxLength(20)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(20)");
-
                     b.Property<DateTime?>("UltimaFalhaLoginUtc")
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 
                     b.HasIndex("CargoId");
-
-                    b.HasIndex("Cpf")
-                        .IsUnique()
-                        .HasDatabaseName("UX_Usuarios_Cpf")
-                        .HasFilter("[Cpf] IS NOT NULL");
 
                     b.HasIndex("EmailNormalizado")
                         .IsUnique();
@@ -721,16 +704,8 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<string>("Cpf")
-                        .HasMaxLength(20)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(20)");
-
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
-
-                    b.Property<DateOnly?>("DataNascimento")
-                        .HasColumnType("date");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -745,11 +720,6 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Telefone")
-                        .HasMaxLength(20)
-                        .IsUnicode(false)
-                        .HasColumnType("varchar(20)");
 
                     b.Property<string>("TipoOperacao")
                         .IsRequired()

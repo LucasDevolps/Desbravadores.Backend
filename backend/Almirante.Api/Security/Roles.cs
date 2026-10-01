@@ -16,7 +16,8 @@ public static class Roles
 
 // Matriz de acesso (fonte única; ver também docs/authentication-security.md):
 //   GestaoFinanceira -> /api/Lancamentos (GET, POST Registrar, PUT, DELETE)
-//   GestaoCadastros  -> GET /api/Usuarios, GET /api/Cargos
+//   GestaoCadastros  -> /api/Usuarios (GET, POST, PUT, DELETE lógico), GET /api/Cargos
+//                       (usuário com cargo ADM só é gerenciado por ADM; ver UsuariosService.ExigirPermissaoSobreCargo)
 //   Qualquer autenticado -> GET /api/Auth/Me (somente o próprio perfil)
 public static class Policies
 {

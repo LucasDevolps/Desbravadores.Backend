@@ -37,7 +37,7 @@ public sealed class LancamentosAuditMigrationTests
             // Schema só até a migration anterior: a tabela Lancamentos ainda NÃO tem
             // AtualizadoPorUsuarioId neste ponto, embora o modelo compilado do DbContext (mesma
             // classe usada em produção) já a inclua — por isso o insert do lançamento abaixo usa SQL
-            // bruto (só ele precisa disso; Cargos/Usuarios não mudaram desde esta migration).
+            // bruto. O usuário também (Usuarios.Ativo veio depois); Cargos não mudaram desde esta migration.
             var migrator = db.GetService<IMigrator>();
             await migrator.MigrateAsync(MigrationAnterior);
 
@@ -56,8 +56,8 @@ public sealed class LancamentosAuditMigrationTests
                 CargoId = cargoDs.Id,
                 DataCriacao = dataCriacaoLegado,
             };
-            db.Usuarios.Add(membroLegado);
             await db.SaveChangesAsync();
+            await TestHelpers.InserirUsuarioLegadoAsync(db, membroLegado);
 
             lancamentoId = Guid.NewGuid();
             var membroId = membroLegado.Id;

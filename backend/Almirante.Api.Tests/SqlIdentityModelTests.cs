@@ -250,6 +250,12 @@ public sealed class SqlIdentityModelTests
         Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo.eventos")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo.evento_membros")).Number);
         await ScalarAsync(app, "SELECT COUNT(*) FROM dbo.historico_eventos");
+
+        // _usuarios_hist: idem, só o trigger TR_Usuarios_Historico grava.
+        Assert.Equal(229, (await DeniedAsync(app, "INSERT INTO dbo._usuarios_hist (Id) VALUES (NEWID())")).Number);
+        Assert.Equal(229, (await DeniedAsync(app, "UPDATE dbo._usuarios_hist SET Nome = N'x'")).Number);
+        Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo._usuarios_hist")).Number);
+        await ScalarAsync(app, "SELECT COUNT(*) FROM dbo._usuarios_hist");
     }
 
     [Fact]
@@ -269,7 +275,8 @@ public sealed class SqlIdentityModelTests
 
             var esperadas = tabela switch
             {
-                DbPrivilegeAuditor.AuditTable or DbPrivilegeAuditor.EventosAuditTable or "__EFMigrationsHistory" => new[] { "SELECT" },
+                DbPrivilegeAuditor.AuditTable or DbPrivilegeAuditor.EventosAuditTable or DbPrivilegeAuditor.UsuariosAuditTable
+                    or "__EFMigrationsHistory" => new[] { "SELECT" },
                 DbPrivilegeAuditor.SessionsTable => ["SELECT", "INSERT", "UPDATE", "DELETE"],
                 _ => ["SELECT", "INSERT", "UPDATE"],
             };

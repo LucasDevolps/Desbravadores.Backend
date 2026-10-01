@@ -257,7 +257,7 @@ e aplica migrations ([ADR-0005](adr/0005-separar-identidades-sql-e-rotacionar-cr
 | --- | --- |
 | `GET /api/Auth/csrf`, `POST /api/Auth/login`, `POST /api/Auth/refresh`, `POST /api/Auth/logout` | anônimo, com antiforgery nos `POST` |
 | `GET /api/Auth/Me` | qualquer usuário autenticado |
-| `GET /api/Usuarios`, `GET /api/Cargos` | policy `GestaoCadastros` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`) |
+| `/api/Usuarios` (`GET`, `POST`, `PUT`, `DELETE` lógico), `GET /api/Cargos` | policy `GestaoCadastros` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`) |
 | `/api/Lancamentos` (`GET`, `POST Registrar`, `PUT`, `DELETE`) e `/api/Eventos` (`GET`, `POST`, `PUT`, `DELETE`) | policy `GestaoFinanceira` (mesmos cargos) |
 | `/health`, `/alive` | anônimo |
 | `/swagger` | anônimo; habilitado por padrão só em `Development`, ou por `Swagger:Enabled` |

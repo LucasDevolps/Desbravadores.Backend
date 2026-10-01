@@ -21,6 +21,7 @@ A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR
 | --- | --- | --- | --- |
 | `GET /api/Auth/Me` | 401 | — | qualquer autenticado (só o próprio perfil) |
 | `GET /api/Usuarios` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
+| `POST /api/Usuarios`, `PUT /api/Usuarios/{id}`, `DELETE /api/Usuarios/{id}` | 401 | 403 | policy `GestaoCadastros`; usuário com cargo ADM (ou promoção a ADM) só por ADM (403) |
 | `GET /api/Cargos` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
 | `GET /api/Lancamentos` | 401 | 403 | policy `GestaoFinanceira`: ADM, DIR, DIRA, SEC, TES |
 | `POST /api/Lancamentos/Registrar` | 401 | 403 | policy `GestaoFinanceira` |
