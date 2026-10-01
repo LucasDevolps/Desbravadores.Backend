@@ -1,6 +1,7 @@
 using Almirante.Api.Entities;
 using Almirante.Api.Options;
 using Almirante.Api.Security;
+using Almirante.Api.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -59,6 +60,11 @@ public static class DbSeeder
         }
 
         var emailNormalizado = seedOptions.Email.Trim().ToUpperInvariant();
+        if (seedOptions.Email.Length > UsuariosService.EmailMaximo || !UsuariosService.EmailArmazenavel(emailNormalizado))
+        {
+            throw new InvalidOperationException(
+                $"SeedAdmin:Email deve ter no máximo {UsuariosService.EmailMaximo} caracteres ASCII (coluna Usuarios.Email varchar).");
+        }
 
         // Idempotente: um admin existente nunca tem a senha sobrescrita, e a senha configurada só é
         // exigida/validada quando o bootstrap realmente vai criar o usuário.

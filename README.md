@@ -350,6 +350,14 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
+**Dados pessoais de usuários.** `POST`, `PUT` e `GET /api/Usuarios` trafegam `cpf`, `dataNascimento`
+(`yyyy-MM-dd`, sem horário, não futura) e `telefone`, todos opcionais e `null` em cadastros antigos. O
+`email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é gravado sem pontos, hífen e espaços
+externos e é único entre todos os usuários, inclusive inativos (índice `UX_Usuarios_Cpf`; duplicidade gera
+`409`). No `PUT`, um desses três campos **omitido** mantém o valor atual, e `null` (ou `""` em
+`cpf`/`telefone`) o remove. Alteração e exclusão lógica gravam o estado anterior completo, incluindo esses
+campos, em `_usuarios_hist`, pela trigger `TR_Usuarios_Historico`, na mesma transação.
+
 ## Lançamentos
 
 O agregado financeiro possui um único fluxo de criação, protegido pelas roles `ADM`, `DIR`,

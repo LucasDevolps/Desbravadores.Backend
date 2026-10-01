@@ -26,7 +26,11 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
     public async Task<AuthResult?> LoginAsync(string email, string senha, CancellationToken ct)
     {
         var normalized = email.Trim().ToUpperInvariant();
-        var user = await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct);
+        // EmailNormalizado é varchar(100) ASCII: um e-mail fora disso não existe no banco, e enviá-lo como parâmetro
+        // varchar poderia trocar caracteres na conversão e casar outro cadastro. Segue pelo caminho de "não existe".
+        var user = UsuariosService.EmailArmazenavel(normalized)
+            ? await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct)
+            : null;
         var now = clock.GetUtcNow().UtcDateTime;
         if (user is null)
         {
@@ -44,7 +48,9 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
             await lockout.RegistrarFalhaAsync(user, now, ct);
             return null;
         }
-        if (user.Cargo is null || !user.Cargo.Ativo) return null;
+        // Usuário excluído logicamente não autentica; as sessões dele já foram invalidadas pelo incremento de
+        // SecurityVersion na exclusão (ver UsuariosService.DeleteAsync).
+        if (!user.Ativo || user.Cargo is null || !user.Cargo.Ativo) return null;
         LoginLockout.RegistrarSucesso(user);
         if (verified == PasswordVerificationResult.SuccessRehashNeeded)
             user.SenhaHash = passwordHasher.HashPassword(user, senha);

@@ -33,8 +33,8 @@ public sealed class LancamentosEnumMigrationTests
             SenhaHash = "nao-utilizado", CargoId = cargo.Id,
         };
         db.Cargos.Add(cargo);
-        db.Usuarios.Add(membro);
         await db.SaveChangesAsync();
+        await TestHelpers.InserirUsuarioLegadoAsync(db, membro);
 
         var operacaoId = Guid.NewGuid();
         var key = $"legado-{Guid.NewGuid():N}";

@@ -15,7 +15,8 @@ public static class DbPrivilegeAuditor
     public const string AuditTable = "lancamentos_deletados";
     // Tabelas de auditoria escritas somente por trigger (cadeia de propriedade dbo): a aplicação só lê.
     public const string EventosAuditTable = "historico_eventos";
-    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable];
+    public const string UsuariosAuditTable = "_usuarios_hist";
+    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable];
     public const string SessionsTable = "AuthSessions";
 
     private static readonly string[] ServerRoles =
