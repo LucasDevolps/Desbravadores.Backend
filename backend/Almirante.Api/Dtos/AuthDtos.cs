@@ -15,5 +15,6 @@ public sealed class MeDto { public Guid Id { get; set; } public required string 
 // DTOs administrativos permanecem separados do contrato mínimo de /Me.
 public class UsuarioDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public required CargoDto Cargo { get; set; } }
 // Funcao: nome amigável do cargo (Cargos.Nome, ex.: "Diretor"), para exibição no lugar do código técnico (Cargo.Role).
-// Cargo continua no contrato por compatibilidade com os consumidores atuais.
-public class UsuarioListItemDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public DateTime DataCriacao { get; set; } public required string Funcao { get; set; } public bool Ativo { get; set; } public required CargoDto Cargo { get; set; } }
+// Cargo continua no contrato por compatibilidade com os consumidores atuais. Cpf (normalizado), DataNascimento
+// (yyyy-MM-dd) e Telefone vêm null quando não cadastrados; só saem em /api/Usuarios (policy GestaoCadastros), nunca em /Me.
+public class UsuarioListItemDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public string? Cpf { get; set; } public DateOnly? DataNascimento { get; set; } public string? Telefone { get; set; } public DateTime DataCriacao { get; set; } public required string Funcao { get; set; } public bool Ativo { get; set; } public required CargoDto Cargo { get; set; } }

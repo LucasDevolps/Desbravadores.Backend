@@ -34,8 +34,13 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.ToTable("Usuarios", table => table.UseSqlOutputClause(false));
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
-            entity.Property(u => u.Email).HasMaxLength(256).IsRequired();
-            entity.Property(u => u.EmailNormalizado).HasMaxLength(256).IsRequired();
+            // varchar (não Unicode): a aplicação só aceita e-mail/CPF/telefone em ASCII imprimível
+            // (UsuariosService.SomenteAsciiImprimivel), para que nenhuma conversão nvarchar -> varchar perca caracteres.
+            entity.Property(u => u.Email).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
+            entity.Property(u => u.EmailNormalizado).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
+            entity.Property(u => u.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(u => u.DataNascimento).HasColumnType("date");
+            entity.Property(u => u.Telefone).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(u => u.SenhaHash).IsRequired();
             // Token de concorrência: todo UPDATE de Usuarios (login, rehash, reset de senha) filtra por esta
             // versão, então um login/rehash baseado em credenciais anteriores a um reset falha em vez de
@@ -44,6 +49,12 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             // Garantia definitiva de e-mail único (login), inclusive entre ativos e inativos e sob concorrência: a
             // aplicação consulta antes para dar a mensagem de negócio e traduz a violação deste índice em 409.
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
+            // Mesma garantia para o CPF (já normalizado), entre ativos e inativos; registros legados sem CPF (NULL)
+            // ficam fora do índice. Sem equivalente em _usuarios_hist: lá o mesmo valor se repete entre versões.
+            entity.HasIndex(u => u.Cpf)
+                .IsUnique()
+                .HasDatabaseName("UX_Usuarios_Cpf")
+                .HasFilter("[Cpf] IS NOT NULL");
             entity.Property(u => u.Ativo).IsRequired();
 
             entity.HasOne(u => u.Cargo)
@@ -270,7 +281,13 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK__usuarios_hist_TipoOperacao", "[TipoOperacao] IN ('UPDATE', 'DELETE')"));
             entity.HasKey(h => h.Id);
             entity.Property(h => h.Nome).HasMaxLength(200).IsRequired();
+            // Email continua nvarchar(256): comporta qualquer valor de Usuarios.Email (varchar(100)) e preserva, sem
+            // conversão, linhas gravadas antes da redução da coluna de origem. Os dados pessoais têm o mesmo tipo
+            // de Usuarios e nenhum índice único (o mesmo CPF aparece em várias versões do mesmo usuário).
             entity.Property(h => h.Email).HasMaxLength(256).IsRequired();
+            entity.Property(h => h.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(h => h.DataNascimento).HasColumnType("date");
+            entity.Property(h => h.Telefone).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
             entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();

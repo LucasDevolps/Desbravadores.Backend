@@ -15,21 +15,28 @@ namespace Almirante.Api.Services;
 // das claims e IP da conexão, nunca do corpo): o trigger TR_Usuarios_Historico copia o estado anterior para
 // _usuarios_hist na mesma instrução do UPDATE, então não existe alteração sem histórico nem histórico de alteração
 // desfeita. O e-mail único é garantido pelo índice IX_Usuarios_EmailNormalizado; a consulta prévia só produz a
-// mensagem de negócio, e a violação do índice (corrida entre duas requisições) vira o mesmo 409.
+// mensagem de negócio, e a violação do índice (corrida entre duas requisições) vira o mesmo 409. O CPF segue o mesmo
+// desenho com o índice UX_Usuarios_Cpf (filtrado: usuários sem CPF não colidem).
 public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher, TimeProvider clock, ILogger<UsuariosService> logger)
 {
     public const int NomeMaximo = 200;
-    public const int EmailMaximo = 256;
+    public const int EmailMaximo = 100;
+    public const int CpfMaximo = 20;
+    public const int TelefoneMaximo = 20;
 
     private const int SqlUnicidadeIndice = 2601;
     private const int SqlUnicidadeConstraint = 2627;
     private const string IndiceEmailUnico = "IX_Usuarios_EmailNormalizado";
+    private const string IndiceCpfUnico = "UX_Usuarios_Cpf";
 
     private static readonly Expression<Func<Usuario, UsuarioListItemDto>> ParaDto = u => new UsuarioListItemDto
     {
         Id = u.Id,
         Nome = u.Nome,
         Email = u.Email,
+        Cpf = u.Cpf,
+        DataNascimento = u.DataNascimento,
+        Telefone = u.Telefone,
         DataCriacao = u.DataCriacao,
         Funcao = u.Cargo!.Nome,
         Ativo = u.Ativo,
@@ -57,6 +64,30 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             && endereco.Host.Contains('.') && !endereco.Host.StartsWith('.') && !endereco.Host.EndsWith('.');
     }
 
+    // E-mail, CPF e telefone são varchar: um caractere fora do ASCII imprimível seria trocado em silêncio na conversão
+    // para a página de código da collation. A entrada é recusada antes de chegar ao banco.
+    public static bool SomenteAsciiImprimivel(string valor) => valor.All(c => c is >= ' ' and <= '~');
+
+    // E-mail que pode existir em Usuarios.EmailNormalizado (varchar(100), ASCII). Qualquer outro nunca casa.
+    public static bool EmailArmazenavel(string emailNormalizado) =>
+        emailNormalizado.Length <= EmailMaximo && SomenteAsciiImprimivel(emailNormalizado);
+
+    // Normalização ÚNICA do CPF (cadastro, alteração, consulta de duplicidade e validação de tamanho): remove a máscara
+    // convencional (pontos e hífen) e espaços externos; vazio vira NULL. Continua texto (zeros à esquerda preservados) e
+    // não exige só dígitos nem valida dígitos verificadores: esta regra só define o que é "o mesmo CPF".
+    public static string? NormalizarCpf(string? cpf)
+    {
+        var valor = cpf?.Replace(".", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal).Trim();
+        return string.IsNullOrEmpty(valor) ? null : valor;
+    }
+
+    // Telefone é guardado como informado, sem espaços externos; vazio vira NULL.
+    public static string? NormalizarTelefone(string? telefone)
+    {
+        var valor = telefone?.Trim();
+        return string.IsNullOrEmpty(valor) ? null : valor;
+    }
+
     // ---------------------------------------------------------------- GET
 
     public async Task<IReadOnlyList<UsuarioListItemDto>> ListAsync(bool incluirInativos, CancellationToken cancellationToken)
@@ -82,12 +113,22 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             throw EmailJaCadastrado();
         }
 
+        var cpf = NormalizarCpf(request.Cpf);
+        // Sem filtro de Ativo: o CPF de um usuário excluído logicamente continua reservado (mesma regra do índice).
+        if (cpf is not null && await db.Usuarios.AnyAsync(u => u.Cpf == cpf, ct))
+        {
+            throw CpfJaCadastrado();
+        }
+
         var usuario = new Usuario
         {
             Id = Guid.NewGuid(),
             Nome = request.Nome!.Trim(),
             Email = email,
             EmailNormalizado = emailNormalizado,
+            Cpf = cpf,
+            DataNascimento = request.DataNascimento,
+            Telefone = NormalizarTelefone(request.Telefone),
             SenhaHash = string.Empty,
             CargoId = cargo.Id,
             DataCriacao = clock.GetUtcNow().UtcDateTime,
@@ -104,6 +145,11 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         {
             db.ChangeTracker.Clear();
             throw EmailJaCadastrado();
+        }
+        catch (DbUpdateException ex) when (ViolouCpfUnico(ex.InnerException))
+        {
+            db.ChangeTracker.Clear();
+            throw CpfJaCadastrado();
         }
 
         logger.LogInformation("Usuário {UsuarioId} criado.", usuario.Id);
@@ -136,16 +182,35 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw EmailDeOutroUsuario();
             }
 
-            // O trigger grava o estado ANTERIOR em _usuarios_hist (TipoOperacao UPDATE) antes de a alteração valer.
+            // Dados pessoais omitidos no JSON mantêm o valor lido sob o lock acima; informados (inclusive null/"")
+            // substituem. O próprio usuário fica fora da consulta de duplicidade.
+            var cpf = request.CpfInformado ? NormalizarCpf(request.Cpf) : atual.Cpf;
+            var dataNascimento = request.DataNascimentoInformada ? request.DataNascimento : atual.DataNascimento;
+            var telefone = request.TelefoneInformado ? NormalizarTelefone(request.Telefone) : atual.Telefone;
+            if (cpf is not null && await db.Usuarios.AnyAsync(u => u.Id != request.Id && u.Cpf == cpf, ct))
+            {
+                throw CpfDeOutroUsuario();
+            }
+
+            // O trigger grava o estado ANTERIOR completo em _usuarios_hist (TipoOperacao UPDATE) antes de a alteração
+            // valer, na mesma instrução: se a gravação do histórico falhar, o UPDATE inteiro é desfeito.
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
             try
             {
                 await db.Database.ExecuteSqlInterpolatedAsync(
-                    $"UPDATE dbo.Usuarios SET Nome = {nome}, Email = {email}, EmailNormalizado = {emailNormalizado}, CargoId = {cargo.Id} WHERE Id = {request.Id} AND Ativo = 1", ct);
+                    $"""
+                    UPDATE dbo.Usuarios SET Nome = {nome}, Email = {email}, EmailNormalizado = {emailNormalizado}, CargoId = {cargo.Id},
+                        Cpf = {cpf}, DataNascimento = {dataNascimento}, Telefone = {telefone}
+                    WHERE Id = {request.Id} AND Ativo = 1
+                    """, ct);
             }
             catch (SqlException ex) when (ViolouEmailUnico(ex))
             {
                 throw EmailDeOutroUsuario();
+            }
+            catch (SqlException ex) when (ViolouCpfUnico(ex))
+            {
+                throw CpfDeOutroUsuario();
             }
 
             return true;
@@ -205,7 +270,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
     // ---------------------------------------------------------------- apoio
 
-    private sealed record UsuarioTravado(bool Ativo, string Role);
+    private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone);
 
     private sealed record CargoResumo(Guid Id, string Role);
 
@@ -213,7 +278,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     private async Task<UsuarioTravado> TravarUsuarioAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
-            .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role))
+            .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone))
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
 
@@ -248,6 +313,16 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
     private static bool ViolouEmailUnico(Exception? ex) =>
         ex is SqlException { Number: SqlUnicidadeIndice or SqlUnicidadeConstraint } sql && sql.Message.Contains(IndiceEmailUnico, StringComparison.Ordinal);
+
+    // A mensagem do SQL Server traz o valor duplicado (o CPF): nunca é repassada ao cliente, só o nome do índice é usado.
+    private static bool ViolouCpfUnico(Exception? ex) =>
+        ex is SqlException { Number: SqlUnicidadeIndice or SqlUnicidadeConstraint } sql && sql.Message.Contains(IndiceCpfUnico, StringComparison.Ordinal);
+
+    private static ApiProblemException CpfJaCadastrado() => ApiProblemException.Conflict("CPF já cadastrado.",
+        "Já existe um usuário cadastrado com o CPF informado.");
+
+    private static ApiProblemException CpfDeOutroUsuario() => ApiProblemException.Conflict("CPF já cadastrado.",
+        "Existe outro usuário cadastrado com esse CPF.");
 
     private static ApiProblemException EmailJaCadastrado() => ApiProblemException.Conflict("E-mail já cadastrado.",
         "Já existe um usuário cadastrado com o e-mail informado.");

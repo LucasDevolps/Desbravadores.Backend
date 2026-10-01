@@ -6,6 +6,14 @@ public class Usuario
     public required string Nome { get; set; }
     public required string Email { get; set; }
     public required string EmailNormalizado { get; set; }
+
+    // Dados pessoais opcionais (NULL em registros legados). Cpf é gravado já normalizado (sem espaços externos,
+    // pontos e hífen; ver UsuariosService.NormalizarCpf) e é único entre TODOS os usuários, inclusive inativos
+    // (índice UX_Usuarios_Cpf, filtrado por Cpf IS NOT NULL). Texto, nunca número: preserva zeros à esquerda.
+    public string? Cpf { get; set; }
+    public DateOnly? DataNascimento { get; set; }
+    public string? Telefone { get; set; }
+
     public required string SenhaHash { get; set; }
     public Guid CargoId { get; set; }
     public Cargo? Cargo { get; set; }

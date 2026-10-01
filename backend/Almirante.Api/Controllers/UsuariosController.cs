@@ -19,7 +19,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
 {
     [HttpGet]
     [EndpointSummary("Lista os usuários; por padrão, somente os ativos.")]
-    [EndpointDescription("includeInactive=true inclui os usuários excluídos logicamente. funcao traz o nome do cargo (ex.: \"Diretor\").")]
+    [EndpointDescription("includeInactive=true inclui os usuários excluídos logicamente. funcao traz o nome do cargo (ex.: \"Diretor\"). " +
+        "cpf (normalizado), dataNascimento (yyyy-MM-dd) e telefone vêm null quando não cadastrados.")]
     [ProducesResponseType<IReadOnlyList<UsuarioListItemDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<UsuarioListItemDto>>> List(
         [FromQuery] bool includeInactive = false,
@@ -32,6 +33,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [HttpPost]
     [EndpointSummary("Cadastra um usuário.")]
     [EndpointDescription("E-mail único sem diferenciar maiúsculas/minúsculas (409 se já existir, inclusive entre inativos). " +
+        "cpf, dataNascimento (yyyy-MM-dd, não futura) e telefone são opcionais; cpf é único entre todos os usuários, comparado sem " +
+        "pontos, hífen e espaços externos (409 se já existir). " +
         "cargoId deve ser um cargo ativo; somente um Administrador cadastra outro Administrador (403).")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -44,8 +47,9 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpPut("{id:guid}")]
-    [EndpointSummary("Altera nome, e-mail e cargo de um usuário ativo (estado anterior auditado em _usuarios_hist).")]
-    [EndpointDescription("409 se o e-mail pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente.")]
+    [EndpointSummary("Altera nome, e-mail, cargo e dados pessoais de um usuário ativo (estado anterior completo auditado em _usuarios_hist).")]
+    [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento e telefone omitidos mantêm o valor atual; " +
+        "null (ou \"\" em cpf/telefone) remove. 409 se o e-mail ou o CPF pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]

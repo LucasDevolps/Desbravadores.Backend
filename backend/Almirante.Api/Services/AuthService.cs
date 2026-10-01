@@ -26,7 +26,11 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
     public async Task<AuthResult?> LoginAsync(string email, string senha, CancellationToken ct)
     {
         var normalized = email.Trim().ToUpperInvariant();
-        var user = await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct);
+        // EmailNormalizado é varchar(100) ASCII: um e-mail fora disso não existe no banco, e enviá-lo como parâmetro
+        // varchar poderia trocar caracteres na conversão e casar outro cadastro. Segue pelo caminho de "não existe".
+        var user = UsuariosService.EmailArmazenavel(normalized)
+            ? await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct)
+            : null;
         var now = clock.GetUtcNow().UtcDateTime;
         if (user is null)
         {
