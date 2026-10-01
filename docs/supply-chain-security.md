@@ -52,6 +52,10 @@ checkout → docker build (backend/Almirante.Api/Dockerfile, contexto backend/, 
 - **Política de severidade:** reprova o CI qualquer finding **HIGH** ou **CRITICAL** que **tenha correção
   publicada** (`--ignore-unfixed --exit-code 1`). Uma correção existente é sempre acionável (atualizar
   pacote ou reconstruir sobre a imagem base corrigida).
+- **Correções do Ubuntu entre rebuilds da imagem base:** o estágio final do `Dockerfile` roda
+  `apt-get upgrade` (sem pacotes recomendados), aplicando os pacotes corrigidos que a distribuição já
+  publicou e a imagem `aspnet` ainda não incorporou. Foi o caso da CVE-2026-84782 (`openssl`/`libssl3t64`).
+  Assim o gate não fica preso ao ciclo de rebuild da Microsoft.
 - **Sem correção disponível:** não bloqueia, porque não há ação possível no repositório e o CI ficaria
   vermelho de forma permanente. Continua **visível**: entra no SARIF (Code Scanning), no Job Summary e no
   relatório JSON completo. MEDIUM/LOW não bloqueiam e ficam no Job Summary (contagem) e no JSON.
