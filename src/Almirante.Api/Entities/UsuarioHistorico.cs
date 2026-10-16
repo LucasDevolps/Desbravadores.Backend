@@ -3,7 +3,7 @@ namespace Almirante.Api.Entities;
 // Histórico de alterações cadastrais de usuários (tabela _usuarios_hist). Nenhum código da aplicação insere
 // linhas aqui: são geradas exclusivamente pelo trigger TR_Usuarios_Historico, ANTES de a alteração valer (valores
 // "deleted" do trigger), sempre que Nome, Email, EmailNormalizado, Cpf, DataNascimento, Telefone, os dados do
-// responsável, FotoCaminho, CargoId ou Ativo mudam, com o responsável e o IP fornecidos via SESSION_CONTEXT (ver
+// responsável, FotoCaminho, Rg, TipoSanguineo, DoencasAlergias, CargoId ou Ativo mudam, com o responsável e o IP fornecidos via SESSION_CONTEXT (ver
 // UsuariosService e UsuarioFotoService). Login, bloqueio e reset de senha não geram linhas.
 // Somente leitura para a aplicação (DENY de escrita, ver DbPrivilegeAuditor.AuditTables).
 public sealed class UsuarioHistorico
@@ -32,6 +32,12 @@ public sealed class UsuarioHistorico
     public string? ResponsavelCpf { get; set; }
     public string? ResponsavelTelefone { get; set; }
     public string? FotoCaminho { get; set; }
+
+    // RG, tipo sanguíneo e doenças/alergias no estado anterior; NULL também em linhas gravadas antes da migration
+    // AddUsuariosRgTipoSanguineoDoencas.
+    public string? Rg { get; set; }
+    public string? TipoSanguineo { get; set; }
+    public string? DoencasAlergias { get; set; }
 
     public Guid CargoId { get; set; }
     public required string CargoNome { get; set; }

@@ -645,6 +645,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateOnly?>("DataNascimento")
                         .HasColumnType("date");
 
+                    b.Property<string>("DoencasAlergias")
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -693,6 +698,11 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(11)");
 
+                    b.Property<string>("Rg")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
                     b.Property<long>("SecurityVersion")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
@@ -705,6 +715,11 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(20)
                         .IsUnicode(false)
                         .HasColumnType("varchar(20)");
+
+                    b.Property<string>("TipoSanguineo")
+                        .HasMaxLength(3)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(3)");
 
                     b.Property<DateTime?>("UltimaFalhaLoginUtc")
                         .HasColumnType("datetime2");
@@ -724,6 +739,8 @@ namespace Almirante.Api.Data.Migrations
                     b.ToTable("Usuarios", null, t =>
                         {
                             t.HasCheckConstraint("CK_Usuarios_FotoCaminho", "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79 AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp' AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')");
+
+                            t.HasCheckConstraint("CK_Usuarios_TipoSanguineo", "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
@@ -759,6 +776,11 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<DateOnly?>("DataNascimento")
                         .HasColumnType("date");
+
+                    b.Property<string>("DoencasAlergias")
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -799,6 +821,11 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(11)");
 
+                    b.Property<string>("Rg")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
                     b.Property<string>("Telefone")
                         .HasMaxLength(20)
                         .IsUnicode(false)
@@ -807,6 +834,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("TipoOperacao")
                         .IsRequired()
                         .HasColumnType("varchar(6)");
+
+                    b.Property<string>("TipoSanguineo")
+                        .HasMaxLength(3)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(3)");
 
                     b.Property<Guid>("UsuarioId")
                         .HasColumnType("uniqueidentifier");

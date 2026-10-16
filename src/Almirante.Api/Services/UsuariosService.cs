@@ -24,6 +24,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 {
     public const int NomeMaximo = 200;
     public const int EmailMaximo = 100;
+    public const int DoencasAlergiasMaximo = 2000;
 
     private const int SqlUnicidadeIndice = 2601;
     private const int SqlUnicidadeConstraint = 2627;
@@ -42,6 +43,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         ResponsavelEmail = u.ResponsavelEmail,
         ResponsavelCpf = u.ResponsavelCpf,
         ResponsavelTelefone = u.ResponsavelTelefone,
+        Rg = u.Rg,
+        TipoSanguineo = u.TipoSanguineo,
+        DoencasAlergias = u.DoencasAlergias,
         PossuiFoto = u.FotoCaminho != null,
         DataCriacao = u.DataCriacao,
         Funcao = u.Cargo!.Nome,
@@ -148,6 +152,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             ResponsavelEmail = NormalizarTexto(request.ResponsavelEmail),
             ResponsavelCpf = NormalizarCpf(request.ResponsavelCpf),
             ResponsavelTelefone = NormalizarTelefone(request.ResponsavelTelefone),
+            Rg = Rg.Normalizar(request.Rg),
+            TipoSanguineo = TipoSanguineo.Normalizar(request.TipoSanguineo),
+            DoencasAlergias = NormalizarTexto(request.DoencasAlergias),
             SenhaHash = string.Empty,
             CargoId = cargo.Id,
             DataCriacao = clock.GetUtcNow().UtcDateTime,
@@ -210,6 +217,16 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             var responsavelEmail = request.ResponsavelEmailInformado ? NormalizarTexto(request.ResponsavelEmail) : atual.ResponsavelEmail;
             var responsavelCpf = request.ResponsavelCpfInformado ? NormalizarCpf(request.ResponsavelCpf) : atual.ResponsavelCpf;
             var responsavelTelefone = request.ResponsavelTelefoneInformado ? NormalizarTelefone(request.ResponsavelTelefone) : atual.ResponsavelTelefone;
+            var rg = request.RgInformado ? Rg.Normalizar(request.Rg) : atual.Rg;
+            var tipoSanguineo = request.TipoSanguineoInformado ? TipoSanguineo.Normalizar(request.TipoSanguineo) : atual.TipoSanguineo;
+            var doencasAlergias = request.DoencasAlergiasInformado ? NormalizarTexto(request.DoencasAlergias) : atual.DoencasAlergias;
+
+            // CPF é obrigatório no cadastro: um CPF já gravado não pode ser removido. Usuário antigo sem CPF continua
+            // editável sem ele (o valor só passa a ser exigido quando existir).
+            if (cpf is null && atual.Cpf is not null)
+            {
+                throw ApiProblemException.Invalid("Cpf", "cpf é obrigatório e não pode ser removido.");
+            }
 
             // Regra do responsável com a data de nascimento EFETIVA (informada ou a gravada), mesma regra do POST.
             var erros = RegraResponsavel.Validar(dataNascimento, responsavelNome, responsavelEmail, responsavelCpf, cpf, dataCivil.Hoje());
@@ -236,7 +253,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                         ResponsavelNome = {Varchar("@responsavelNome", responsavelNome, NomeMaximo)},
                         ResponsavelEmail = {Varchar("@responsavelEmail", responsavelEmail, EmailMaximo)},
                         ResponsavelCpf = {Varchar("@responsavelCpf", responsavelCpf, Cpf.Digitos)},
-                        ResponsavelTelefone = {Varchar("@responsavelTelefone", responsavelTelefone, TelefoneBrasileiro.MaximoDigitos)}
+                        ResponsavelTelefone = {Varchar("@responsavelTelefone", responsavelTelefone, TelefoneBrasileiro.MaximoDigitos)},
+                        Rg = {Varchar("@rg", rg, Rg.Maximo)}, TipoSanguineo = {Varchar("@tipoSanguineo", tipoSanguineo, TipoSanguineo.Maximo)},
+                        DoencasAlergias = {Varchar("@doencasAlergias", doencasAlergias, DoencasAlergiasMaximo)}
                     WHERE Id = {request.Id} AND Ativo = 1
                     """, ct);
             }
@@ -307,7 +326,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     // ---------------------------------------------------------------- apoio
 
     private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone,
-        string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone);
+        string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone,
+        string? Rg, string? TipoSanguineo, string? DoencasAlergias);
 
     private sealed record CargoResumo(Guid Id, string Role);
 
@@ -316,7 +336,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
             .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone,
-                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone))
+                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone, u.Rg, u.TipoSanguineo, u.DoencasAlergias))
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
 
