@@ -7,7 +7,7 @@ namespace Almirante.Api.Validation.Usuarios;
 
 // Regras de formato comuns a POST e PUT. Unicidade do e-mail e do CPF e existência/atividade do cargo dependem do banco
 // e são verificadas em UsuariosService. Dados pessoais e do responsável são opcionais aqui: só o valor informado é
-// validado. A obrigatoriedade do responsável para menor de idade (RegraResponsavel) é checada no POST abaixo e, no PUT,
+// validado (o CPF é obrigatório só no POST, em RegistrarUsuarioRequestValidator). A obrigatoriedade do responsável para menor de idade (RegraResponsavel) é checada no POST abaixo e, no PUT,
 // em UsuariosService, com os valores efetivos (o que não veio no corpo é lido do banco).
 public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T : UsuarioConteudoRequest
 {
@@ -62,6 +62,29 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
 
         CpfOpcional(x => x.ResponsavelCpf, nameof(UsuarioConteudoRequest.ResponsavelCpf), "responsavelCpf");
         TelefoneOpcional(x => x.ResponsavelTelefone, nameof(UsuarioConteudoRequest.ResponsavelTelefone), "responsavelTelefone");
+
+        // RG e tipo sanguíneo: opcionais; só o valor informado (normalizado) é validado.
+        RuleFor(x => Rg.Normalizar(x.Rg))
+            .Must(rg => rg!.Length <= Rg.Maximo).WithMessage($"rg deve ter no máximo {Rg.Maximo} caracteres.")
+            .Must(Rg.EhValido)
+            .WithMessage("rg inválido: use letras sem acento, dígitos, ponto, hífen, barra ou espaço, com pelo menos um dígito.")
+            .OverridePropertyName(nameof(UsuarioConteudoRequest.Rg))
+            .When(x => Rg.Normalizar(x.Rg) is not null);
+
+        RuleFor(x => TipoSanguineo.Normalizar(x.TipoSanguineo))
+            .Must(TipoSanguineo.EhValido)
+            .WithMessage($"tipoSanguineo inválido: informe um de {string.Join(", ", TipoSanguineo.Valores)} ou deixe em branco.")
+            .OverridePropertyName(nameof(UsuarioConteudoRequest.TipoSanguineo))
+            .When(x => TipoSanguineo.Normalizar(x.TipoSanguineo) is not null);
+
+        // Doenças/alergias: texto de várias linhas em varchar. Acima do limite é recusado (nunca truncado em silêncio).
+        RuleFor(x => UsuariosService.NormalizarTexto(x.DoencasAlergias))
+            .Must(texto => texto!.Length <= UsuariosService.DoencasAlergiasMaximo)
+            .WithMessage($"doencasAlergias deve ter no máximo {UsuariosService.DoencasAlergiasMaximo} caracteres.")
+            .Must(texto => TextoVarchar.CabeNaPagina1252(texto!, permitirQuebraDeLinha: true))
+            .WithMessage("doencasAlergias contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
+            .OverridePropertyName(nameof(UsuarioConteudoRequest.DoencasAlergias))
+            .When(x => UsuariosService.NormalizarTexto(x.DoencasAlergias) is not null);
     }
 
     // CPF e telefone, do usuário e do responsável: validados sobre o valor que será gravado (sem máscara e sem espaços
@@ -85,6 +108,12 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
 {
     public RegistrarUsuarioRequestValidator(TimeProvider clock, DataCivil dataCivil) : base(clock)
     {
+        // CPF é o documento obrigatório do cadastro (o formato é validado na regra comum, quando informado). No PUT ele
+        // continua opcional para usuários antigos sem CPF; remover um CPF gravado é recusado em UsuariosService.
+        RuleFor(x => UsuariosService.NormalizarCpf(x.Cpf))
+            .NotNull().WithMessage("cpf é obrigatório.")
+            .OverridePropertyName(nameof(UsuarioConteudoRequest.Cpf));
+
         // Mesma política usada no bootstrap do administrador; nunca ecoa a senha na mensagem.
         RuleFor(x => x.Senha).Custom((senha, context) =>
         {

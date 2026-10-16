@@ -27,7 +27,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [HttpGet]
     [EndpointSummary("Lista os usuários; por padrão, somente os ativos.")]
     [EndpointDescription("includeInactive=true inclui os usuários excluídos logicamente. funcao traz o nome do cargo (ex.: \"Diretor\"). " +
-        "cpf (normalizado), dataNascimento (yyyy-MM-dd), telefone e os dados do responsável vêm null quando não cadastrados; " +
+        "cpf (normalizado), dataNascimento (yyyy-MM-dd), telefone, rg, tipoSanguineo, doencasAlergias e os dados do responsável vêm null quando não cadastrados; " +
         "fotoUrl é a rota autenticada da foto (null sem foto).")]
     [ProducesResponseType<IReadOnlyList<UsuarioListItemDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<UsuarioListItemDto>>> List(
@@ -41,8 +41,10 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [HttpPost]
     [EndpointSummary("Cadastra um usuário.")]
     [EndpointDescription("E-mail único sem diferenciar maiúsculas/minúsculas (409 se já existir, inclusive entre inativos). " +
-        "cpf, dataNascimento (yyyy-MM-dd, não futura) e telefone são opcionais; cpf precisa ser um CPF válido (11 dígitos, com ou sem " +
-        "pontos e hífen) e é único entre todos os usuários (409 se já existir); telefone é fixo ou celular brasileiro com DDD, gravado só com dígitos. " +
+        "cpf é obrigatório: um CPF válido (11 dígitos, com ou sem pontos e hífen), único entre todos os usuários (409 se já existir). " +
+        "dataNascimento (yyyy-MM-dd, não futura), telefone, rg, tipoSanguineo e doencasAlergias são opcionais; telefone é fixo ou celular " +
+        "brasileiro com DDD, gravado só com dígitos; rg tem até 20 caracteres (letras, dígitos, ponto, hífen, barra, espaço) e não é único; " +
+        "tipoSanguineo é A+, A-, B+, B-, AB+, AB-, O+ ou O-; doencasAlergias é um texto livre de até 2000 caracteres (recusado acima disso, nunca truncado). " +
         "responsavelNome e responsavelEmail são obrigatórios quando dataNascimento indica menos de 18 anos na data de hoje; " +
         "responsavelCpf e responsavelTelefone seguem as mesmas regras de cpf e telefone (sem unicidade). " +
         "cargoId deve ser um cargo ativo; somente um Administrador cadastra outro Administrador (403).")]
@@ -58,8 +60,9 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
 
     [HttpPut("{id:guid}")]
     [EndpointSummary("Altera nome, e-mail, cargo, dados pessoais e do responsável de um usuário ativo (estado anterior completo auditado em _usuarios_hist).")]
-    [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone e os campos do responsável omitidos " +
-        "mantêm o valor atual; null (ou \"\" nos textos) remove. A obrigatoriedade do responsável usa a data de nascimento informada ou, se omitida, " +
+    [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone, rg, tipoSanguineo, doencasAlergias e " +
+        "os campos do responsável omitidos mantêm o valor atual; null (ou \"\" nos textos) remove, exceto o cpf já gravado, que não pode ser removido (400). " +
+        "A obrigatoriedade do responsável usa a data de nascimento informada ou, se omitida, " +
         "a já gravada (400 se o menor de 18 anos ficar sem nome ou e-mail do responsável). " +
         "409 se o e-mail ou o CPF pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status200OK)]

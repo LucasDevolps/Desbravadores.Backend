@@ -53,10 +53,24 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var response = await PostAsync(new
         {
             nome = $"Pessoal {Guid.NewGuid():N}", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync(role),
-            cpf, dataNascimento = nascimento, telefone,
+            cpf = cpf ?? NovoCpf(), dataNascimento = nascimento, telefone,
         });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
+    }
+
+    // Usuário cadastrado antes de o CPF ser obrigatório (o POST não cria mais sem CPF): inserido direto no banco, como os
+    // registros legados. INSERT não passa pelo trigger (AFTER UPDATE), então não gera histórico.
+    private async Task<UsuarioListItemDto> CriarLegadoSemCpfAsync(DateOnly? nascimento = null, string? telefone = null)
+    {
+        var id = Guid.NewGuid();
+        var email = NovoEmail("legado");
+        await ExecSqlAsync("""
+            INSERT INTO dbo.Usuarios (Id, Nome, Email, EmailNormalizado, SenhaHash, CargoId, DataCriacao, SecurityVersion, FalhasLoginConsecutivas, Ativo, DataNascimento, Telefone)
+            VALUES (@id, @nome, @email, UPPER(@email), N'x', @cargo, SYSUTCDATETIME(), 0, 0, 1, @nascimento, @telefone)
+            """, ("@id", id), ("@nome", $"Legado {id:N}"), ("@email", email), ("@cargo", await CargoIdAsync("DS")),
+            ("@nascimento", (object?)nascimento?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value), ("@telefone", (object?)telefone ?? DBNull.Value));
+        return (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == id);
     }
 
     // Corpo de PUT com os campos obrigatórios do usuário atual mais os campos extras informados (omitidos ficam fora do JSON).
@@ -129,19 +143,46 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     }
 
     [Fact]
-    public async Task Post_SemDadosPessoais_OuComVazios_GravaNull_EDoisUsuariosSemCpfNaoColidem()
+    public async Task Post_SoComCpf_DemaisVaziosGravamNull_EDoisLegadosSemCpfNaoColidem()
     {
         var primeiro = await CriarAsync();
-        var segundo = await CriarAsync(cpf: "   ", telefone: "");
+        var segundo = await CriarAsync(telefone: "");
 
         foreach (var id in new[] { primeiro.Id, segundo.Id })
         {
             var salvo = await UsuarioAsync(id);
-            Assert.Null(salvo.Cpf);
+            Assert.NotNull(salvo.Cpf);
             Assert.Null(salvo.DataNascimento);
             Assert.Null(salvo.Telefone);
         }
-        Assert.Null(segundo.Cpf);
+
+        // Registros antigos sem CPF continuam válidos: o índice filtrado não faz dois NULL colidirem.
+        var legado1 = await CriarLegadoSemCpfAsync();
+        var legado2 = await CriarLegadoSemCpfAsync();
+        Assert.Null(legado1.Cpf);
+        Assert.Null((await UsuarioAsync(legado2.Id)).Cpf);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(" . - ")]
+    public async Task Post_SemCpf_Retorna400NoCampoCpf_ENaoCria(string? cpf)
+    {
+        var email = NovoEmail("sem-cpf");
+        var corpo = new JsonObject
+        {
+            ["nome"] = "Sem CPF", ["email"] = email, ["senha"] = $"Forte-{Guid.NewGuid():N}", ["cargoId"] = (await CargoIdAsync("DS")).ToString(),
+        };
+        if (cpf is not null) corpo["cpf"] = cpf;   // null = campo ausente do JSON
+
+        var response = await PostAsync(corpo);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var erros = JsonNode.Parse(await response.Content.ReadAsStringAsync())!["errors"]!.AsObject();
+        Assert.Equal("cpf é obrigatório.", (string)erros["Cpf"]![0]!);
+        Assert.False(await Db(db => db.Usuarios.AnyAsync(u => u.Email == email)));
     }
 
     [Fact]
@@ -232,21 +273,32 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     }
 
     [Fact]
-    public async Task Put_NullOuVazioExplicito_LimpaOCampo_EHistoricoGuardaOValorAnterior()
+    public async Task Put_NullOuVazioExplicito_LimpaOCampo_MasNaoRemoveCpfGravado_EHistoricoGuardaOValorAnterior()
     {
         var cpf = NovoCpf();
         var alvo = await CriarAsync(cpf, new DateOnly(1999, 9, 9), "(41) 4444-4444");
 
+        // CPF é obrigatório: remover o gravado é recusado (null ou ""), sem alterar nada nem gerar histórico.
+        foreach (var vazio in new JsonNode?[] { "", null })
+        {
+            var recusado = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = vazio; c["telefone"] = null; }));
+            Assert.Equal(HttpStatusCode.BadRequest, recusado.StatusCode);
+            Assert.Contains("cpf é obrigatório e não pode ser removido.", await recusado.Content.ReadAsStringAsync());
+        }
+        Assert.Equal("4144444444", (await UsuarioAsync(alvo.Id)).Telefone);
+        Assert.Empty(await HistoricoAsync(alvo.Id));
+
+        var novoCpf = NovoCpf();
         var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c =>
         {
-            c["cpf"] = "";
+            c["cpf"] = novoCpf;
             c["dataNascimento"] = null;
             c["telefone"] = null;
         }));
 
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         var salvo = await UsuarioAsync(alvo.Id);
-        Assert.Null(salvo.Cpf);
+        Assert.Equal(novoCpf, salvo.Cpf);
         Assert.Null(salvo.DataNascimento);
         Assert.Null(salvo.Telefone);
 
@@ -255,9 +307,24 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(new DateOnly(1999, 9, 9), linha.DataNascimento);
         Assert.Equal("4144444444", linha.Telefone);
 
-        // O CPF liberado pode ser usado por outro usuário.
+        // O CPF substituído fica livre para outro usuário.
         var outro = await CriarAsync(cpf);
         Assert.Equal(cpf, outro.Cpf);
+    }
+
+    [Fact]
+    public async Task Put_LegadoSemCpf_ContinuaEditavelSemCpf_EPodeReceberUm()
+    {
+        var legado = await CriarLegadoSemCpfAsync(telefone: "1134567890");
+
+        // Omitido ou vazio: o legado continua sem CPF e a alteração vale.
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, legado.Id, CorpoPut(legado, c => c["telefone"] = "(21) 2345-6789"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, legado.Id, CorpoPut(legado, c => c["cpf"] = ""))).StatusCode);
+        Assert.Null((await UsuarioAsync(legado.Id)).Cpf);
+
+        var cpf = NovoCpf();
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, legado.Id, CorpoPut(legado, c => c["cpf"] = Mascarar(cpf)))).StatusCode);
+        Assert.Equal(cpf, (await UsuarioAsync(legado.Id)).Cpf);
     }
 
     // ------------------------------------------------------------------ 3-6. CPF único
@@ -327,7 +394,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var alvo = await CriarAsync();
         var put = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["cpf"] = cpf));
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
-        Assert.Null((await UsuarioAsync(alvo.Id)).Cpf);
+        Assert.Equal(alvo.Cpf, (await UsuarioAsync(alvo.Id)).Cpf);
     }
 
     // ------------------------------------------------------------------ 7. índice no banco e concorrência
@@ -438,14 +505,14 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var corpo = await resposta.Content.ReadAsStringAsync();
         Assert.Contains("Existe outro usuário cadastrado com esse CPF.", corpo);
         AssertSemDetalheInterno(corpo);
-        Assert.Null((await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvoLocal.Id))).Cpf);
+        Assert.Equal(alvoLocal.Cpf, (await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvoLocal.Id))).Cpf);
         Assert.Empty(await TestHelpers.WithDbAsync(fabrica, db => db.UsuariosHistorico.Where(h => h.UsuarioId == alvoLocal.Id).ToListAsync()));
     }
 
     private static async Task<UsuarioListItemDto> CriarNaFabricaAsync(SqlServerApiFactory fabrica, HttpClient cliente)
     {
         var cargoId = await TestHelpers.WithDbAsync(fabrica, db => db.Cargos.Where(c => c.Role == "DS").Select(c => c.Id).SingleAsync());
-        var response = await cliente.PostAsJsonAsync("/api/Usuarios", new { nome = "Local", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId });
+        var response = await cliente.PostAsJsonAsync("/api/Usuarios", new { nome = "Local", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId, cpf = NovoCpf() });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
     }
@@ -526,7 +593,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     public async Task Trigger_UpdateDeVariasLinhas_GeraUmHistoricoPorUsuario_ComOValorAnteriorDeCada()
     {
         var a = await CriarAsync(NovoCpf(), telefone: "(11) 2111-1111");
-        var b = await CriarAsync(null, new DateOnly(1995, 5, 5), "(22) 2222-2222");
+        var b = await CriarLegadoSemCpfAsync(new DateOnly(1995, 5, 5), "2222222222");
 
         Assert.Equal(2, await ExecSqlAsync("""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@resp;

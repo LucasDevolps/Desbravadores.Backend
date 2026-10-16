@@ -14,6 +14,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
         " AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp'" +
         " AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')";
 
+    // Defesa em profundidade para Usuarios.TipoSanguineo: só os oito valores ABO/Rh de Validation/Usuarios/TipoSanguineo,
+    // exatamente como a API grava (maiúsculas; BIN2 recusa "ab+"). NULL = não informado.
+    public const string CheckTipoSanguineo =
+        "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')";
+
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
     public DbSet<Cargo> Cargos => Set<Cargo>();
@@ -44,6 +49,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             {
                 table.UseSqlOutputClause(false);
                 table.HasCheckConstraint("CK_Usuarios_FotoCaminho", CheckFotoCaminho);
+                table.HasCheckConstraint("CK_Usuarios_TipoSanguineo", CheckTipoSanguineo);
             });
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
@@ -61,6 +67,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.ResponsavelCpf).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(u => u.ResponsavelTelefone).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(u => u.FotoCaminho).HasColumnType("varchar(79)").HasMaxLength(79).IsUnicode(false);
+            // RG ASCII (letras, dígitos e pontuação do documento), tipo sanguíneo com até 3 caracteres ("AB+") e
+            // doenças/alergias em texto livre na página 1252, com limite validado antes (sem truncamento silencioso).
+            entity.Property(u => u.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(u => u.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
+            entity.Property(u => u.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
             entity.Property(u => u.SenhaHash).IsRequired();
             // Token de concorrência: todo UPDATE de Usuarios (login, rehash, reset de senha) filtra por esta
             // versão, então um login/rehash baseado em credenciais anteriores a um reset falha em vez de
@@ -313,6 +324,9 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(h => h.ResponsavelCpf).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(h => h.ResponsavelTelefone).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(h => h.FotoCaminho).HasColumnType("varchar(79)").HasMaxLength(79).IsUnicode(false);
+            entity.Property(h => h.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(h => h.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
+            entity.Property(h => h.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
             entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
             entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();

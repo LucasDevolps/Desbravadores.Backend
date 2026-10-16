@@ -127,6 +127,7 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         var response = await Client.PostAsJsonAsync("/api/Usuarios", new
         {
             nome = $"Foto SQL {Guid.NewGuid():N}", email = $"foto-{Guid.NewGuid():N}@local.dev", senha = $"Forte-{Guid.NewGuid():N}", cargoId,
+            cpf = TestHelpers.NovoCpf(),
         });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!.Id;

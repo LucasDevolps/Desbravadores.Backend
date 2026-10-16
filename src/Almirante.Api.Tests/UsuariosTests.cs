@@ -109,7 +109,7 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
     public async Task Post_CargoInexistenteOuInativo_Retorna400()
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-        var corpo = new { nome = "Fulano", email = $"f-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = Guid.NewGuid() };
+        var corpo = new { nome = "Fulano", email = $"f-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = Guid.NewGuid(), cpf = TestHelpers.NovoCpf() };
 
         var response = await client.PostAsJsonAsync("/api/Usuarios", corpo);
 
@@ -121,7 +121,7 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
     public async Task Post_AdministradorSoPodeSerCriadoPorAdministrador()
     {
         var (tesoureiro, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "TES");
-        var corpo = new { nome = "Novo Admin", email = $"adm-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync("ADM") };
+        var corpo = new { nome = "Novo Admin", email = $"adm-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync("ADM"), cpf = TestHelpers.NovoCpf() };
 
         var negado = await tesoureiro.PostAsJsonAsync("/api/Usuarios", corpo);
         Assert.Equal(HttpStatusCode.Forbidden, negado.StatusCode);
@@ -139,7 +139,7 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
 
         var response = await client.PostAsJsonAsync("/api/Usuarios", new
         {
-            nome = "Ignora", email, senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync("DS"),
+            nome = "Ignora", email, senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync("DS"), cpf = TestHelpers.NovoCpf(),
             ativo = false, solicitanteEhAdmin = true, usuarioResponsavelId = Guid.NewGuid(),
         });
 

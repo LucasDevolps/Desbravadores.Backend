@@ -22,6 +22,14 @@ public class Usuario
     public string? ResponsavelCpf { get; set; }
     public string? ResponsavelTelefone { get; set; }
 
+    // Dados de identificação e saúde, todos opcionais (NULL em registros legados e quando não informados; nada é
+    // inventado). Rg: texto livre do documento (formato varia por estado), não é único. TipoSanguineo: um dos oito ABO/Rh
+    // (CHECK CK_Usuarios_TipoSanguineo). DoencasAlergias: UM campo de texto livre com doenças, alergias e cuidados de
+    // saúde, de propósito sem estrutura própria. Todos varchar (página 1252, ver TextoVarchar).
+    public string? Rg { get; set; }
+    public string? TipoSanguineo { get; set; }
+    public string? DoencasAlergias { get; set; }
+
     // Foto de perfil: só o caminho RELATIVO à pasta Media:Storage:Path, no formato usuarios/{Id:N}/{aleatório}.webp
     // (CHECK CK_Usuarios_FotoCaminho garante o formato e que a foto é deste usuário). O binário nunca vai para o banco.
     public string? FotoCaminho { get; set; }

@@ -29,7 +29,13 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
 
     private static string SenhaValida() => $"Forte-{Guid.NewGuid():N}";
 
-    private async Task<HttpResponseMessage> PostAsync(object corpo) => await Client.PostAsJsonAsync("/api/Usuarios", corpo);
+    // CPF é obrigatório no cadastro: corpos sem cpf recebem um CPF válido novo (estes testes não tratam do CPF).
+    private async Task<HttpResponseMessage> PostAsync(object corpo)
+    {
+        var json = System.Text.Json.JsonSerializer.SerializeToNode(corpo)!.AsObject();
+        json.TryAdd("cpf", TestHelpers.NovoCpf());
+        return await Client.PostAsJsonAsync("/api/Usuarios", json);
+    }
 
     private static Task<HttpResponseMessage> PutAsync(HttpClient client, Guid id, object corpo, string ip = IpTeste)
     {

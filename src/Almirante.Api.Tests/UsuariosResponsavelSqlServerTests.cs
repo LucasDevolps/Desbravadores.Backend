@@ -33,7 +33,7 @@ public sealed class UsuariosResponsavelSqlServerTests(EventosSqlFixture fx) : IC
         var response = await Client.PostAsJsonAsync("/api/Usuarios", new
         {
             nome = $"Responsável SQL {Guid.NewGuid():N}", email = $"resp-{Guid.NewGuid():N}@local.dev", senha = $"Forte-{Guid.NewGuid():N}",
-            cargoId = await CargoDsAsync(), dataNascimento = nascimento, responsavelNome, responsavelEmail, cpf,
+            cargoId = await CargoDsAsync(), dataNascimento = nascimento, responsavelNome, responsavelEmail, cpf = cpf ?? TestHelpers.NovoCpf(),
         });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
