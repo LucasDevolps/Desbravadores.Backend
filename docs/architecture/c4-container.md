@@ -116,9 +116,11 @@ O `depends_on` do Compose garante esta sequência:
   redireciona, HTTPS fica em 443 e o nginx aceita só o host de `TLS_PUBLIC_HOST`. A API aceita esse
   host e, para o healthcheck interno, `localhost` e `127.0.0.1`.
 
-O deploy Linux escolhe entre `http` e `tls` pela variável `DEPLOY_MODE` do `.env` da máquina, validada
-por [`scripts/deploy-config.sh`](../../scripts/deploy-config.sh). O valor usado em cada ambiente real
-não está no repositório.
+O deploy Linux escolhe entre `http`, `https` e `tls` pela variável `DEPLOY_MODE` do `.env` da máquina,
+validada por [`scripts/deploy-config.sh`](../../scripts/deploy-config.sh). O `https` soma ao HTTP o HTTPS
+local de [`compose.https.yaml`](../../compose.https.yaml) em `127.0.0.1:API_HTTPS_HOST_PORT`. O certificado
+é autoassinado e o próprio deploy o gera e renova em `$HOME/almirante/certs`. O valor usado em cada
+ambiente real não está no repositório.
 
 ## Topologia 2: Windows/IIS
 

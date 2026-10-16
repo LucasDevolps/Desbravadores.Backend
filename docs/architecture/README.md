@@ -139,7 +139,7 @@ nesta issue, que é só de documentação de arquitetura.
 
 O repositório não permite determinar:
 
-- qual `DEPLOY_MODE` (`http` ou `tls`) e qual `ASPNETCORE_ENVIRONMENT` estão em uso em cada ambiente
+- qual `DEPLOY_MODE` (`http`, `https` ou `tls`) e qual `ASPNETCORE_ENVIRONMENT` estão em uso em cada ambiente
   publicado, porque esses valores vêm do `.env` de cada máquina;
 - onde fica o SQL Server do deploy Windows/IIS e qual identidade a API usa nele;
 - como os usuários, além do administrador inicial, são cadastrados nos ambientes, já que a API não
