@@ -45,6 +45,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
+      # Uma variável nova nunca pode derrubar esta máquina: toda chave nova entra no .env.example, e aqui ela é criada
+      # no .env fixo se faltar. O valor mantém o comportamento atual: o padrão do Compose; se não houver padrão, um
+      # valor gerado para segredo ou placeholder, ou então o valor do exemplo. Chave existente nunca muda, o .env ganha
+      # um backup antes e só nomes de chave vão para o log. Roda antes de qualquer alteração de serviço.
+      - name: Completar .env fixo com chaves novas do .env.example
+        run: bash scripts/deploy-config.sh completar-env .env.example "$HOME/almirante/.env" compose.yaml compose.https.yaml compose.tls.yaml
+
       - name: Copiar .env fixo da máquina
         run: cp "$HOME/almirante/.env" "$GITHUB_WORKSPACE/.env"
 

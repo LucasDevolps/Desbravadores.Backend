@@ -75,6 +75,97 @@ valida_identidades_sql() {
   [[ "$pw" != "$sa_pw" ]] || erro "SQL_ADMIN_PASSWORD não pode ser igual a SQL_SA_PASSWORD."
 }
 
+# dotenv_chaves ARQUIVO -> nomes das chaves ativas (mesma regra de dotenv_get), uma por linha, sem repetir.
+dotenv_chaves() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    line=${line#"${line%%[![:space:]]*}"}
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    line=${line#export[[:space:]]}
+    line=${line#"${line%%[![:space:]]*}"}
+    [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_.-]*)[[:space:]]*= ]] && echo "${BASH_REMATCH[1]}"
+  done < "$1" | awk '!visto[$0]++'
+}
+
+# segredo -> 40 caracteres de A-Za-z0-9 com maiúscula, minúscula e dígito: aceito pelo SQL Server, pela regra do
+# sql-bootstrap e pela PasswordPolicy da API.
+segredo() {
+  local s
+  while :; do
+    s=$(openssl rand -base64 60 | tr -dc 'A-Za-z0-9' | head -c 40)
+    [[ ${#s} -eq 40 && "$s" =~ [A-Z] && "$s" =~ [a-z] && "$s" =~ [0-9] ]] && { printf '%s' "$s"; return; }
+  done
+}
+
+# Chaves que nunca são geradas: precisam bater com um estado já persistido (a senha do sa vale para o volume do
+# SQL Server já inicializado). Se faltarem, o deploy para aqui, antes de qualquer alteração de serviço.
+NUNCA_GERAR=(SQL_SA_PASSWORD)
+
+# completar-env EXEMPLO ENV COMPOSE...: acrescenta ao ENV (o .env fixo da máquina) toda chave ativa do EXEMPLO que
+# ainda não existe nele, para uma variável nova nunca derrubar o deploy. O valor acrescentado mantém o comportamento
+# atual: o padrão do Compose (${CHAVE:-padrão}) quando houver; senão, para segredo ou placeholder (DEFINA_*), um valor
+# gerado; senão, o valor do EXEMPLO. Chave existente nunca é alterada. Antes de escrever, guarda um backup do ENV
+# (modo 600). Só nomes de chave vão para o log.
+cmd_completar_env() {
+  [[ $# -ge 2 ]] || erro "uso: completar-env EXEMPLO ENV [COMPOSE...]"
+  local exemplo=$1 env_file=$2; shift 2
+  [[ -r "$exemplo" ]] || erro "arquivo de exemplo ilegível: $exemplo"
+  [[ -r "$env_file" && -w "$env_file" ]] || erro "arquivo .env ilegível ou sem permissão de escrita: $env_file"
+  local -a compose=()
+  local f
+  for f in "$@"; do [[ -r "$f" ]] && compose+=("$f"); done
+
+  local -A existentes=()
+  local chave
+  while IFS= read -r chave; do existentes[$chave]=1; done < <(dotenv_chaves "$env_file")
+
+  local -a novas=() origens=() valores=()
+  local valor origem padrao
+  while IFS= read -r chave; do
+    [[ -n "${existentes[$chave]:-}" ]] && continue
+    padrao=""
+    if (( ${#compose[@]} )); then
+      padrao=$(grep -ohE "\\\$\\{$chave:-[^}]*\\}" "${compose[@]}" | head -1) || true
+    fi
+    if [[ -n "$padrao" ]]; then
+      valor=${padrao#*:-}; valor=${valor%\}}; origem="padrão do Compose"
+    else
+      valor=$(dotenv_get "$exemplo" "$chave")
+      if [[ "$valor" == DEFINA_* || "$chave" =~ (PASSWORD|SENHA|SECRET|TOKEN) ]]; then
+        local proibida
+        for proibida in "${NUNCA_GERAR[@]}"; do
+          [[ "$chave" == "$proibida" ]] && erro "$chave ausente no .env da máquina ($env_file) e não pode ser gerada (precisa ser a senha já usada pelo SQL Server). Nada foi alterado."
+        done
+        valor=$(segredo); origem="gerado"
+      else
+        origem=".env.example"
+      fi
+    fi
+    [[ "$valor" =~ ^[A-Za-z0-9_./:@+,=*-]*$ ]] || valor="'$valor'"
+    novas+=("$chave"); origens+=("$origem"); valores+=("$valor")
+  done < <(dotenv_chaves "$exemplo")
+
+  if (( ${#novas[@]} == 0 )); then
+    echo "deploy-config: o .env da máquina já tem todas as chaves do .env.example."
+    return 0
+  fi
+
+  local backup
+  backup="$env_file.bak-$(date -u +%Y%m%d%H%M%S)"
+  cp -p "$env_file" "$backup"
+  chmod 600 "$backup"
+  [[ -s "$env_file" && -n "$(tail -c1 "$env_file")" ]] && echo >> "$env_file"
+  {
+    echo
+    echo "# --- Adicionadas pelo deploy em $(date -u +%Y-%m-%dT%H:%MZ) a partir do .env.example (mantêm o comportamento atual) ---"
+    local i
+    for i in "${!novas[@]}"; do echo "${novas[$i]}=${valores[$i]}"; done
+  } >> "$env_file"
+  for i in "${!novas[@]}"; do echo "deploy-config: chave nova no .env da máquina: ${novas[$i]} (${origens[$i]})"; done
+  echo "deploy-config: backup do .env anterior em $backup"
+}
+
 cmd_get() {
   [[ $# -eq 2 ]] || erro "uso: get ARQUIVO CHAVE"
   dotenv_get "$1" "$2"
@@ -157,7 +248,8 @@ main() {
     get) cmd_get "$@" ;;
     gerar-host-tls) cmd_gerar_host_tls "$@" ;;
     modo) cmd_modo "$@" ;;
-    *) erro "subcomando inválido (get | gerar-host-tls | modo)" ;;
+    completar-env) cmd_completar_env "$@" ;;
+    *) erro "subcomando inválido (get | gerar-host-tls | modo | completar-env)" ;;
   esac
 }
 

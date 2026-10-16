@@ -338,6 +338,15 @@ if [[ -f "$DP" ]]; then
   exige_em "$DP" deploy-linux '--user root --cap-add CHOWN --entrypoint chown api app:app' "dá a pasta ao usuário app só com CAP_CHOWN"
   exige_em "$DP" deploy-windows "IIS AppPool\\\${pool}:(OI)(CI)(R,W,D)" "cria a pasta com a ACL restrita do pool"
   exige_em "$DP" deploy-windows "-Value @{ name = 'Media__Storage__Path'; value = \$pasta }" "define Media__Storage__Path no pool quando falta"
+  # Variável nova nunca derruba a máquina: o .env fixo é completado a partir do .env.example ANTES de ser usado.
+  exige_em "$DP" deploy-linux 'bash scripts/deploy-config.sh completar-env .env.example "$HOME/almirante/.env"' "completa o .env fixo com as chaves novas"
+  linha_completa=$(bloco_do_job "$DP" deploy-linux | grep -n 'completar-env' | head -1 | cut -d: -f1)
+  linha_copia=$(bloco_do_job "$DP" deploy-linux | grep -n 'cp "$HOME/almirante/.env"' | head -1 | cut -d: -f1)
+  if [[ -n "$linha_completa" && -n "$linha_copia" && "$linha_completa" -lt "$linha_copia" ]]; then
+    ok "backend-deploy.yml/deploy-linux: completa o .env antes de copiá-lo"
+  else
+    erro "backend-deploy.yml/deploy-linux: completar-env deve rodar antes de copiar o .env fixo."
+  fi
   # Modo https: certificado local mantido pelo próprio deploy e healthcheck que valida o certificado (sem -k).
   exige_em "$DP" deploy-linux "if: steps.compose-mode.outputs.mode == 'https'" "prepara o certificado só no modo https"
   exige_em "$DP" deploy-linux 'openssl x509 -checkend 2592000' "renova o certificado local antes de vencer"

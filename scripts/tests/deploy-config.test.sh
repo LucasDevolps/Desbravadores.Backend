@@ -102,6 +102,65 @@ bash "$SCRIPT" gerar-host-tls "$TMP/gen/host.conf" api.exemplo.com.br
 if grep -q 'default 0; "api.exemplo.com.br" 1;' "$TMP/gen/host.conf" && grep -q 'default "api.exemplo.com.br";' "$TMP/gen/host.conf"; then ok "gera mapa de host"; else falha "gera mapa de host" "$(cat "$TMP/gen/host.conf")"; fi
 if bash "$SCRIPT" gerar-host-tls "$TMP/gen/x.conf" 'a";evil' > /dev/null 2>&1; then falha "host malicioso não gera arquivo" ""; else ok "host malicioso não gera arquivo"; fi
 
+# completar-env: chaves novas do .env.example entram no .env da máquina sem mudar o comportamento atual
+CE="$TMP/ce"; mkdir -p "$CE"
+cat > "$CE/compose.yaml" <<'EOF'
+services:
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      Sql__Trust: ${SQL_TRUST_SERVER_CERTIFICATE:-False}
+      Sa: ${SQL_SA_PASSWORD:?defina}
+      Admin: ${SQL_ADMIN_PASSWORD:?defina}
+      Seed: ${SEED_ADMIN_SENHA:?defina}
+      Usuario: ${SQL_ADMIN_USER:?defina}
+      Vazia: ${JWT_KEY_V1:-}
+EOF
+cat > "$CE/exemplo" <<'EOF'
+# comentário
+SQL_SA_PASSWORD=DEFINA_A_SENHA_DO_SA
+SQL_ADMIN_USER=almirante_admin_bd
+SQL_ADMIN_PASSWORD=DEFINA_UMA_SENHA_FORTE_FORA_DO_GIT
+ASPNETCORE_ENVIRONMENT=Development
+SQL_TRUST_SERVER_CERTIFICATE=True
+JWT_KEY_V1=CHAVE_DO_EXEMPLO
+SEED_ADMIN_SENHA=DEFINA_A_SENHA_DO_ADMIN
+CHAVE_NOVA_SEM_PADRAO=valor do exemplo
+#OPCIONAL_COMENTADA=nao_entra
+EOF
+printf 'SQL_SA_PASSWORD=Sa.Senha.Atual.2026\r\nSQL_ADMIN_PASSWORD=Admin.Senha.Atual.2026-Zz9' > "$CE/.env"   # CRLF e sem \n final
+chmod 640 "$CE/.env"
+bash "$SCRIPT" completar-env "$CE/exemplo" "$CE/.env" "$CE/compose.yaml" > "$CE/msg" 2>&1; rc=$?
+v() { bash "$SCRIPT" get "$CE/.env" "$1"; }
+[[ $rc -eq 0 ]] && ok "completar-env roda" || falha "completar-env roda" "$(cat "$CE/msg")"
+[[ "$(v ASPNETCORE_ENVIRONMENT)" == "Production" ]] && ok "chave com padrão do Compose recebe o padrão (não o Development do exemplo)" || falha "padrão do Compose" "$(v ASPNETCORE_ENVIRONMENT)"
+[[ "$(v SQL_TRUST_SERVER_CERTIFICATE)" == "False" ]] && ok "SQL_TRUST_SERVER_CERTIFICATE mantém False" || falha "trust mantém False" "$(v SQL_TRUST_SERVER_CERTIFICATE)"
+[[ -z "$(v JWT_KEY_V1)" ]] && grep -q '^JWT_KEY_V1=$' "$CE/.env" && ok "padrão vazio do Compose vira chave vazia (não o valor do exemplo)" || falha "padrão vazio" "$(v JWT_KEY_V1)"
+seed=$(v SEED_ADMIN_SENHA)
+[[ ${#seed} -eq 40 && "$seed" != DEFINA_* && "$seed" =~ [A-Z] && "$seed" =~ [a-z] && "$seed" =~ [0-9] ]] && ok "segredo sem padrão é gerado (40, sem placeholder)" || falha "segredo gerado" "tamanho ${#seed}"
+[[ "$(v SQL_ADMIN_USER)" == "almirante_admin_bd" ]] && ok "obrigatória sem padrão e não secreta vem do exemplo" || falha "valor do exemplo" "$(v SQL_ADMIN_USER)"
+[[ "$(v CHAVE_NOVA_SEM_PADRAO)" == "valor do exemplo" ]] && ok "valor com espaço é escrito entre aspas e lido igual" || falha "valor com espaço" "$(v CHAVE_NOVA_SEM_PADRAO)"
+[[ "$(v SQL_SA_PASSWORD)" == "Sa.Senha.Atual.2026" && "$(v SQL_ADMIN_PASSWORD)" == "Admin.Senha.Atual.2026-Zz9" ]] && ok "chaves existentes não mudam" || falha "existentes não mudam" ""
+grep -q 'OPCIONAL_COMENTADA' "$CE/.env" && falha "chave comentada não entra" "" || ok "chave comentada do exemplo não entra"
+grep -qE 'Atual|DEFINA|Production|almirante_admin' "$CE/msg" && falha "log sem valores" "$(cat "$CE/msg")" || ok "log mostra só nomes de chave"
+ls "$CE"/.env.bak-* > /dev/null 2>&1 && [[ "$(stat -c %a "$CE"/.env.bak-* | head -1)" == "600" ]] && ok "backup do .env anterior com modo 600" || falha "backup 600" "$(ls -l "$CE")"
+[[ "$(stat -c %a "$CE/.env")" == "640" ]] && ok "permissão do .env preservada" || falha "permissão preservada" "$(stat -c %a "$CE/.env")"
+antes=$(md5sum < "$CE/.env"); bash "$SCRIPT" completar-env "$CE/exemplo" "$CE/.env" "$CE/compose.yaml" > "$CE/msg2" 2>&1
+[[ "$(md5sum < "$CE/.env")" == "$antes" ]] && grep -q 'já tem todas as chaves' "$CE/msg2" && [[ $(ls "$CE"/.env.bak-* | wc -l) -eq 1 ]] && ok "segunda execução não muda nada nem cria backup" || falha "idempotente" "$(cat "$CE/msg2")"
+printf 'SQL_ADMIN_PASSWORD=Admin.Senha.Atual.2026-Zz9\n' > "$CE/sem-sa.env"; antes=$(md5sum < "$CE/sem-sa.env")
+if bash "$SCRIPT" completar-env "$CE/exemplo" "$CE/sem-sa.env" "$CE/compose.yaml" > "$CE/msg3" 2>&1; then falha "sem SQL_SA_PASSWORD para antes de mudar" ""
+elif [[ "$(md5sum < "$CE/sem-sa.env")" == "$antes" ]] && grep -q 'SQL_SA_PASSWORD ausente' "$CE/msg3"; then ok "SQL_SA_PASSWORD ausente nunca é gerada: falha sem alterar o .env"
+else falha "sem SQL_SA_PASSWORD para antes de mudar" "$(cat "$CE/msg3")"; fi
+
+# O .env.example real completa um .env vazio de chaves opcionais sem trocar o comportamento do compose.yaml real.
+printf 'SQL_SA_PASSWORD=Sa.Senha.Atual.2026\n' > "$CE/real.env"
+bash "$SCRIPT" completar-env "$ROOT/.env.example" "$CE/real.env" "$ROOT/compose.yaml" "$ROOT/compose.https.yaml" "$ROOT/compose.tls.yaml" > "$CE/msg4" 2>&1
+r() { bash "$SCRIPT" get "$CE/real.env" "$1"; }
+if [[ "$(r ASPNETCORE_ENVIRONMENT)" == "Production" && "$(r SQL_TRUST_SERVER_CERTIFICATE)" == "False" && -n "$(r SQL_ADMIN_PASSWORD)" && "$(r SQL_ADMIN_PASSWORD)" != DEFINA_* ]] \
+  && bash "$SCRIPT" modo "$CE/real.env" /dev/null > /dev/null 2>&1; then
+  ok ".env.example real: Production, trust False, senha gerada e preflight do modo passa"
+else falha ".env.example real" "$(cat "$CE/msg4")"; fi
+
 echo "----"
 echo "$((total - falhas))/$total passaram"
 exit $(( falhas > 0 ? 1 : 0 ))

@@ -36,6 +36,10 @@ Pontos importantes do funcionamento atual:
   Detalhes em [Proteção de branches](README.md#proteção-de-branches).
 - Um push em `develop` que altere o backend ou a infraestrutura dispara o workflow de deploy
   (`backend-deploy.yml`). Trate o merge em `develop` como uma publicação.
+- Toda variável de ambiente nova entra no `.env.example`, numa linha ativa `CHAVE=valor`, no mesmo PR. O deploy
+  Linux cria a chave que faltar no `.env` fixo da máquina (`scripts/deploy-config.sh completar-env`). O valor
+  criado mantém o comportamento atual: o padrão `${CHAVE:-padrão}` do Compose, ou um valor gerado para segredos
+  sem padrão. Por isso, dê à variável nova um padrão no Compose que preserve o comportamento de hoje.
 - Não inicie trabalho a partir de `main`. PRs direto para `main` devem ser exceção (por exemplo, o
   back-merge `main → develop` descrito no README).
 
