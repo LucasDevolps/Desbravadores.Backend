@@ -23,20 +23,46 @@ public abstract class UsuarioConteudoRequest
 
     /// <summary>
     /// Opcional; único entre todos os usuários (inclusive inativos). Espaços externos, pontos e hífen são removidos antes de
-    /// salvar e comparar ("123.456.789-01" = "12345678901"); até 20 caracteres ASCII após a normalização. No PUT: omitido
-    /// mantém o valor atual; null ou "" remove.
+    /// salvar e comparar ("123.456.789-09" = "12345678909"); depois disso precisa ter 11 dígitos com dígitos verificadores
+    /// válidos. No PUT: omitido mantém o valor atual; null ou "" remove.
     /// </summary>
     public string? Cpf { get => _cpf; set { _cpf = value; CpfInformado = true; } }
 
     /// <summary>Opcional, formato yyyy-MM-dd, sem horário; não pode ser futura. No PUT: omitida mantém; null remove.</summary>
     public DateOnly? DataNascimento { get => _dataNascimento; set { _dataNascimento = value; DataNascimentoInformada = true; } }
 
-    /// <summary>Opcional, até 20 caracteres ASCII (espaços externos removidos). No PUT: omitido mantém; null ou "" remove.</summary>
+    /// <summary>
+    /// Opcional; telefone brasileiro com DDD, gravado só com dígitos: fixo "(11) 3456-7890" (10 dígitos) ou celular
+    /// "(11) 98765-4321" (11 dígitos), com ou sem a máscara. No PUT: omitido mantém; null ou "" remove.
+    /// </summary>
     public string? Telefone { get => _telefone; set { _telefone = value; TelefoneInformado = true; } }
+
+    // Dados do responsável, com as mesmas regras de formato dos campos do usuário. Nome e e-mail são obrigatórios só para
+    // menor de 18 anos (data de nascimento informada ou, no PUT, a já gravada); CPF e telefone são sempre opcionais.
+    private string? _responsavelNome;
+    private string? _responsavelEmail;
+    private string? _responsavelCpf;
+    private string? _responsavelTelefone;
+
+    /// <summary>Até 200 caracteres (espaços externos removidos), sem caracteres fora do Latin1. No PUT: omitido mantém; null ou "" remove.</summary>
+    public string? ResponsavelNome { get => _responsavelNome; set { _responsavelNome = value; ResponsavelNomeInformado = true; } }
+
+    /// <summary>Formato válido, até 100 caracteres ASCII; não precisa ser único. No PUT: omitido mantém; null ou "" remove.</summary>
+    public string? ResponsavelEmail { get => _responsavelEmail; set { _responsavelEmail = value; ResponsavelEmailInformado = true; } }
+
+    /// <summary>Mesmas regras de cpf; não é único e não pode ser igual ao cpf do próprio usuário. No PUT: omitido mantém; null ou "" remove.</summary>
+    public string? ResponsavelCpf { get => _responsavelCpf; set { _responsavelCpf = value; ResponsavelCpfInformado = true; } }
+
+    /// <summary>Mesmas regras de telefone. No PUT: omitido mantém; null ou "" remove.</summary>
+    public string? ResponsavelTelefone { get => _responsavelTelefone; set { _responsavelTelefone = value; ResponsavelTelefoneInformado = true; } }
 
     [JsonIgnore] public bool CpfInformado { get; private set; }
     [JsonIgnore] public bool DataNascimentoInformada { get; private set; }
     [JsonIgnore] public bool TelefoneInformado { get; private set; }
+    [JsonIgnore] public bool ResponsavelNomeInformado { get; private set; }
+    [JsonIgnore] public bool ResponsavelEmailInformado { get; private set; }
+    [JsonIgnore] public bool ResponsavelCpfInformado { get; private set; }
+    [JsonIgnore] public bool ResponsavelTelefoneInformado { get; private set; }
 
     // Preenchidos pelo controller a partir das claims validadas; nunca lidos do corpo.
     [JsonIgnore] public bool SolicitanteEhAdmin { get; set; }
@@ -50,8 +76,8 @@ public sealed class RegistrarUsuarioRequest : UsuarioConteudoRequest, IRequest<U
 }
 
 /// <summary>
-/// PUT /api/Usuarios/{id}. nome, email e cargoId são sempre substituídos (obrigatórios); cpf, dataNascimento e telefone
-/// omitidos preservam o valor atual. Não altera senha nem situação (ativo/inativo).
+/// PUT /api/Usuarios/{id}. nome, email e cargoId são sempre substituídos (obrigatórios); cpf, dataNascimento, telefone e os
+/// campos do responsável omitidos preservam o valor atual. Não altera senha, foto nem situação (ativo/inativo).
 /// </summary>
 public sealed class UpdateUsuarioRequest : UsuarioConteudoRequest, IRequest<UsuarioListItemDto>
 {

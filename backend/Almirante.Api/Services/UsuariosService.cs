@@ -1,3 +1,4 @@
+using System.Data;
 using System.Linq.Expressions;
 using System.Net.Mail;
 using Almirante.Api.Data;
@@ -5,6 +6,7 @@ using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
 using Almirante.Api.Infrastructure;
 using Almirante.Api.Security;
+using Almirante.Api.Validation.Usuarios;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -17,12 +19,11 @@ namespace Almirante.Api.Services;
 // desfeita. O e-mail único é garantido pelo índice IX_Usuarios_EmailNormalizado; a consulta prévia só produz a
 // mensagem de negócio, e a violação do índice (corrida entre duas requisições) vira o mesmo 409. O CPF segue o mesmo
 // desenho com o índice UX_Usuarios_Cpf (filtrado: usuários sem CPF não colidem).
-public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher, TimeProvider clock, ILogger<UsuariosService> logger)
+public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher, TimeProvider clock, DataCivil dataCivil,
+    ILogger<UsuariosService> logger)
 {
     public const int NomeMaximo = 200;
     public const int EmailMaximo = 100;
-    public const int CpfMaximo = 20;
-    public const int TelefoneMaximo = 20;
 
     private const int SqlUnicidadeIndice = 2601;
     private const int SqlUnicidadeConstraint = 2627;
@@ -37,6 +38,11 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         Cpf = u.Cpf,
         DataNascimento = u.DataNascimento,
         Telefone = u.Telefone,
+        ResponsavelNome = u.ResponsavelNome,
+        ResponsavelEmail = u.ResponsavelEmail,
+        ResponsavelCpf = u.ResponsavelCpf,
+        ResponsavelTelefone = u.ResponsavelTelefone,
+        PossuiFoto = u.FotoCaminho != null,
         DataCriacao = u.DataCriacao,
         Funcao = u.Cargo!.Nome,
         Ativo = u.Ativo,
@@ -72,21 +78,30 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     public static bool EmailArmazenavel(string emailNormalizado) =>
         emailNormalizado.Length <= EmailMaximo && SomenteAsciiImprimivel(emailNormalizado);
 
-    // Normalização ÚNICA do CPF (cadastro, alteração, consulta de duplicidade e validação de tamanho): remove a máscara
-    // convencional (pontos e hífen) e espaços externos; vazio vira NULL. Continua texto (zeros à esquerda preservados) e
-    // não exige só dígitos nem valida dígitos verificadores: esta regra só define o que é "o mesmo CPF".
+    // Normalização ÚNICA do CPF (cadastro, alteração, consulta de duplicidade e validação): remove a máscara
+    // convencional (pontos e hífen) e espaços externos; vazio vira NULL. Continua texto (zeros à esquerda preservados).
+    // Não valida: só define o que é "o mesmo CPF"; o formato (11 dígitos + verificadores) é de Cpf.EhValido.
     public static string? NormalizarCpf(string? cpf)
     {
         var valor = cpf?.Replace(".", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal).Trim();
         return string.IsNullOrEmpty(valor) ? null : valor;
     }
 
-    // Telefone é guardado como informado, sem espaços externos; vazio vira NULL.
-    public static string? NormalizarTelefone(string? telefone)
+    // Telefone é guardado só com dígitos (TelefoneBrasileiro); vazio vira NULL. Valores gravados antes, com máscara,
+    // continuam como estão até a próxima alteração do campo.
+    public static string? NormalizarTelefone(string? telefone) => TelefoneBrasileiro.Normalizar(telefone);
+
+    // Texto livre (nome e e-mail do responsável): sem espaços externos; vazio vira NULL.
+    public static string? NormalizarTexto(string? valor)
     {
-        var valor = telefone?.Trim();
-        return string.IsNullOrEmpty(valor) ? null : valor;
+        var texto = valor?.Trim();
+        return string.IsNullOrEmpty(texto) ? null : texto;
     }
+
+    // Parâmetro de SQL bruto para coluna varchar: tipado como varchar(tamanho), nunca como o nvarchar padrão de string,
+    // para o SQL Server não converter implicitamente (desempenho). Os valores já foram validados para caber na coluna.
+    public static SqlParameter Varchar(string nome, string? valor, int tamanho) =>
+        new(nome, SqlDbType.VarChar, tamanho) { Value = (object?)valor ?? DBNull.Value };
 
     // ---------------------------------------------------------------- GET
 
@@ -129,6 +144,10 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             Cpf = cpf,
             DataNascimento = request.DataNascimento,
             Telefone = NormalizarTelefone(request.Telefone),
+            ResponsavelNome = NormalizarTexto(request.ResponsavelNome),
+            ResponsavelEmail = NormalizarTexto(request.ResponsavelEmail),
+            ResponsavelCpf = NormalizarCpf(request.ResponsavelCpf),
+            ResponsavelTelefone = NormalizarTelefone(request.ResponsavelTelefone),
             SenhaHash = string.Empty,
             CargoId = cargo.Id,
             DataCriacao = clock.GetUtcNow().UtcDateTime,
@@ -182,11 +201,23 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw EmailDeOutroUsuario();
             }
 
-            // Dados pessoais omitidos no JSON mantêm o valor lido sob o lock acima; informados (inclusive null/"")
-            // substituem. O próprio usuário fica fora da consulta de duplicidade.
+            // Dados pessoais e do responsável omitidos no JSON mantêm o valor lido sob o lock acima; informados (inclusive
+            // null/"") substituem. O próprio usuário fica fora da consulta de duplicidade.
             var cpf = request.CpfInformado ? NormalizarCpf(request.Cpf) : atual.Cpf;
             var dataNascimento = request.DataNascimentoInformada ? request.DataNascimento : atual.DataNascimento;
             var telefone = request.TelefoneInformado ? NormalizarTelefone(request.Telefone) : atual.Telefone;
+            var responsavelNome = request.ResponsavelNomeInformado ? NormalizarTexto(request.ResponsavelNome) : atual.ResponsavelNome;
+            var responsavelEmail = request.ResponsavelEmailInformado ? NormalizarTexto(request.ResponsavelEmail) : atual.ResponsavelEmail;
+            var responsavelCpf = request.ResponsavelCpfInformado ? NormalizarCpf(request.ResponsavelCpf) : atual.ResponsavelCpf;
+            var responsavelTelefone = request.ResponsavelTelefoneInformado ? NormalizarTelefone(request.ResponsavelTelefone) : atual.ResponsavelTelefone;
+
+            // Regra do responsável com a data de nascimento EFETIVA (informada ou a gravada), mesma regra do POST.
+            var erros = RegraResponsavel.Validar(dataNascimento, responsavelNome, responsavelEmail, responsavelCpf, cpf, dataCivil.Hoje());
+            if (erros.Count > 0)
+            {
+                throw new ApiProblemException(StatusCodes.Status400BadRequest, "Dados inválidos.", errors: erros);
+            }
+
             if (cpf is not null && await db.Usuarios.AnyAsync(u => u.Id != request.Id && u.Cpf == cpf, ct))
             {
                 throw CpfDeOutroUsuario();
@@ -199,8 +230,13 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             {
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"""
-                    UPDATE dbo.Usuarios SET Nome = {nome}, Email = {email}, EmailNormalizado = {emailNormalizado}, CargoId = {cargo.Id},
-                        Cpf = {cpf}, DataNascimento = {dataNascimento}, Telefone = {telefone}
+                    UPDATE dbo.Usuarios SET Nome = {nome}, Email = {Varchar("@email", email, EmailMaximo)},
+                        EmailNormalizado = {Varchar("@emailNormalizado", emailNormalizado, EmailMaximo)}, CargoId = {cargo.Id},
+                        Cpf = {Varchar("@cpf", cpf, 20)}, DataNascimento = {dataNascimento}, Telefone = {Varchar("@telefone", telefone, 20)},
+                        ResponsavelNome = {Varchar("@responsavelNome", responsavelNome, NomeMaximo)},
+                        ResponsavelEmail = {Varchar("@responsavelEmail", responsavelEmail, EmailMaximo)},
+                        ResponsavelCpf = {Varchar("@responsavelCpf", responsavelCpf, Cpf.Digitos)},
+                        ResponsavelTelefone = {Varchar("@responsavelTelefone", responsavelTelefone, TelefoneBrasileiro.MaximoDigitos)}
                     WHERE Id = {request.Id} AND Ativo = 1
                     """, ct);
             }
@@ -270,7 +306,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
     // ---------------------------------------------------------------- apoio
 
-    private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone);
+    private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone,
+        string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone);
 
     private sealed record CargoResumo(Guid Id, string Role);
 
@@ -278,7 +315,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     private async Task<UsuarioTravado> TravarUsuarioAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
-            .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone))
+            .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone,
+                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone))
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
 
@@ -291,7 +329,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
     // Todos os papéis da diretoria administram usuários (policy GestaoCadastros), mas só um Administrador cria, altera,
     // exclui ou promove alguém a Administrador: evita que outro papel desative ou assuma a conta administrativa.
-    private static void ExigirPermissaoSobreCargo(string role, bool solicitanteEhAdmin)
+    // Vale também para a foto (UsuarioFotoService).
+    internal static void ExigirPermissaoSobreCargo(string role, bool solicitanteEhAdmin)
     {
         if (role == Roles.Admin && !solicitanteEhAdmin)
         {
@@ -308,7 +347,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         }
     }
 
-    private async Task<UsuarioListItemDto> ObterDtoAsync(Guid id, CancellationToken ct) =>
+    internal async Task<UsuarioListItemDto> ObterDtoAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.AsNoTracking().Where(u => u.Id == id).Select(ParaDto).SingleAsync(ct);
 
     private static bool ViolouEmailUnico(Exception? ex) =>

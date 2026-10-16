@@ -33,6 +33,9 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     public TestLogSink Logs { get; } = new();
 
+    // Pasta de fotos exclusiva desta fábrica (fora do repositório e de qualquer site), apagada no Dispose.
+    public string FotosPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N"));
+
     // Sobrescritas por fábricas derivadas/testes específicos (limites baixos, ambiente, proxy...).
     protected virtual string EnvironmentName => "Development";
     protected virtual void ConfigureSettings(IDictionary<string, string?> settings) { }
@@ -60,6 +63,7 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
                 // em LoginProtectionTests com valores baixos.
                 ["LoginProtection:RateLimit:PermitLimit"] = "10000",
                 ["LoginProtection:Lockout:MaxFailedAttempts"] = "1000",
+                ["Media:Storage:Path"] = FotosPath,
             };
             ConfigureSettings(settings);
             config.AddInMemoryCollection(settings);
@@ -97,6 +101,15 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     protected virtual void ConfigureDatabase(IServiceCollection services) =>
         services.AddDbContext<AlmiranteDbContext>(options => options.UseInMemoryDatabase(_databaseName));
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing && Directory.Exists(FotosPath))
+        {
+            Directory.Delete(FotosPath, recursive: true);
+        }
+    }
 
     private sealed class TestEndpointsStartupFilter : IStartupFilter
     {

@@ -17,12 +17,20 @@ bash "$REPO/scripts/deploy-config.sh" gerar-host-tls "$W/gen/tls-host.conf" api.
 cat > "$W/stub/default.conf" <<'EOF'
 server {
   listen 8080;
+  client_max_body_size 20m;
   location = /api/Auth/login   { default_type application/json; return 401 '{"s":401}'; }
   location = /api/Auth/refresh { default_type application/json; return 401 '{"s":401}'; }
+  location ~* ^/api/usuarios/[^/]+/foto$ { default_type application/json; return 200 '{"foto":"recebida"}'; }
   location = /health { return 200 "ok"; }
   location / { add_header X-Seen-Host $host always; return 404; }
 }
 EOF
+# Corpos para o limite da foto (issue #116): 10,5 MB passa (11m na rota da foto), 12 MB não; 2 MB em outra rota não
+# passa (padrão de 1 MB do nginx continua valendo).
+head -c 10500000 /dev/zero > "$W/foto-ok.bin"
+head -c 12000000 /dev/zero > "$W/foto-grande.bin"
+head -c 2000000 /dev/zero > "$W/outro-2m.bin"
+FOTO=/api/Usuarios/11111111-1111-4111-8111-111111111111/foto
 docker run -d --name ${P}-api --network ${P}-net --network-alias api -v "$W/stub/default.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.27-alpine >/dev/null
 
 docker run -d --name ${P}-tls --network ${P}-net -p 127.0.0.1::443 -p 127.0.0.1::80 \
@@ -74,6 +82,17 @@ done
 check "server_tokens off (sem versão no header Server)" \
   "$(H $R https://api.exemplo.test:$HTTPS_PORT/qualquer | grep -ci '^server: nginx/[0-9]')" 0
 
+# Limite de corpo: só a rota da foto aceita até 11m; o 413 do nginx sai como problem+json com os cabeçalhos de segurança.
+check "foto de 10,5 MB chega à API" "$(code $R -X PUT --data-binary @"$W/foto-ok.bin" https://api.exemplo.test:$HTTPS_PORT$FOTO)" 200
+check "rota da foto sem diferenciar caixa" "$(code $R -X PUT --data-binary @"$W/foto-ok.bin" https://api.exemplo.test:$HTTPS_PORT/api/usuarios/11111111-1111-4111-8111-111111111111/FOTO)" 200
+out=$(curl -s -o "$W/body" -D "$W/hdr" -w '%{http_code}' $R -X PUT --data-binary @"$W/foto-grande.bin" https://api.exemplo.test:$HTTPS_PORT$FOTO)
+check "foto de 12 MB -> 413 no nginx" "$out" 413
+for h in 'content-type: application/problem+json' 'x-content-type-options: nosniff' 'x-frame-options: deny' 'cache-control: no-store' 'strict-transport-security: max-age=31536000' "content-security-policy: default-src 'none'"; do
+  grep -qi "^$h" "$W/hdr" && echo "ok   - foto 413 tem $h" || { echo "FAIL - foto 413 sem $h"; fail=1; }
+done
+grep -q '"status":413' "$W/body" && echo "ok   - foto 413 corpo problem+json" || { echo "FAIL - foto 413 corpo"; fail=1; }
+check "2 MB fora da rota da foto -> 413 (padrão 1 MB)" "$(code $R -X POST --data-binary @"$W/outro-2m.bin" https://api.exemplo.test:$HTTPS_PORT/api/Usuarios)" 413
+
 for path in login refresh; do
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     out=$(curl -s -o "$W/body" -D "$W/hdr" -w '%{http_code}' $R -X POST https://api.exemplo.test:$HTTPS_PORT/api/Auth/$path)
@@ -99,6 +118,12 @@ for conf in "$REPO/nginx/nginx.conf" "$W/win.conf"; do
   for h in 'retry-after: 60' 'content-type: application/problem+json' 'x-content-type-options: nosniff' 'x-frame-options: deny' 'cache-control: no-store'; do
     grep -qi "^$h" "$W/hdr" && echo "ok   - $(basename $conf) refresh 429 tem $h" || { echo "FAIL - $(basename $conf) refresh sem $h"; fail=1; }
   done
+  check "$(basename $conf) foto de 10,5 MB chega à API" "$(code -X PUT --data-binary @"$W/foto-ok.bin" http://127.0.0.1:$PLAIN_PORT$FOTO)" 200
+  out=$(curl -s -o "$W/body" -D "$W/hdr" -w '%{http_code}' -X PUT --data-binary @"$W/foto-grande.bin" http://127.0.0.1:$PLAIN_PORT$FOTO)
+  check "$(basename $conf) foto de 12 MB -> 413" "$out" 413
+  grep -qi '^content-type: application/problem+json' "$W/hdr" && grep -q '"status":413' "$W/body" \
+    && echo "ok   - $(basename $conf) foto 413 problem+json" || { echo "FAIL - $(basename $conf) foto 413 corpo"; fail=1; }
+  check "$(basename $conf) 2 MB fora da rota da foto -> 413" "$(code -X POST --data-binary @"$W/outro-2m.bin" http://127.0.0.1:$PLAIN_PORT/api/Usuarios)" 413
 done
 
 echo "RESULT fail=$fail"

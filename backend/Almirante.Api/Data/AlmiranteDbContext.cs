@@ -5,6 +5,15 @@ namespace Almirante.Api.Data;
 
 public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : DbContext(options)
 {
+    // Defesa em profundidade para Usuarios.FotoCaminho (mesmo formato de Services/FotoChave): exatamente
+    // "usuarios/" + Id do PRÓPRIO usuário em 32 hex minúsculos + "/" + 32 hex + ".webp" (79 caracteres). Um caminho
+    // gravado por outra via que não siga esse formato, aponte para a pasta de outro usuário ou tente sair da raiz
+    // ("..", absoluto, outra extensão) é recusado pelo próprio banco. BIN2: distingue maiúsculas.
+    public const string CheckFotoCaminho =
+        "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79" +
+        " AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp'" +
+        " AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')";
+
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
     public DbSet<Cargo> Cargos => Set<Cargo>();
@@ -31,7 +40,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
         {
             // Trigger AFTER UPDATE (TR_Usuarios_Historico): mesmo motivo de Lancamentos, o EF não pode usar OUTPUT
             // nesta tabela (inclusive no UPDATE de login/lockout, que não gera histórico mas passa pelo trigger).
-            entity.ToTable("Usuarios", table => table.UseSqlOutputClause(false));
+            entity.ToTable("Usuarios", table =>
+            {
+                table.UseSqlOutputClause(false);
+                table.HasCheckConstraint("CK_Usuarios_FotoCaminho", CheckFotoCaminho);
+            });
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
             // varchar (não Unicode): a aplicação só aceita e-mail/CPF/telefone em ASCII imprimível
@@ -41,6 +54,13 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(u => u.DataNascimento).HasColumnType("date");
             entity.Property(u => u.Telefone).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            // Colunas novas sempre varchar (desempenho) e com o tamanho exato do valor normalizado: nome na página
+            // 1252 (TextoVarchar), e-mail ASCII, CPF e telefone só dígitos, caminho da foto com 79 caracteres fixos.
+            entity.Property(u => u.ResponsavelNome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false);
+            entity.Property(u => u.ResponsavelEmail).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false);
+            entity.Property(u => u.ResponsavelCpf).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
+            entity.Property(u => u.ResponsavelTelefone).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
+            entity.Property(u => u.FotoCaminho).HasColumnType("varchar(79)").HasMaxLength(79).IsUnicode(false);
             entity.Property(u => u.SenhaHash).IsRequired();
             // Token de concorrência: todo UPDATE de Usuarios (login, rehash, reset de senha) filtra por esta
             // versão, então um login/rehash baseado em credenciais anteriores a um reset falha em vez de
@@ -288,6 +308,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(h => h.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(h => h.DataNascimento).HasColumnType("date");
             entity.Property(h => h.Telefone).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(h => h.ResponsavelNome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false);
+            entity.Property(h => h.ResponsavelEmail).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false);
+            entity.Property(h => h.ResponsavelCpf).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
+            entity.Property(h => h.ResponsavelTelefone).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
+            entity.Property(h => h.FotoCaminho).HasColumnType("varchar(79)").HasMaxLength(79).IsUnicode(false);
             entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
             entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();

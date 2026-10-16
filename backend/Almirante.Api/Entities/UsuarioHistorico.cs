@@ -2,9 +2,9 @@ namespace Almirante.Api.Entities;
 
 // Histórico de alterações cadastrais de usuários (tabela _usuarios_hist). Nenhum código da aplicação insere
 // linhas aqui: são geradas exclusivamente pelo trigger TR_Usuarios_Historico, ANTES de a alteração valer (valores
-// "deleted" do trigger), sempre que Nome, Email, EmailNormalizado, Cpf, DataNascimento, Telefone, CargoId ou Ativo
-// mudam, com o responsável e o IP
-// fornecidos via SESSION_CONTEXT (ver UsuariosService). Login, bloqueio e reset de senha não geram linhas.
+// "deleted" do trigger), sempre que Nome, Email, EmailNormalizado, Cpf, DataNascimento, Telefone, os dados do
+// responsável, FotoCaminho, CargoId ou Ativo mudam, com o responsável e o IP fornecidos via SESSION_CONTEXT (ver
+// UsuariosService e UsuarioFotoService). Login, bloqueio e reset de senha não geram linhas.
 // Somente leitura para a aplicação (DENY de escrita, ver DbPrivilegeAuditor.AuditTables).
 public sealed class UsuarioHistorico
 {
@@ -24,6 +24,14 @@ public sealed class UsuarioHistorico
     public string? Cpf { get; set; }
     public DateOnly? DataNascimento { get; set; }
     public string? Telefone { get; set; }
+
+    // Responsável e caminho da foto no estado anterior; NULL também em linhas gravadas antes da migration
+    // AddUsuariosResponsavelEFoto. O caminho fica como registro de auditoria: o arquivo da foto substituída/removida é apagado.
+    public string? ResponsavelNome { get; set; }
+    public string? ResponsavelEmail { get; set; }
+    public string? ResponsavelCpf { get; set; }
+    public string? ResponsavelTelefone { get; set; }
+    public string? FotoCaminho { get; set; }
 
     public Guid CargoId { get; set; }
     public required string CargoNome { get; set; }

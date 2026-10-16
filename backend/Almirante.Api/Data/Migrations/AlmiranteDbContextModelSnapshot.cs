@@ -660,6 +660,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<int>("FalhasLoginConsecutivas")
                         .HasColumnType("int");
 
+                    b.Property<string>("FotoCaminho")
+                        .HasMaxLength(79)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(79)");
+
                     b.Property<DateTime?>("LoginBloqueadoAteUtc")
                         .HasColumnType("datetime2");
 
@@ -667,6 +672,26 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("ResponsavelCpf")
+                        .HasMaxLength(11)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(11)");
+
+                    b.Property<string>("ResponsavelEmail")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("ResponsavelNome")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("ResponsavelTelefone")
+                        .HasMaxLength(11)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(11)");
 
                     b.Property<long>("SecurityVersion")
                         .IsConcurrencyToken()
@@ -696,7 +721,10 @@ namespace Almirante.Api.Data.Migrations
                     b.HasIndex("EmailNormalizado")
                         .IsUnique();
 
-                    b.ToTable("Usuarios", (string)null);
+                    b.ToTable("Usuarios", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Usuarios_FotoCaminho", "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79 AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp' AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')");
+                        });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
@@ -737,6 +765,11 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<string>("FotoCaminho")
+                        .HasMaxLength(79)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(79)");
+
                     b.Property<string>("IpResponsavel")
                         .IsRequired()
                         .HasColumnType("varchar(45)");
@@ -745,6 +778,26 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("ResponsavelCpf")
+                        .HasMaxLength(11)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(11)");
+
+                    b.Property<string>("ResponsavelEmail")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("ResponsavelNome")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("ResponsavelTelefone")
+                        .HasMaxLength(11)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(11)");
 
                     b.Property<string>("Telefone")
                         .HasMaxLength(20)

@@ -67,21 +67,23 @@ public sealed class UsuariosDadosPessoaisTests(AlmiranteApiFactory factory) : IC
     }
 
     [Fact]
-    public async Task Post_LimitesValidos_SaoAceitos_ComCpfMedidoDepoisDaNormalizacao()
+    public async Task Post_LimitesValidos_SaoAceitos_ComCpfETelefoneNormalizadosParaDigitos()
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-        var hoje = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
-        // 26 caracteres com máscara, 20 depois de normalizado: dentro do limite.
-        var cpfMascarado = $" {Random.Shared.NextInt64(0, 1_000_000_000):D9}.{Random.Shared.NextInt64(0, 1_000_000_000):D9}-{Random.Shared.Next(0, 100):D2} ";
+        // Maior de idade: sem responsável. Máscara e espaços externos são removidos antes de validar e gravar.
+        var nascimento = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-30).ToString("yyyy-MM-dd");
+        var cpf = TestHelpers.NovoCpf();
         var email = new string('c', 100 - "@local.dev".Length - 8) + Guid.NewGuid().ToString("N")[..8] + "@local.dev";
 
-        var response = await PostJsonAsync(client, $$""","cpf":"{{cpfMascarado}}","dataNascimento":"{{hoje}}","telefone":"12345678901234567890" """.TrimEnd(), email);
+        var response = await PostJsonAsync(client,
+            $$""","cpf":" {{TestHelpers.MascararCpf(cpf)}} ","dataNascimento":"{{nascimento}}","telefone":"  (11) 98765-4321 " """.TrimEnd(), email);
 
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         var dto = (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
-        Assert.Equal(20, dto.Cpf!.Length);
-        Assert.Equal(UsuariosService.NormalizarCpf(cpfMascarado), dto.Cpf);
-        Assert.Equal(hoje, dto.DataNascimento!.Value.ToString("yyyy-MM-dd"));
+        Assert.Equal(cpf, dto.Cpf);
+        Assert.Equal(UsuariosService.NormalizarCpf(TestHelpers.MascararCpf(cpf)), dto.Cpf);
+        Assert.Equal("11987654321", dto.Telefone);
+        Assert.Equal(nascimento, dto.DataNascimento!.Value.ToString("yyyy-MM-dd"));
         Assert.Equal(100, dto.Email.Length);
     }
 
@@ -89,7 +91,7 @@ public sealed class UsuariosDadosPessoaisTests(AlmiranteApiFactory factory) : IC
     [InlineData("123.456.789-01", "12345678901")]
     [InlineData("  012.345.678-90  ", "01234567890")]
     [InlineData("01234567890", "01234567890")]
-    [InlineData("AB-12.3", "AB123")]      // sem exigência de só dígitos nesta demanda
+    [InlineData("AB-12.3", "AB123")]      // a normalização não valida: Cpf.EhValido recusa depois
     [InlineData(" . - ", null)]
     [InlineData("", null)]
     [InlineData(null, null)]
