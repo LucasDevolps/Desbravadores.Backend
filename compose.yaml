@@ -95,7 +95,7 @@ services:
 
   api:
     build:
-      context: ./backend
+      context: ./src
       dockerfile: Almirante.Api/Dockerfile
     container_name: almirante-api
     depends_on:
@@ -146,6 +146,9 @@ services:
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
       ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
       DataProtection__KeysPath: /var/lib/almirante/dataprotection
+      # Fotos de usuários (issue #116): pasta fora da aplicação, em volume nomeado (sobrevive a rebuild e redeploy).
+      # O banco guarda só o caminho relativo; os limites ficam nos padrões de Media:Images (appsettings.json).
+      Media__Storage__Path: /var/lib/almirante/fotos
       # Host Header: o padrão "*" aceita qualquer Host, porque este arquivo também serve
       # desenvolvimento local (localhost, 127.0.0.1, IP da LAN) e fixar a lista quebraria isso.
       # Em ambiente PUBLICADO em modo http, defina API_ALLOWED_HOSTS no .env com os nomes reais
@@ -171,6 +174,7 @@ services:
       - no-new-privileges:true
     volumes:
       - almirante-dataprotection:/var/lib/almirante/dataprotection
+      - almirante-fotos:/var/lib/almirante/fotos
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -216,3 +220,5 @@ volumes:
     name: almirante-sqlserver-data
   almirante-dataprotection:
     name: almirante-dataprotection
+  almirante-fotos:
+    name: almirante-fotos

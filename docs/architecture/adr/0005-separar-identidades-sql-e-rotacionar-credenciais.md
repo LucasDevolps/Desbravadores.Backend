@@ -127,28 +127,28 @@ continua recusado, e o restante da auditoria de privilégios segue `Security:DbP
 
 ## Evidências no repositório
 
-- [`DbCredentialManager.cs`](../../../backend/Almirante.Api/Infrastructure/DbCredentialManager.cs):
+- [`DbCredentialManager.cs`](../../../src/Almirante.Api/Infrastructure/DbCredentialManager.cs):
   `InitializeAsync`, `RotateAsync`, `BuildProvisionSql`, `BuildRotateSql`, `GeneratePassword`.
-- [`AppDbCredentialProvider.cs`](../../../backend/Almirante.Api/Infrastructure/AppDbCredentialProvider.cs):
+- [`AppDbCredentialProvider.cs`](../../../src/Almirante.Api/Infrastructure/AppDbCredentialProvider.cs):
   `AppDbCredentialProvider`, `AppDbCredentialInterceptor`.
-- [`DbCredentialRotationService.cs`](../../../backend/Almirante.Api/Services/DbCredentialRotationService.cs)
-  e [`DbCredentialOptions.cs`](../../../backend/Almirante.Api/Options/DbCredentialOptions.cs).
-- [`SqlIdentityPolicy.cs`](../../../backend/Almirante.Api/Infrastructure/SqlIdentityPolicy.cs) e
-  [`DbPrivilegeAuditor.cs`](../../../backend/Almirante.Api/Infrastructure/DbPrivilegeAuditor.cs)
+- [`DbCredentialRotationService.cs`](../../../src/Almirante.Api/Services/DbCredentialRotationService.cs)
+  e [`DbCredentialOptions.cs`](../../../src/Almirante.Api/Options/DbCredentialOptions.cs).
+- [`SqlIdentityPolicy.cs`](../../../src/Almirante.Api/Infrastructure/SqlIdentityPolicy.cs) e
+  [`DbPrivilegeAuditor.cs`](../../../src/Almirante.Api/Infrastructure/DbPrivilegeAuditor.cs)
   (`FindAdminExcessPrivilegesAsync`, `DbAdminPrivilegeCheck`, `DbPrivilegeCheck`).
-- [`Program.cs`](../../../backend/Almirante.Api/Program.cs): registro condicional de
+- [`Program.cs`](../../../src/Almirante.Api/Program.cs): registro condicional de
   `DbCredentialManager` e validação de startup.
 - Bootstrap: [`scripts/sql-bootstrap.sh`](../../../scripts/sql-bootstrap.sh) e
   [`docs/sql/criar-usuario-admin-app.sql`](../../sql/criar-usuario-admin-app.sql).
 - Configuração: [`compose.yaml`](../../../compose.yaml) (serviços `sqlserver`, `sql-bootstrap` e
   `api`), [`.env.example`](../../../.env.example) e
-  [`AppHost.cs`](../../../backend/Almirante.AppHost/AppHost.cs).
-- Testes: [`SqlIdentityModelTests.cs`](../../../backend/Almirante.Api.Tests/SqlIdentityModelTests.cs),
-  [`ApiProcessTests.cs`](../../../backend/Almirante.Api.Tests/ApiProcessTests.cs),
-  [`DbPrivilegeTests.cs`](../../../backend/Almirante.Api.Tests/DbPrivilegeTests.cs),
-  [`SqlIdentityPolicyTests.cs`](../../../backend/Almirante.Api.Tests/SqlIdentityPolicyTests.cs),
-  [`DbCredentialManagerTests.cs`](../../../backend/Almirante.Api.Tests/DbCredentialManagerTests.cs),
-  [`AdmTiPrivilegeTests.cs`](../../../backend/Almirante.Api.Tests/AdmTiPrivilegeTests.cs),
+  [`AppHost.cs`](../../../src/Almirante.AppHost/AppHost.cs).
+- Testes: [`SqlIdentityModelTests.cs`](../../../src/Almirante.Api.Tests/SqlIdentityModelTests.cs),
+  [`ApiProcessTests.cs`](../../../src/Almirante.Api.Tests/ApiProcessTests.cs),
+  [`DbPrivilegeTests.cs`](../../../src/Almirante.Api.Tests/DbPrivilegeTests.cs),
+  [`SqlIdentityPolicyTests.cs`](../../../src/Almirante.Api.Tests/SqlIdentityPolicyTests.cs),
+  [`DbCredentialManagerTests.cs`](../../../src/Almirante.Api.Tests/DbCredentialManagerTests.cs),
+  [`AdmTiPrivilegeTests.cs`](../../../src/Almirante.Api.Tests/AdmTiPrivilegeTests.cs),
   [`scripts/tests/sql-bootstrap.test.sh`](../../../scripts/tests/sql-bootstrap.test.sh) e
   [`scripts/tests/compose-sql-identities.test.sh`](../../../scripts/tests/compose-sql-identities.test.sh).
 - Documentação:

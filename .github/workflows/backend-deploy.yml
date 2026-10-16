@@ -4,7 +4,7 @@ on:
   push:
     branches: [develop]
     paths:
-      - "backend/**"
+      - "src/**"
       - "compose.yaml"
       - "compose.tls.yaml"
       - "compose.https.yaml"
@@ -140,8 +140,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
+      # win-x64: só os binários nativos do Windows x64 (o Skia das fotos traz os de todas as plataformas).
       - name: Publish
-        run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --output "${{ env.PUBLISH_PATH }}"
+        run: dotnet publish src/Almirante.Api/Almirante.Api.csproj --configuration Release --runtime win-x64 --self-contained false --output "${{ env.PUBLISH_PATH }}"
 
       # Liga o stdout log do ANCM (desligado por padrão). Se a aplicação
       # travar na inicialização (ex.: erro de migration ou de configuração),
@@ -211,6 +212,33 @@ jobs:
               exit 1
             }
           }
+
+      # Fotos de usuários (issue #116): a pasta fica FORA do site (o robocopy /MIR abaixo apagaria o que estivesse
+      # dentro) e é configurada no app pool (Media__Storage__Path, com ACL própria; ver README, "Docker/Nginx no Windows
+      # (IIS)"). Conferido ANTES de tirar o site do ar: um host sem essa configuração falha aqui, com o site no ar.
+      - name: Validar pasta de fotos do app pool (Media__Storage__Path)
+        shell: pwsh
+        run: |
+          Import-Module WebAdministration -ErrorAction Stop
+          $site = Get-Website | Where-Object { $_.PhysicalPath.TrimEnd('\') -eq "${{ env.SITE_PATH }}".TrimEnd('\') } | Select-Object -First 1
+          $filtro = "system.applicationHost/applicationPools/add[@name='$($site.applicationPool)']/environmentVariables"
+          $pasta = (Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name Collection |
+            Where-Object { $_.name -eq 'Media__Storage__Path' } | Select-Object -First 1).value
+          if ([string]::IsNullOrWhiteSpace($pasta)) {
+            Write-Error "O app pool '$($site.applicationPool)' não define Media__Storage__Path (pasta absoluta das fotos, fora de ${{ env.SITE_PATH }}). Configure-o antes do deploy; nada foi alterado."
+            exit 1
+          }
+          $completa = [System.IO.Path]::GetFullPath($pasta).TrimEnd('\') + '\'
+          $siteCompleto = [System.IO.Path]::GetFullPath("${{ env.SITE_PATH }}").TrimEnd('\') + '\'
+          if ($completa.StartsWith($siteCompleto, [StringComparison]::OrdinalIgnoreCase) -or $siteCompleto.StartsWith($completa, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Error "Media__Storage__Path ($pasta) não pode ficar dentro do site nem contê-lo: o deploy apagaria as fotos. Nada foi alterado."
+            exit 1
+          }
+          if (-not (Test-Path $pasta -PathType Container)) {
+            Write-Error "A pasta de fotos $pasta não existe. Crie-a com a ACL documentada no README antes do deploy; nada foi alterado."
+            exit 1
+          }
+          Write-Host "Pasta de fotos conferida: $pasta"
 
       # ANCM observa o app_offline.htm e derruba o processo em execução,
       # liberando os locks de arquivo, sem precisar de direitos de admin do

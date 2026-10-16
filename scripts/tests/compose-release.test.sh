@@ -67,6 +67,10 @@ for combo in "-f compose.yaml -f compose.release.yaml" "-f compose.yaml -f compo
   if grep -q 'http://localhost:8080/health' <<<"$api" && grep -q 'target: /var/lib/almirante/dataprotection' <<<"$api" && grep -q 'no-new-privileges:true' <<<"$api"; then
     ok "healthcheck, volume e hardening preservados ($combo)"
   else falha "configuração herdada ($combo)" "$api"; fi
+  # Fotos (issue #116): o volume e a pasta configurada também vêm do compose.yaml, sem depender do overlay.
+  if grep -q 'target: /var/lib/almirante/fotos' <<<"$api" && grep -q 'Media__Storage__Path: /var/lib/almirante/fotos' <<<"$api"; then
+    ok "volume e pasta das fotos preservados ($combo)"
+  else falha "fotos ($combo)" "$api"; fi
 done
 
 # 4. O overlay não fixa tag móvel nem imagem padrão.

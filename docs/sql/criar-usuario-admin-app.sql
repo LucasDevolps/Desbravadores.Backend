@@ -14,7 +14,7 @@
 
   POR QUE USUÁRIOS CONTIDOS (sem login de servidor). As duas identidades são "contained database users"
   com senha: existem só dentro do banco da aplicação. Consequências, verificadas por testes contra SQL
-  Server real (backend/Almirante.Api.Tests):
+  Server real (src/Almirante.Api.Tests):
     - não têm NENHUMA permissão nem papel de servidor: não são sysadmin, não têm CONTROL SERVER,
       ALTER ANY LOGIN, ALTER ANY DATABASE, CREATE ANY DATABASE, IMPERSONATE ANY LOGIN etc. — nem poderiam
       ter, porque um usuário contido não é um principal de servidor;

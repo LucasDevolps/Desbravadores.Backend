@@ -133,7 +133,7 @@ nesta issue, que é só de documentação de arquitetura.
 | [`README.md`](../../README.md#variáveis-de-ambiente) (tabela de variáveis) | variável `TLS_HTTPS_HOST_PORT`, padrão 443 | `compose.tls.yaml` fixa `443:443`, sem variável |
 | [`README.md`](../../README.md#cenários-manuais-do-rate-limit-do-nginx) | o rate limit do nginx não é coberto por teste automatizado | `scripts/tests/nginx.test.sh` testa HTTP, HTTPS e `429` no job `deploy-scripts` do CI; só a suíte .NET não o cobre |
 | [`docs/authentication-security.md`](../authentication-security.md#impersonate-permissão-de-classe-4) | cita `docs/sql/corrigir-privilegios-usuario-app.sql` | o arquivo não existe; a normalização está em `docs/sql/criar-usuario-admin-app.sql` e em `DbCredentialManager.BuildProvisionSql` |
-| comentário em `backend/Almirante.Api/Options/DbCredentialOptions.cs` | AppHost/Aspire roda sem `DbCredentials:AppUser` | `AppHost.cs` define `DbCredentials__AppUser`, então o modelo de identidades fica ativo no Aspire |
+| comentário em `src/Almirante.Api/Options/DbCredentialOptions.cs` | AppHost/Aspire roda sem `DbCredentials:AppUser` | `AppHost.cs` define `DbCredentials__AppUser`, então o modelo de identidades fica ativo no Aspire |
 
 ## Questões em aberto
 

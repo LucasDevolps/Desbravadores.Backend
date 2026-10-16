@@ -22,6 +22,8 @@ A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR
 | `GET /api/Auth/Me` | 401 | — | qualquer autenticado (só o próprio perfil) |
 | `GET /api/Usuarios` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
 | `POST /api/Usuarios`, `PUT /api/Usuarios/{id}`, `DELETE /api/Usuarios/{id}` | 401 | 403 | policy `GestaoCadastros`; usuário com cargo ADM (ou promoção a ADM) só por ADM (403) |
+| `GET /api/Usuarios/{id}/foto` | 401 | 403 | policy `GestaoCadastros` |
+| `PUT /api/Usuarios/{id}/foto`, `DELETE /api/Usuarios/{id}/foto` | 401 | 403 | policy `GestaoCadastros`; foto de usuário com cargo ADM só por ADM (403) |
 | `GET /api/Cargos` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
 | `GET /api/Lancamentos` | 401 | 403 | policy `GestaoFinanceira`: ADM, DIR, DIRA, SEC, TES |
 | `POST /api/Lancamentos/Registrar` | 401 | 403 | policy `GestaoFinanceira` |
@@ -31,6 +33,17 @@ A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR
 - `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}` (antes era 401, o que levava o cliente a descartar uma sessão válida).
 - Decisão a confirmar com o negócio: as policies `GestaoCadastros` e `GestaoFinanceira` hoje têm o mesmo conjunto de roles (o registro de lançamentos precisa listar membros). Separá-las exige só alterar `Program.cs`.
 - Auditoria: `LancamentoOperacao.CriadoPorUsuarioId`, `lancamentos_deletados.UsuarioResponsavelId`/`IpResponsavel` e, desde a #50, `Lancamento.AtualizadoPorUsuarioId` (migration `AddAtualizadoPorUsuarioIdToLancamentos`) vêm **sempre** da identidade autenticada (`User.TentarObterUsuarioId`, nunca do body) e do IP pós-proxy confiável quando aplicável. `AtualizadoPorUsuarioId` é nullable (`Guid?`, FK `Restrict` para `Usuarios`) para não quebrar lançamentos atualizados antes desta coluna existir; não é exposto em `LancamentoDto` (não é necessário ao frontend). Registra somente o **último** responsável pelo `PUT` — não é um histórico completo de alterações (se isso vier a ser necessário, é escopo de uma issue separada, com uma tabela de auditoria própria).
+
+## Fotos de usuários (#116)
+
+Decisão e alternativas: [ADR-0011](architecture/adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md).
+
+- **Sem URL pública.** A pasta `Media:Storage:Path` fica fora do site e nenhum servidor web a publica; o arquivo só sai por `GET /api/Usuarios/{id}/foto` (Bearer), com `Cache-Control: private, no-cache`, `ETag` e `Cross-Origin-Resource-Policy: same-origin`.
+- **Entrada.** O multipart é lido em streaming (sem `IFormFile` e sem arquivo temporário), com uma única parte `arquivo` de até `Media:Images:MaxUploadSizeMb` (10 MB; o nginx corta em 11 MB só nessa rota). Requisição com `Content-Encoding` é recusada (`415`): não há descompressão no transporte (zip bomb).
+- **Conteúdo.** Só JPEG, PNG e WebP, com a assinatura real igual à extensão e ao `Content-Type`. O cabeçalho é lido antes de decodificar e imagens acima de `MaxMegapixels` são recusadas (`422`) sem alocar os pixels (decompression bomb). A imagem é decodificada já reduzida, orientada pelo EXIF e regravada em WebP de no máximo 1024×1024, sem EXIF/GPS, perfil ICC ou XMP; a saída é conferida de novo. O original nunca é gravado.
+- **Abuso.** `UploadsPerUserPerWindow` envios por usuário autenticado a cada `UploadWindowMinutes`, no máximo `MaxConcurrentProcessing` imagens processadas ao mesmo tempo (`429` com `Retry-After`) e prazo de `ProcessingTimeoutMs` por imagem.
+- **Disco.** Nome aleatório de 128 bits na pasta do próprio usuário (a CHECK `CK_Usuarios_FotoCaminho` confere o formato), gravação atômica, links simbólicos e junções recusados e, no Linux, permissões `0600`/`0700`. Na troca, o arquivo anterior só é apagado depois do commit; sobras ficam para a faxina diária (`FotosCleanupService`).
+- **Auditoria.** Troca e remoção da foto passam pelo trigger de histórico de `Usuarios` (responsável, IP e caminho anterior).
 
 ## Proteção contra força bruta (#33)
 
@@ -59,10 +72,10 @@ Duas camadas na própria API, independentes do nginx:
 
 ```bash
 openssl rand -base64 32   # gera a chave
-dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project backend/Almirante.Api
-dotnet user-secrets set "Jwt:Keys:dev" "<saída do openssl>" --project backend/Almirante.Api
-dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project backend/Almirante.Api
-dotnet user-secrets set "Parameters:sql-password" "<senha do SQL>" --project backend/Almirante.AppHost
+dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project src/Almirante.Api
+dotnet user-secrets set "Jwt:Keys:dev" "<saída do openssl>" --project src/Almirante.Api
+dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project src/Almirante.Api
+dotnet user-secrets set "Parameters:sql-password" "<senha do SQL>" --project src/Almirante.AppHost
 ```
 
 No Docker Compose use o `.env` (fora do Git); em publicação, variáveis de ambiente/cofre do ambiente (`Jwt__Keys__v1`, `SeedAdmin__Senha`, …) ou o `appsettings.Production.json` local ao servidor, que o deploy não sobrescreve.
@@ -74,7 +87,7 @@ Remover um valor do arquivo atual **não** o remove do histórico do Git. Estive
 1. **JWT** — `Jwt:Keys` já é um dicionário por `kid` (`JwtOptions.Keys`/`JwtOptionsValidator`) e `compose.yaml` já mapeia `Jwt__Keys__v1`/`Jwt__Keys__v2` como opcionais (issue #50): mudar só o `.env` deste ambiente é suficiente em qualquer uma das situações abaixo, sem editar `compose.yaml`.
    - **Rotação planejada de uma chave que não está comprometida** (ex.: rotina periódica): gere a chave nova com `openssl rand -base64 32` (nunca cole a saída em issue/commit/PR/log ou em qualquer teste compartilhado). Defina `JWT_KEY_V2` no `.env` (fora do Git) mantendo `JWT_KEY_V1`, depois troque `JWT_ACTIVE_KEY_ID=v2`. Tokens de acesso já emitidos com `v1` continuam validando normalmente (o `kid` no token seleciona a chave) até expirarem — espere o **maior valor entre** `Jwt:AccessTokenMinutes`/`JWT_ACCESS_TOKEN_MINUTES` configurado neste ambiente (não assuma 10 min: confira o valor real) **mais** a tolerância de relógio de 30 s (`ClockSkew`, `Program.cs`). Só depois desse prazo, apague `JWT_KEY_V1` do `.env` (deixe vazia ou remova a linha).
    - **Chave comprometida** (exposta no histórico do Git, vazamento, ou qualquer suspeita concreta): não existe janela de transição — troque `JWT_ACTIVE_KEY_ID` para a nova chave e apague a chave comprometida do `.env` imediatamente. Isso por si só **não** desconecta sessões já autenticadas: `AuthService.RefreshAsync` valida o refresh token opaco (hash no banco) e nunca revalida a chave/`kid` do access token antigo, então uma sessão com refresh token válido continua emitindo novos access tokens normalmente mesmo depois da chave de assinatura antiga sumir. Para realmente exigir novo login de todo mundo, revogue as sessões ativas (ver item 2 abaixo, mesmo mecanismo) — a rotação da chave sozinha só bloqueia quem ainda tiver, na mão, um access token específico assinado com a chave removida (janela de no máximo `AccessTokenMinutes` + 30 s).
-2. **Senha do admin** — use `dotnet run --project backend/Almirante.Api -- reset-admin-password <email>` (novo nesta entrega, `Cli/AdminPasswordResetCli.cs`): pede a senha nova por prompt interativo sem eco (nunca por argumento, histórico de shell ou log), valida pela mesma `PasswordPolicy` e gera o hash com o mesmo `IPasswordHasher<Usuario>` usados pelo seed, e **revoga na mesma operação** todas as `AuthSessions` ativas dessa conta — sem isso, como o item 1 mostra, a troca de senha sozinha não derruba sessões já autenticadas. O seed (`DbSeeder.SeedAsync`) continua nunca sobrescrevendo a senha de um admin já existente — alterar `SEED_ADMIN_SENHA` no `.env` depois do primeiro startup não tem efeito algum sobre a senha real; esta ferramenta é o jeito de trocar a senha de um admin já existente.
+2. **Senha do admin** — use `dotnet run --project src/Almirante.Api -- reset-admin-password <email>` (novo nesta entrega, `Cli/AdminPasswordResetCli.cs`): pede a senha nova por prompt interativo sem eco (nunca por argumento, histórico de shell ou log), valida pela mesma `PasswordPolicy` e gera o hash com o mesmo `IPasswordHasher<Usuario>` usados pelo seed, e **revoga na mesma operação** todas as `AuthSessions` ativas dessa conta — sem isso, como o item 1 mostra, a troca de senha sozinha não derruba sessões já autenticadas. O seed (`DbSeeder.SeedAsync`) continua nunca sobrescrevendo a senha de um admin já existente — alterar `SEED_ADMIN_SENHA` no `.env` depois do primeiro startup não tem efeito algum sobre a senha real; esta ferramenta é o jeito de trocar a senha de um admin já existente.
 3. **SQL Server (`sa`)** — a API não usa nem conhece o `sa` (ver "Identidades SQL da API"); só o serviço `sqlserver` e o `sql-bootstrap`. Trocar `SQL_SA_PASSWORD` no `.env` **não** altera a senha já persistida no volume `almirante-sqlserver-data` de um SQL Server existente — é preciso trocar a senha no próprio SQL Server (ex.: `ALTER LOGIN sa WITH PASSWORD = '<nova>'` numa sessão conectada com a senha atual) e só depois atualizar o `.env`. Nunca recrie o volume/banco só para "resolver" a senha sem backup validado.
 
 Esta entrega corrige e completa o suporte de código a essas rotações (inclusive a configuração para retirar `JWT_KEY_V1` por completo, e a ferramenta de senha do admin); ela **não** executa nem comprova rotação em nenhum ambiente real — isso continua sendo uma ação operacional de quem administra esse ambiente.

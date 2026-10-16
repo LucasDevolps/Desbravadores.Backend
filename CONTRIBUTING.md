@@ -157,9 +157,9 @@ SBOM CycloneDX). O scan reprova HIGH/CRITICAL com correção disponível. O Depe
 Para reproduzir localmente o check `build-and-test`:
 
 ```bash
-dotnet restore backend/Almirante.slnx
-dotnet build backend/Almirante.slnx --configuration Release --no-restore
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
+dotnet restore src/Almirante.slnx
+dotnet build src/Almirante.slnx --configuration Release --no-restore
+dotnet test src/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"
 ```
 
 Os testes `Category=RequiresSqlServer` exigem a variável `ALMIRANTE_TEST_SQLSERVER`, com uma

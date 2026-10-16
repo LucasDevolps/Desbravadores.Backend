@@ -20,7 +20,7 @@ cobertura() {
   cat > "$1" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <coverage line-rate="0" branch-rate="0" lines-covered="$2" lines-valid="$3" branches-covered="$4" branches-valid="$5" version="0">
-  <sources><source>/repo/backend/</source></sources>
+  <sources><source>/repo/src/</source></sources>
   <packages>
     <package name="Almirante.Api" line-rate="0" branch-rate="0">
       <classes><class name="A.B" filename="Almirante.Api/A.cs" line-rate="0" branch-rate="0"></class></classes>
@@ -119,8 +119,8 @@ cat > "$TMP/win.xml" <<'EOF'
   <class name="Almirante.Api.Controllers.X" filename="Almirante.Api\Controllers\Sub\X.cs" line-rate="0.5">
 </coverage>
 EOF
-if bash "$SCRIPT" normalize /home/runner/work/repo/backend "$TMP/win.xml" "$TMP/norm.xml" > "$TMP/out" 2>&1 \
-  && grep -qF '<source>/home/runner/work/repo/backend/</source>' "$TMP/norm.xml" \
+if bash "$SCRIPT" normalize /home/runner/work/repo/src "$TMP/win.xml" "$TMP/norm.xml" > "$TMP/out" 2>&1 \
+  && grep -qF '<source>/home/runner/work/repo/src/</source>' "$TMP/norm.xml" \
   && grep -qF 'filename="Almirante.Api/Controllers/Sub/X.cs"' "$TMP/norm.xml" \
   && grep -qF 'name="Almirante.Api.Controllers.X"' "$TMP/norm.xml" \
   && ! grep -q '\\' "$TMP/norm.xml"; then
@@ -155,10 +155,10 @@ fi
 
 # O baseline versionado precisa ser válido para o gate (formato e faixas).
 cobertura "$TMP/c.xml" 1 1 1 1
-if COVERAGE_COMMIT=teste bash "$SCRIPT" gate "$TMP/c.xml" "$ROOT/backend/coverage-baseline.json" > "$TMP/out" 2>&1; then
-  ok "backend/coverage-baseline.json é lido pelo gate"
+if COVERAGE_COMMIT=teste bash "$SCRIPT" gate "$TMP/c.xml" "$ROOT/src/coverage-baseline.json" > "$TMP/out" 2>&1; then
+  ok "src/coverage-baseline.json é lido pelo gate"
 else
-  falha "backend/coverage-baseline.json é lido pelo gate" "$(cat "$TMP/out")"
+  falha "src/coverage-baseline.json é lido pelo gate" "$(cat "$TMP/out")"
 fi
 
 if ((falhas > 0)); then

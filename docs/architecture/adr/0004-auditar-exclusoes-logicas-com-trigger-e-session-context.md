@@ -96,35 +96,35 @@ Alternativas históricas não foram encontradas no repositório.
 
 ## Evidências no repositório
 
-- [`SessaoAuditoria.cs`](../../../backend/Almirante.Api/Infrastructure/SessaoAuditoria.cs):
+- [`SessaoAuditoria.cs`](../../../src/Almirante.Api/Infrastructure/SessaoAuditoria.cs):
   `DefinirContextoAuditoriaAsync`, `LimparAsync`.
-- [`LancamentoExclusaoService.cs`](../../../backend/Almirante.Api/Services/LancamentoExclusaoService.cs):
+- [`LancamentoExclusaoService.cs`](../../../src/Almirante.Api/Services/LancamentoExclusaoService.cs):
   `DeleteAsync`.
-- [`EventosService.cs`](../../../backend/Almirante.Api/Services/EventosService.cs): `ExecutarAsync`,
+- [`EventosService.cs`](../../../src/Almirante.Api/Services/EventosService.cs): `ExecutarAsync`,
   `DeleteAsync`, `UpdateAsync`.
-- Controllers [`LancamentosController.cs`](../../../backend/Almirante.Api/Controllers/LancamentosController.cs)
-  e [`EventosController.cs`](../../../backend/Almirante.Api/Controllers/EventosController.cs): origem do
+- Controllers [`LancamentosController.cs`](../../../src/Almirante.Api/Controllers/LancamentosController.cs)
+  e [`EventosController.cs`](../../../src/Almirante.Api/Controllers/EventosController.cs): origem do
   responsável e do IP.
-- Entidades [`LancamentoDeletado.cs`](../../../backend/Almirante.Api/Entities/LancamentoDeletado.cs) e
-  [`HistoricoEvento.cs`](../../../backend/Almirante.Api/Entities/HistoricoEvento.cs).
-- [`AlmiranteDbContext.cs`](../../../backend/Almirante.Api/Data/AlmiranteDbContext.cs):
+- Entidades [`LancamentoDeletado.cs`](../../../src/Almirante.Api/Entities/LancamentoDeletado.cs) e
+  [`HistoricoEvento.cs`](../../../src/Almirante.Api/Entities/HistoricoEvento.cs).
+- [`AlmiranteDbContext.cs`](../../../src/Almirante.Api/Data/AlmiranteDbContext.cs):
   `UseSqlOutputClause(false)`.
 - Triggers nas migrations
-  [`20260916174441_AddLancamentoGeral.cs`](../../../backend/Almirante.Api/Data/Migrations/20260916174441_AddLancamentoGeral.cs),
-  [`20260917120000_UnifyLancamentosFlow.cs`](../../../backend/Almirante.Api/Data/Migrations/20260917120000_UnifyLancamentosFlow.cs) e
-  [`20260921160617_AddEventos.cs`](../../../backend/Almirante.Api/Data/Migrations/20260921160617_AddEventos.cs).
-- Permissões: [`DbCredentialManager.cs`](../../../backend/Almirante.Api/Infrastructure/DbCredentialManager.cs)
+  [`20260916174441_AddLancamentoGeral.cs`](../../../src/Almirante.Api/Data/Migrations/20260916174441_AddLancamentoGeral.cs),
+  [`20260917120000_UnifyLancamentosFlow.cs`](../../../src/Almirante.Api/Data/Migrations/20260917120000_UnifyLancamentosFlow.cs) e
+  [`20260921160617_AddEventos.cs`](../../../src/Almirante.Api/Data/Migrations/20260921160617_AddEventos.cs).
+- Permissões: [`DbCredentialManager.cs`](../../../src/Almirante.Api/Infrastructure/DbCredentialManager.cs)
   (`BuildProvisionSql`, `DENY` nas tabelas de auditoria) e
-  [`DbPrivilegeAuditor.cs`](../../../backend/Almirante.Api/Infrastructure/DbPrivilegeAuditor.cs)
+  [`DbPrivilegeAuditor.cs`](../../../src/Almirante.Api/Infrastructure/DbPrivilegeAuditor.cs)
   (`AuditTables`).
-- Testes: [`SqlServerIntegrationTests.cs`](../../../backend/Almirante.Api.Tests/SqlServerIntegrationTests.cs)
+- Testes: [`SqlServerIntegrationTests.cs`](../../../src/Almirante.Api.Tests/SqlServerIntegrationTests.cs)
   (`ExclusaoLogica_RegistraResponsavelAutenticado_NaAuditoriaPorTrigger`),
-  [`DbPrivilegeTests.cs`](../../../backend/Almirante.Api.Tests/DbPrivilegeTests.cs)
+  [`DbPrivilegeTests.cs`](../../../src/Almirante.Api.Tests/DbPrivilegeTests.cs)
   (`Auditoria_AplicacaoNaoFalsificaNemAlteraHistorico_MasTriggerContinuaGravando`),
-  [`EventosAuditIdentityTests.cs`](../../../backend/Almirante.Api.Tests/EventosAuditIdentityTests.cs),
-  [`SessaoAuditoriaPoolSqlTests.cs`](../../../backend/Almirante.Api.Tests/SessaoAuditoriaPoolSqlTests.cs)
+  [`EventosAuditIdentityTests.cs`](../../../src/Almirante.Api.Tests/EventosAuditIdentityTests.cs),
+  [`SessaoAuditoriaPoolSqlTests.cs`](../../../src/Almirante.Api.Tests/SessaoAuditoriaPoolSqlTests.cs)
   (`Limpeza_DescartaConexaoComFalhaAntesDeFechar_MasReutilizaConexaoSaudavel`) e
-  [`EventosSqlServerTests.cs`](../../../backend/Almirante.Api.Tests/EventosSqlServerTests.cs)
+  [`EventosSqlServerTests.cs`](../../../src/Almirante.Api.Tests/EventosSqlServerTests.cs)
   (`Transacao_FalhaNoPut_NaoDeixaAlteracaoParcial_NemContextoDeAuditoria`).
 - Documentação: [`README.md`](../../../README.md#eventos) (parágrafo "Auditoria") e
   [`docs/authentication-security.md`](../../authentication-security.md#correções-da-validação-da-pr-59).

@@ -92,7 +92,7 @@ exige() { # JOB TRECHO DESCRICAO
 if [[ -f "$CI" ]]; then
   for job in build-and-test sqlserver-integration; do
     exige "$job" '--collect "XPlat Code Coverage"' "coleta cobertura"
-    exige "$job" '--settings backend/coverage.runsettings' "usa backend/coverage.runsettings"
+    exige "$job" '--settings src/coverage.runsettings' "usa src/coverage.runsettings"
     exige "$job" 'path: TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
   done
   exige build-and-test 'Category!=RequiresDocker&Category!=RequiresSqlServer' "roda os testes sem dependências externas"
@@ -109,7 +109,7 @@ if [[ -f "$CI" ]]; then
   exige coverage 'dotnet tool restore' "usa o ReportGenerator fixado no manifesto local"
   exige coverage 'bash scripts/coverage.sh report' "gera o relatório consolidado"
   exige coverage 'bash scripts/coverage.sh gate' "aplica o quality gate"
-  exige coverage 'backend/coverage-baseline.json' "compara com o baseline versionado"
+  exige coverage 'src/coverage-baseline.json' "compara com o baseline versionado"
   exige coverage 'GITHUB_STEP_SUMMARY' "escreve o Job Summary"
   exige coverage 'name: coverage-${{' "publica o artifact de cobertura"
   exige deploy-scripts 'bash scripts/tests/coverage.test.sh' "testa o script de cobertura"
@@ -153,14 +153,14 @@ exige_em() { # ARQUIVO JOB TRECHO DESCRICAO
 if [[ -f "$QL" ]]; then
   grep -qE '^[[:space:]]{2}pull_request:' "$QL" && ok "codeql.yml: analisa PRs" || erro "codeql.yml: falta gatilho pull_request."
   exige_em "$QL" analyze-csharp 'languages: csharp' "analisa C#"
-  exige_em "$QL" analyze-csharp 'dotnet build backend/Almirante.slnx' "compila a solução"
+  exige_em "$QL" analyze-csharp 'dotnet build src/Almirante.slnx' "compila a solução"
   exige_em "$QL" analyze-csharp 'github/codeql-action/analyze@' "publica a análise"
 else
   erro "codeql.yml não encontrado."
 fi
 if [[ -f "$CS" ]]; then
   grep -qE '^[[:space:]]{2}pull_request:' "$CS" && ok "container-security.yml: analisa PRs" || erro "container-security.yml: falta gatilho pull_request."
-  exige_em "$CS" image-scan '-f backend/Almirante.Api/Dockerfile' "constrói a imagem real da API"
+  exige_em "$CS" image-scan '-f src/Almirante.Api/Dockerfile' "constrói a imagem real da API"
   exige_em "$CS" image-scan 'sha256sum --check' "confere o SHA256 do binário do Trivy"
   exige_em "$CS" image-scan '--pkg-types os,library' "analisa pacotes do SO e bibliotecas"
   exige_em "$CS" image-scan '--severity HIGH,CRITICAL --ignore-unfixed' "gate em HIGH/CRITICAL com correção"
@@ -269,7 +269,7 @@ if [[ -f "$RL" ]]; then
   exige_em "$RL" validate 'git merge-base --is-ancestor' "exige commit contido em main"
   exige_em "$RL" validate 'gh release view' "recusa versão com GitHub Release existente"
   exige_em "$RL" build-scan 'ref: ${{ needs.validate.outputs.commit }}' "faz checkout do commit da tag"
-  exige_em "$RL" build-scan '-f backend/Almirante.Api/Dockerfile' "constrói a imagem real da API"
+  exige_em "$RL" build-scan '-f src/Almirante.Api/Dockerfile' "constrói a imagem real da API"
   exige_em "$RL" build-scan 'org.opencontainers.image.revision=${COMMIT}' "rotula a imagem com o commit"
   exige_em "$RL" build-scan 'org.opencontainers.image.version=${VERSION}' "rotula a imagem com a versão"
   exige_em "$RL" build-scan 'sha256sum --check' "confere o SHA256 do binário do Trivy"

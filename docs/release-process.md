@@ -121,7 +121,7 @@ certificados ou qualquer secret. A imagem é construída só com arquivos versio
 | Job | Permissões do `GITHUB_TOKEN` | O que faz |
 | --- | --- | --- |
 | `validate` | `contents: read` | Confere que o ref é uma tag no formato SemVer e calcula o nome da imagem em minúsculas. Resolve o commit da tag (`^{commit}`) e exige que ele seja igual ao HEAD do checkout e ao SHA do evento. Exige que o commit esteja na história de `origin/main` (`git merge-base --is-ancestor`, com histórico completo). Recusa a versão se a GitHub Release já existir. |
-| `build-scan` | `contents: read` | Faz checkout do **commit** resolvido. Constrói a imagem com o mesmo Dockerfile e contexto do `container-security.yml` (`backend/Almirante.Api/Dockerfile`, `backend/`, `--pull`) e grava os rótulos OCI. Aplica o mesmo gate do Trivy (HIGH/CRITICAL com correção reprova) e gera a SBOM CycloneDX. Exporta a imagem com `docker save`. |
+| `build-scan` | `contents: read` | Faz checkout do **commit** resolvido. Constrói a imagem com o mesmo Dockerfile e contexto do `container-security.yml` (`src/Almirante.Api/Dockerfile`, `src/`, `--pull`) e grava os rótulos OCI. Aplica o mesmo gate do Trivy (HIGH/CRITICAL com correção reprova) e gera a SBOM CycloneDX. Exporta a imagem com `docker save`. |
 | `publish` | `packages: write` | Não faz checkout nem build. Carrega a imagem escaneada (`docker load`) e confere o ID e os rótulos. Faz login no `ghcr.io` com o `GITHUB_TOKEN` via stdin e recusa publicar se `vX.Y.Z` ou `sha-<commit>` já existirem. Envia as duas tags e confere que as duas têm o mesmo digest. |
 | `github-release` | `contents: write` | Não faz checkout. Cria a GitHub Release da tag existente (`gh release create --verify-tag`), com a tabela de artefato (versão, data, commit, imagens, digest, link do run) seguida das notas geradas pelo GitHub. Anexa a SBOM e escreve o Job Summary. |
 
@@ -293,10 +293,10 @@ quando uma versão mais antiga sobe. Voltar a imagem mantém o banco no schema d
   automaticamente. **Não** rode `dotnet ef database update <migration-antiga>`, o `Down` de uma
   migration ou qualquer equivalente em produção como parte de rollback.
 - Antes de voltar para uma versão anterior, compare as migrations das duas versões
-  (`backend/Almirante.Api/Data/Migrations`):
+  (`src/Almirante.Api/Data/Migrations`):
 
   ```bash
-  git diff --stat v0.1.3 v0.2.0 -- backend/Almirante.Api/Data/Migrations
+  git diff --stat v0.1.3 v0.2.0 -- src/Almirante.Api/Data/Migrations
   ```
 
   - **Sem migrations novas:** o rollback da imagem é seguro do ponto de vista do schema.

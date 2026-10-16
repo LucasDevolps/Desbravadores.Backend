@@ -18,6 +18,7 @@ sistema está estruturado hoje?" ([voltar à documentação de arquitetura](../R
 | [0008](0008-usar-aspire-no-desenvolvimento-e-opentelemetry-na-api.md) | Usar .NET Aspire para desenvolvimento local e ServiceDefaults com OpenTelemetry na API | Accepted |
 | [0009](0009-aplicar-migrations-na-inicializacao-da-api.md) | Aplicar as migrations do EF Core na inicialização da API | Accepted |
 | [0010](0010-publicar-releases-como-imagem-imutavel-no-ghcr.md) | Publicar releases como imagem imutável no GHCR a partir de tags SemVer | Accepted |
+| [0011](0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md) | Armazenar fotos de usuários em disco fora do site e servi-las pela API | Accepted |
 
 Template: [`0000-template.md`](0000-template.md).
 

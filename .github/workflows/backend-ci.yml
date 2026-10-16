@@ -32,13 +32,13 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore backend/Almirante.slnx
+        run: dotnet restore src/Almirante.slnx
 
       - name: Build
-        run: dotnet build backend/Almirante.slnx --configuration Release --no-restore
+        run: dotnet build src/Almirante.slnx --configuration Release --no-restore
 
       - name: Testes sem dependências externas
-        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --filter "Category!=RequiresDocker&Category!=RequiresSqlServer" --settings backend/coverage.runsettings --collect "XPlat Code Coverage" --logger "trx;LogFileName=unit.trx" --results-directory TestResults
+        run: dotnet test src/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build --filter "Category!=RequiresDocker&Category!=RequiresSqlServer" --settings src/coverage.runsettings --collect "XPlat Code Coverage" --logger "trx;LogFileName=unit.trx" --results-directory TestResults
 
       - name: Resultados vinculados ao commit
         if: always()
@@ -96,7 +96,7 @@ jobs:
           exit 1
 
       - name: Testes SQL Server (inclui concorrência, migrations e privilégios)
-        run: dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --filter "Category=RequiresSqlServer" --settings backend/coverage.runsettings --collect "XPlat Code Coverage" --logger "trx;LogFileName=sqlserver.trx" --results-directory TestResults
+        run: dotnet test src/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --filter "Category=RequiresSqlServer" --settings src/coverage.runsettings --collect "XPlat Code Coverage" --logger "trx;LogFileName=sqlserver.trx" --results-directory TestResults
 
       - name: Resultados vinculados ao commit
         if: always()
@@ -158,7 +158,7 @@ jobs:
       - name: Quality gate de cobertura
         env:
           COVERAGE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: bash scripts/coverage.sh gate coverage-report/Cobertura.xml backend/coverage-baseline.json "$GITHUB_STEP_SUMMARY"
+        run: bash scripts/coverage.sh gate coverage-report/Cobertura.xml src/coverage-baseline.json "$GITHUB_STEP_SUMMARY"
 
       - name: Detalhes por assembly e classe no resumo
         if: always()

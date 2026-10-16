@@ -49,8 +49,8 @@ jobs:
 
       - name: Build da solução
         run: |
-          dotnet restore backend/Almirante.slnx
-          dotnet build backend/Almirante.slnx --configuration Release --no-restore -p:UseSharedCompilation=false
+          dotnet restore src/Almirante.slnx
+          dotnet build src/Almirante.slnx --configuration Release --no-restore -p:UseSharedCompilation=false
 
       - name: Analisar com CodeQL
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1

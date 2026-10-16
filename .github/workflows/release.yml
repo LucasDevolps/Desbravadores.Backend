@@ -135,7 +135,7 @@ jobs:
           ref: ${{ needs.validate.outputs.commit }}
           persist-credentials: false
 
-      # Mesmo Dockerfile e contexto (backend/) do container-security.yml e do Compose. Os rótulos OCI ligam a
+      # Mesmo Dockerfile e contexto (src/) do container-security.yml e do Compose. Os rótulos OCI ligam a
       # imagem ao repositório (o GHCR usa "source" para associar o package), ao commit e à versão.
       - name: Build da imagem da API
         id: build
@@ -146,14 +146,14 @@ jobs:
         run: |
           set -euo pipefail
           created=$(git log -1 --format=%cI "$COMMIT")
-          docker build --pull -f backend/Almirante.Api/Dockerfile -t "release/${IMAGE_NAME}:${COMMIT}" \
+          docker build --pull -f src/Almirante.Api/Dockerfile -t "release/${IMAGE_NAME}:${COMMIT}" \
             --label "org.opencontainers.image.title=${IMAGE_NAME}" \
             --label "org.opencontainers.image.description=API do backend Almirante (Desbravadores)" \
             --label "org.opencontainers.image.source=${SOURCE_URL}" \
             --label "org.opencontainers.image.revision=${COMMIT}" \
             --label "org.opencontainers.image.version=${VERSION}" \
             --label "org.opencontainers.image.created=${created}" \
-            backend
+            src
           echo "image-id=$(docker image inspect --format '{{.Id}}' "release/${IMAGE_NAME}:${COMMIT}")" >> "$GITHUB_OUTPUT"
 
       - name: Instalar Trivy (SHA256 conferido)

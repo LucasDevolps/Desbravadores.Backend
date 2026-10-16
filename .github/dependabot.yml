@@ -6,10 +6,10 @@
 # elas não são bloqueadas nem agrupadas aqui, para chegarem o mais rápido possível.
 version: 2
 updates:
-  # /backend contém Almirante.slnx: o Dependabot o usa como ponto de entrada e atualiza os quatro .csproj
-  # referenciados, além de .config/dotnet-tools.json (procurado a partir de /backend até a raiz).
+  # /src contém Almirante.slnx: o Dependabot o usa como ponto de entrada e atualiza os quatro .csproj
+  # referenciados, além de .config/dotnet-tools.json (procurado a partir de /src até a raiz).
   - package-ecosystem: nuget
-    directory: /backend
+    directory: /src
     target-branch: develop
     schedule:
       interval: weekly
@@ -54,7 +54,7 @@ updates:
   # Imagens base do Dockerfile da API (sdk e aspnet sobem juntas). As tags "10.0" já recebem os patches
   # do .NET; o major (11.0) é ignorado porque o runtime precisa casar com o TargetFramework (net10.0).
   - package-ecosystem: docker
-    directory: /backend/Almirante.Api
+    directory: /src/Almirante.Api
     target-branch: develop
     schedule:
       interval: weekly

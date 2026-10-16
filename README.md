@@ -64,7 +64,7 @@ O backend está em fase de **MVP funcional** e possui:
 │       ├── codeql.yml              # análise estática CodeQL (C#)
 │       ├── container-security.yml  # scan da imagem da API (Trivy) e SBOM CycloneDX
 │       └── release.yml             # release: tag SemVer → imagem no GHCR + GitHub Release
-├── backend/
+├── src/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
 │   ├── Almirante.Api.Tests/        # testes de integração
 │   ├── Almirante.AppHost/          # orquestração local com Aspire
@@ -250,7 +250,19 @@ Diferenças em relação ao Docker Compose:
 - `ReverseProxy:TrustedNetworkCidr` é configurado como `127.0.0.1/32` em
   `appsettings.Production.json` (arquivo local ao servidor, fora do controle de versão, preservado
   entre deploys), já que aqui o nginx e a API rodam na mesma máquina — diferente do Docker, onde a
-  confiança é numa subnet inteira.
+  confiança é numa subnet inteira;
+- as fotos de usuários ficam numa pasta **fora** de `C:\desbravadores\site` (o `robocopy /MIR` do deploy apagaria o
+  que estivesse dentro), informada ao app pool pela variável `Media__Storage__Path`. O deploy confere a variável e a
+  pasta antes de tirar o site do ar. Preparação, uma vez, como administrador (o pool `Almirante` lê, grava e apaga,
+  sem permissão de execução; herança desligada só na raiz, nunca com `/T`):
+
+  ```powershell
+  New-Item -ItemType Directory -Force C:\desbravadores\fotos | Out-Null
+  icacls C:\desbravadores\fotos /inheritance:r /grant:r "IIS AppPool\Almirante:(OI)(CI)(R,W,D)" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+  Add-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Name '.' `
+    -Filter "system.applicationHost/applicationPools/add[@name='Almirante']/environmentVariables" `
+    -Value @{ name = 'Media__Storage__Path'; value = 'C:\desbravadores\fotos' }
+  ```
 
 O `.NET Aspire` (seção abaixo) continua executando a API diretamente, sem Nginx, em desenvolvimento
 local — a proteção de rate limit só se aplica aos dois caminhos de deploy (Docker Compose e IIS).
@@ -265,7 +277,7 @@ local — a proteção de rate limit só se aplica aos dois caminhos de deploy (
 Execute o AppHost:
 
 ```bash
-dotnet run --project backend/Almirante.AppHost
+dotnet run --project src/Almirante.AppHost
 ```
 
 O AppHost:
@@ -279,11 +291,11 @@ O AppHost:
 Nenhuma credencial fica versionada. Antes da primeira execução, defina os segredos locais fora do Git:
 
 ```bash
-dotnet user-secrets set "Parameters:sql-password" "<senha do sa do SQL Server>" --project backend/Almirante.AppHost
-dotnet user-secrets set "Parameters:sql-admin-password" "<senha administrativa dedicada, 16+ caracteres>" --project backend/Almirante.AppHost
-dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project backend/Almirante.Api
-dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project backend/Almirante.Api
-dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project backend/Almirante.Api
+dotnet user-secrets set "Parameters:sql-password" "<senha do sa do SQL Server>" --project src/Almirante.AppHost
+dotnet user-secrets set "Parameters:sql-admin-password" "<senha administrativa dedicada, 16+ caracteres>" --project src/Almirante.AppHost
+dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project src/Almirante.Api
+dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project src/Almirante.Api
+dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project src/Almirante.Api
 ```
 
 O e-mail do administrador inicial é `admin@local.dev`. Se o volume `almirante-sqlserver-data` já existir, use a senha do SQL Server com que ele foi criado.
@@ -346,17 +358,65 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
 | `GET` | `/api/Auth/Me` | retorna o perfil do usuário autenticado (qualquer cargo) |
 | `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC, TES) |
+| `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`) |
+| `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API) |
+| `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto |
 | `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC, TES) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
 **Dados pessoais de usuários.** `POST`, `PUT` e `GET /api/Usuarios` trafegam `cpf`, `dataNascimento`
 (`yyyy-MM-dd`, sem horário, não futura) e `telefone`, todos opcionais e `null` em cadastros antigos. O
-`email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é gravado sem pontos, hífen e espaços
-externos e é único entre todos os usuários, inclusive inativos (índice `UX_Usuarios_Cpf`; duplicidade gera
-`409`). No `PUT`, um desses três campos **omitido** mantém o valor atual, e `null` (ou `""` em
-`cpf`/`telefone`) o remove. Alteração e exclusão lógica gravam o estado anterior completo, incluindo esses
-campos, em `_usuarios_hist`, pela trigger `TR_Usuarios_Historico`, na mesma transação.
+`email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é aceito com ou sem máscara, precisa ter 11
+dígitos com dígitos verificadores válidos e é gravado só com os dígitos; é único entre todos os usuários, inclusive
+inativos (índice `UX_Usuarios_Cpf`; duplicidade gera `409`). O telefone é fixo (10 dígitos, começando de 2 a 5) ou
+celular (11 dígitos, começando com 9), com DDD válido, com ou sem a máscara `(11) 98765-4321`, e é gravado só com
+dígitos (valores antigos com máscara ficam como estão até serem alterados). No `PUT`, um desses campos **omitido**
+mantém o valor atual, e `null` (ou `""` em `cpf`/`telefone`) o remove. Alteração e exclusão lógica gravam o estado
+anterior completo, incluindo esses campos, em `_usuarios_hist`, pela trigger `TR_Usuarios_Historico`, na mesma
+transação.
+
+**Responsável (issues #112 e #131).** `responsavelNome`, `responsavelEmail`, `responsavelCpf` e `responsavelTelefone`
+seguem as mesmas regras dos campos equivalentes do usuário (o CPF do responsável não é único e não pode ser igual ao
+do próprio usuário; o nome aceita acentos, mas não emojis nem outros alfabetos, porque a coluna é `varchar`). Nome e
+e-mail do responsável são **obrigatórios quando o usuário tem menos de 18 anos** na data de hoje (fuso
+`Clube:FusoHorario`, padrão `America/Sao_Paulo`); para maior de idade, ou sem data de nascimento, são opcionais. A
+idade é contada no calendário, dia a dia: a pessoa é menor até a véspera do 18º aniversário, e quem nasceu em 29/02
+completa 18 anos em 01/03 (Código Civil, art. 132, §3º). No `PUT`, a regra usa a data de nascimento e os dados do
+responsável **efetivos**: os do corpo ou, quando omitidos, os já gravados.
+
+**Foto de perfil (issue #116).** `PUT /api/Usuarios/{id}/foto` recebe `multipart/form-data` com um único campo
+`arquivo` (JPEG, PNG ou WebP, com extensão, `Content-Type` e assinatura coincidentes). A API decodifica a imagem,
+aplica a orientação do EXIF, remove todos os metadados (EXIF com GPS, XMP, IPTC, perfil de cor) e regrava em WebP de no
+máximo 1024x1024; o original nunca é guardado. O banco grava só o caminho relativo (`Usuarios.FotoCaminho`) e o arquivo
+fica na pasta `Media:Storage:Path`, fora do site. A troca apaga a foto anterior só depois de gravar a nova, e a troca ou
+remoção vai para `_usuarios_hist`. A listagem traz `fotoUrl` (`null` sem foto). Mesma autorização do CRUD de usuários
+(só um Administrador gerencia a foto de um Administrador); o envio exige usuário ativo, a remoção vale também para
+inativo. Respostas: `400` multipart inválido, `404`, `409` usuário inativo, `413` acima do limite, `415` formato ou
+`Content-Encoding` não suportado, `422` imagem inválida ou fora dos limites, `429` excesso de envios (com
+`Retry-After`), `503` armazenamento indisponível. Decisão e alternativas: [ADR-0011](docs/architecture/adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md).
+
+No Angular, a foto não pode ser exibida com uma `<img src>` comum, porque ela não envia o token: busque com
+`HttpClient` (`responseType: 'blob'`) e use `URL.createObjectURL`. A CSP do front precisa aceitar `img-src blob:`. A
+resposta tem `ETag` (muda a cada troca) e `Cache-Control: private, no-cache`.
+
+| Configuração (`Media:Images`) | Padrão | O que limita |
+| --- | --- | --- |
+| `MaxUploadSizeMb` | `10` | tamanho do arquivo enviado (o nginx aceita 11 MB só nessa rota) |
+| `MinWidth` / `MinHeight` | `64` | dimensões mínimas da imagem enviada |
+| `MaxMegapixels` | `25` | pixels da imagem enviada, conferidos no cabeçalho antes de decodificar |
+| `MaxWidth` / `MaxHeight` | `1024` | dimensões da foto gravada (nunca amplia) |
+| `WebpQuality` / `MinWebpQuality` | `82` / `60` | qualidade inicial e mínima do WebP gravado |
+| `MaxStoredSizeMb` | `1` | tamanho da foto gravada (a qualidade baixa até caber) |
+| `ProcessingTimeoutMs` | `10000` | prazo do processamento de uma imagem |
+| `MaxConcurrentProcessing` | `2` | imagens processadas ao mesmo tempo (fila curta, depois `429`) |
+| `UploadsPerUserPerWindow` / `UploadWindowMinutes` | `10` / `10` | envios por usuário na janela |
+
+`Media:Storage:Path` é obrigatório fora de Development (em Development, sem valor, usa uma pasta descartável no
+temp) e a API não sobe se ele for relativo, estiver dentro do site ou não aceitar escrita. No Docker Compose ele aponta
+para o volume nomeado `almirante-fotos`; no IIS, veja [Docker/Nginx no Windows (IIS)](#dockernginx-no-windows-iis).
+Uma faxina diária remove gravações interrompidas e fotos sem referência no banco
+(`Media:Storage:LimpezaHabilitada`).
 
 ## Lançamentos
 
@@ -557,7 +617,7 @@ antiga e nova da API simultaneamente contra o schema convertido.
 ## Testes
 
 ```bash
-dotnet test backend/Almirante.slnx
+dotnet test src/Almirante.slnx
 ```
 
 A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
@@ -579,7 +639,7 @@ Sem `ALMIRANTE_TEST_SQLSERVER`, todos os testes `RequiresSqlServer` falham de pr
 descartável em contêiner e a conexão `sa` no formato do CI:
 
 ```bash
-ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx
+ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx
 ```
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
@@ -590,7 +650,7 @@ bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o C
 A API sob teste nunca usa essa conexão. Exemplo com Windows Auth:
 
 ```bash
-ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx --filter Category=RequiresSqlServer
+ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx --filter Category=RequiresSqlServer
 ```
 
 ### Cenários manuais do rate limit do Nginx
