@@ -126,4 +126,29 @@ public static class TestHelpers
         node.Remove("traceId");
         return node.ToJsonString();
     }
+
+    // CPF válido aleatório (11 dígitos com os verificadores do módulo 11). Por padrão começa com 0: prova que o CPF é
+    // texto (zero à esquerda preservado). Nunca uma sequência de um único dígito.
+    public static string NovoCpf(bool comZeroInicial = true)
+    {
+        while (true)
+        {
+            var digitos = new int[11];
+            for (var i = comZeroInicial ? 1 : 0; i < 9; i++) digitos[i] = Random.Shared.Next(10);
+            if (digitos.Take(9).Distinct().Count() == 1) continue;
+            digitos[9] = DigitoVerificador(digitos, 9);
+            digitos[10] = DigitoVerificador(digitos, 10);
+            return string.Concat(digitos);
+        }
+
+        static int DigitoVerificador(int[] d, int quantidade)
+        {
+            var soma = 0;
+            for (var i = 0; i < quantidade; i++) soma += d[i] * (quantidade + 1 - i);
+            var resto = soma % 11;
+            return resto < 2 ? 0 : 11 - resto;
+        }
+    }
+
+    public static string MascararCpf(string cpf) => $"{cpf[..3]}.{cpf[3..6]}.{cpf[6..9]}-{cpf[9..]}";
 }

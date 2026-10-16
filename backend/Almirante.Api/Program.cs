@@ -130,6 +130,31 @@ builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
+// Regras de calendário do clube (maioridade para os dados do responsável): fuso validado no startup.
+builder.Services.AddOptions<ClubeOptions>().Bind(builder.Configuration.GetSection(ClubeOptions.SectionName)).ValidateOnStart();
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ClubeOptions>, ClubeOptionsValidator>();
+builder.Services.AddSingleton<DataCivil>();
+
+// Fotos de usuários (issue #116): pasta fora do site, limites do processamento e faxina diária. Em Development, sem
+// Media:Storage:Path, usa uma pasta descartável no temp; nos demais ambientes a pasta é obrigatória e o
+// MediaOptionsValidator derruba a subida do host se ela for relativa, estiver dentro do site ou não aceitar escrita.
+// Validada quando o armazenamento é criado (na subida do host, pelo FotosCleanupService) e não no IStartupValidator
+// abaixo: a CLI administrativa não usa fotos e não pode passar a exigir essa configuração.
+builder.Services.AddOptions<MediaOptions>().Bind(builder.Configuration.GetSection(MediaOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.Storage.Path) && builder.Environment.IsDevelopment())
+        {
+            options.Storage.Path = MediaOptions.CaminhoPadraoDesenvolvimento;
+        }
+    });
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<MediaOptions>, MediaOptionsValidator>();
+builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
+builder.Services.AddSingleton<ProcessadorFotos>();
+builder.Services.AddSingleton<LimitadorEnvioFotos>();
+builder.Services.AddScoped<UsuarioFotoService>();
+builder.Services.AddHostedService<FotosCleanupService>();
+
 // HSTS (emitido por SecurityHeadersMiddleware fora de Development e só em HTTPS). Padrão: 365 dias,
 // sem includeSubDomains/preload — só habilite esses dois após confirmar que TODOS os subdomínios
 // do domínio publicado servem HTTPS (preload é praticamente irreversível).
@@ -275,6 +300,8 @@ builder.Services.AddSwaggerGen(options =>
     // /api/Eventos: "membros" documentado como GUID | GUID[] (oneOf), exemplos e header Idempotency-Key.
     options.SchemaFilter<MembrosSchemaFilter>();
     options.OperationFilter<EventosOperationFilter>();
+    // PUT /api/Usuarios/{id}/foto: corpo multipart/form-data lido em streaming (campo "arquivo").
+    options.OperationFilter<UsuariosFotoOperationFilter>();
 
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {

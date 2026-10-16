@@ -28,10 +28,14 @@ public sealed class ApiProcess : IAsyncDisposable
     public Task<Uri> Listening => _listening.Task;
     public Task<int> Exited { get; }
 
-    private ApiProcess(Process process, string certificatePath)
+    // Pasta de fotos do processo (Media__Storage__Path), apagada no DisposeAsync.
+    public string? FotosPath { get; }
+
+    private ApiProcess(Process process, string certificatePath, string? fotosPath)
     {
         _process = process;
         _certificatePath = certificatePath;
+        FotosPath = fotosPath;
         var exit = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         process.EnableRaisingEvents = true;
         process.Exited += (_, _) => exit.TrySetResult(process.ExitCode);
@@ -49,6 +53,7 @@ public sealed class ApiProcess : IAsyncDisposable
         ["SeedAdmin__Email"] = AdminEmail,
         ["SeedAdmin__Senha"] = AdminSenha,
         ["LoginProtection__RateLimit__PermitLimit"] = "10000",
+        ["Media__Storage__Path"] = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N")),
     };
 
     public static ApiProcess Start(IDictionary<string, string> environment)
@@ -90,7 +95,7 @@ public sealed class ApiProcess : IAsyncDisposable
         foreach (var (key, value) in environment) psi.Environment[key] = value;
 
         var process = new Process { StartInfo = psi };
-        var api = new ApiProcess(process, certificatePath);
+        var api = new ApiProcess(process, certificatePath, environment.TryGetValue("Media__Storage__Path", out var fotos) ? fotos : null);
         DataReceivedEventHandler handler = (_, e) =>
         {
             if (e.Data is null) return;
@@ -112,7 +117,13 @@ public sealed class ApiProcess : IAsyncDisposable
     {
         var finished = await Task.WhenAny(Listening, Exited, Task.Delay(timeout));
         if (finished == Listening) return (true, null);
-        if (finished == Exited) return (false, await Exited);
+        if (finished == Exited)
+        {
+            // Exited pode completar antes de as últimas linhas da saída redirecionada chegarem (visto sob carga, na suíte
+            // inteira): WaitForExitAsync também espera o fim dos fluxos de saída e de erro.
+            await _process.WaitForExitAsync();
+            return (false, await Exited);
+        }
         throw new TimeoutException($"A API não subiu nem terminou em {timeout}. Saída:\n{Output}");
     }
 
@@ -178,5 +189,6 @@ public sealed class ApiProcess : IAsyncDisposable
         catch (InvalidOperationException) { }
         _process.Dispose();
         try { File.Delete(_certificatePath); } catch (IOException) { }
+        try { if (FotosPath is not null && Directory.Exists(FotosPath)) Directory.Delete(FotosPath, recursive: true); } catch (IOException) { }
     }
 }
