@@ -252,9 +252,10 @@ Diferenças em relação ao Docker Compose:
   entre deploys), já que aqui o nginx e a API rodam na mesma máquina — diferente do Docker, onde a
   confiança é numa subnet inteira;
 - as fotos de usuários ficam numa pasta **fora** de `C:\desbravadores\site` (o `robocopy /MIR` do deploy apagaria o
-  que estivesse dentro), informada ao app pool pela variável `Media__Storage__Path`. O deploy confere a variável e a
-  pasta antes de tirar o site do ar. Preparação, uma vez, como administrador (o pool `Almirante` lê, grava e apaga,
-  sem permissão de execução; herança desligada só na raiz, nunca com `/T`):
+  que estivesse dentro), informada ao app pool pela variável `Media__Storage__Path`. O deploy prepara isso sozinho,
+  antes de tirar o site do ar: sem a variável, usa a pasta `fotos` ao lado do site e a define no pool; sem a pasta,
+  cria-a com a ACL abaixo (o pool lê, grava e apaga, sem permissão de execução; herança desligada só na raiz, nunca
+  com `/T`). Uma pasta já existente mantém a ACL que tiver. O equivalente manual, como administrador:
 
   ```powershell
   New-Item -ItemType Directory -Force C:\desbravadores\fotos | Out-Null
@@ -414,7 +415,10 @@ resposta tem `ETag` (muda a cada troca) e `Cache-Control: private, no-cache`.
 
 `Media:Storage:Path` é obrigatório fora de Development (em Development, sem valor, usa uma pasta descartável no
 temp) e a API não sobe se ele for relativo, estiver dentro do site ou não aceitar escrita. No Docker Compose ele aponta
-para o volume nomeado `almirante-fotos`; no IIS, veja [Docker/Nginx no Windows (IIS)](#dockernginx-no-windows-iis).
+para o volume nomeado `almirante-fotos`, ou para a pasta do host em `FOTOS_HOST_PATH`, quando definida. O deploy Linux
+define `$HOME/almirante/fotos` (ao lado do `.env` fixo) e cria a pasta com dono `app` e modo `700`. Na primeira vez,
+copia as fotos que já estivessem no volume, que é mantido. Para ver ou copiar os arquivos, use `sudo` ou um container.
+No IIS, veja [Docker/Nginx no Windows (IIS)](#dockernginx-no-windows-iis).
 Uma faxina diária remove gravações interrompidas e fotos sem referência no banco
 (`Media:Storage:LimpezaHabilitada`).
 

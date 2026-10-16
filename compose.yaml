@@ -146,7 +146,7 @@ services:
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_2:-http://localhost:4201}
       ReverseProxy__TrustedNetworkCidr: ${API_TRUSTED_PROXY_CIDR:-172.30.0.0/24}
       DataProtection__KeysPath: /var/lib/almirante/dataprotection
-      # Fotos de usuários (issue #116): pasta fora da aplicação, em volume nomeado (sobrevive a rebuild e redeploy).
+      # Fotos de usuários (issue #116): pasta fora da aplicação (sobrevive a rebuild e redeploy), montada abaixo.
       # O banco guarda só o caminho relativo; os limites ficam nos padrões de Media:Images (appsettings.json).
       Media__Storage__Path: /var/lib/almirante/fotos
       # Host Header: o padrão "*" aceita qualquer Host, porque este arquivo também serve
@@ -174,7 +174,9 @@ services:
       - no-new-privileges:true
     volumes:
       - almirante-dataprotection:/var/lib/almirante/dataprotection
-      - almirante-fotos:/var/lib/almirante/fotos
+      # Sem FOTOS_HOST_PATH, o volume nomeado almirante-fotos (desenvolvimento). O deploy Linux define uma pasta
+      # absoluta do host ($HOME/almirante/fotos), que ele mesmo cria com o dono "app" antes de subir a API.
+      - ${FOTOS_HOST_PATH:-almirante-fotos}:/var/lib/almirante/fotos
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

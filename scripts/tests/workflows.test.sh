@@ -331,6 +331,17 @@ else
   erro "backend-ci.yml: o check deploy-scripts deve rodar scripts/tests/compose-release.test.sh."
 fi
 
+# 9. O deploy prepara a pasta de fotos sozinho (#116): nada a criar à mão nas máquinas de deploy.
+DP="$WF/backend-deploy.yml"
+if [[ -f "$DP" ]]; then
+  exige_em "$DP" deploy-linux 'echo "FOTOS_HOST_PATH=$pasta" >> "$GITHUB_ENV"' "monta as fotos numa pasta do host"
+  exige_em "$DP" deploy-linux '--user root --cap-add CHOWN --entrypoint chown api app:app' "dá a pasta ao usuário app só com CAP_CHOWN"
+  exige_em "$DP" deploy-windows "IIS AppPool\\\${pool}:(OI)(CI)(R,W,D)" "cria a pasta com a ACL restrita do pool"
+  exige_em "$DP" deploy-windows "-Value @{ name = 'Media__Storage__Path'; value = \$pasta }" "define Media__Storage__Path no pool quando falta"
+else
+  erro "backend-deploy.yml não encontrado."
+fi
+
 if ((falhas > 0)); then
   echo
   echo "$falhas verificação(ões) de política falharam." >&2

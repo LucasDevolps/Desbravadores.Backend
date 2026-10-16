@@ -32,7 +32,7 @@ EOF
 # compose_config ARQUIVO_ENV arquivos... -> configuração normalizada em stdout; status do compose
 compose_config() {
   local envfile=$1; shift
-  (cd "$ROOT" && env -u ALMIRANTE_API_IMAGE docker compose --env-file "$envfile" "$@" config 2>&1)
+  (cd "$ROOT" && env -u ALMIRANTE_API_IMAGE -u FOTOS_HOST_PATH docker compose --env-file "$envfile" "$@" config 2>&1)
 }
 
 # bloco da API (indentação de 2 espaços sob "services:")
@@ -76,6 +76,22 @@ done
 # 4. O overlay não fixa tag móvel nem imagem padrão.
 codigo=$(grep -vE '^[[:space:]]*#' "$ROOT/compose.release.yaml")
 if grep -qE ':latest|ALMIRANTE_API_IMAGE:-' <<<"$codigo"; then falha "compose.release.yaml" "usa latest ou valor padrão para a imagem"; else ok "compose.release.yaml sem latest nem imagem padrão"; fi
+
+# 5. Pasta das fotos: sem FOTOS_HOST_PATH, o volume nomeado (desenvolvimento); com ela (deploy Linux), a pasta do host.
+api=$(bloco_api <<<"$(compose_config "$TMP/base.env" -f compose.yaml)")
+if grep -B2 -A2 'target: /var/lib/almirante/fotos' <<<"$api" | grep -q 'source: almirante-fotos' \
+  && grep -B2 -A2 'target: /var/lib/almirante/fotos' <<<"$api" | grep -q 'type: volume'; then
+  ok "sem FOTOS_HOST_PATH as fotos ficam no volume almirante-fotos"
+else falha "fotos sem FOTOS_HOST_PATH" "$api"; fi
+{ cat "$TMP/base.env"; echo "FOTOS_HOST_PATH=$TMP/fotos"; } > "$TMP/fotos.env"
+for combo in "-f compose.yaml" "-f compose.yaml -f compose.tls.yaml"; do
+  # shellcheck disable=SC2086
+  api=$(bloco_api <<<"$(compose_config "$TMP/fotos.env" $combo)")
+  if grep -B2 -A2 'target: /var/lib/almirante/fotos' <<<"$api" | grep -q "source: $TMP/fotos" \
+    && grep -B2 -A2 'target: /var/lib/almirante/fotos' <<<"$api" | grep -q 'type: bind'; then
+    ok "com FOTOS_HOST_PATH as fotos ficam na pasta do host ($combo)"
+  else falha "fotos com FOTOS_HOST_PATH ($combo)" "$api"; fi
+done
 
 echo
 echo "$falhas falha(s)."
