@@ -22,6 +22,8 @@ A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR
 | `GET /api/Auth/Me` | 401 | — | qualquer autenticado (só o próprio perfil) |
 | `GET /api/Usuarios` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
 | `POST /api/Usuarios`, `PUT /api/Usuarios/{id}`, `DELETE /api/Usuarios/{id}` | 401 | 403 | policy `GestaoCadastros`; usuário com cargo ADM (ou promoção a ADM) só por ADM (403) |
+| `GET /api/Usuarios/{id}/foto` | 401 | 403 | policy `GestaoCadastros` |
+| `PUT /api/Usuarios/{id}/foto`, `DELETE /api/Usuarios/{id}/foto` | 401 | 403 | policy `GestaoCadastros`; foto de usuário com cargo ADM só por ADM (403) |
 | `GET /api/Cargos` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
 | `GET /api/Lancamentos` | 401 | 403 | policy `GestaoFinanceira`: ADM, DIR, DIRA, SEC, TES |
 | `POST /api/Lancamentos/Registrar` | 401 | 403 | policy `GestaoFinanceira` |
@@ -31,6 +33,17 @@ A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR
 - `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}` (antes era 401, o que levava o cliente a descartar uma sessão válida).
 - Decisão a confirmar com o negócio: as policies `GestaoCadastros` e `GestaoFinanceira` hoje têm o mesmo conjunto de roles (o registro de lançamentos precisa listar membros). Separá-las exige só alterar `Program.cs`.
 - Auditoria: `LancamentoOperacao.CriadoPorUsuarioId`, `lancamentos_deletados.UsuarioResponsavelId`/`IpResponsavel` e, desde a #50, `Lancamento.AtualizadoPorUsuarioId` (migration `AddAtualizadoPorUsuarioIdToLancamentos`) vêm **sempre** da identidade autenticada (`User.TentarObterUsuarioId`, nunca do body) e do IP pós-proxy confiável quando aplicável. `AtualizadoPorUsuarioId` é nullable (`Guid?`, FK `Restrict` para `Usuarios`) para não quebrar lançamentos atualizados antes desta coluna existir; não é exposto em `LancamentoDto` (não é necessário ao frontend). Registra somente o **último** responsável pelo `PUT` — não é um histórico completo de alterações (se isso vier a ser necessário, é escopo de uma issue separada, com uma tabela de auditoria própria).
+
+## Fotos de usuários (#116)
+
+Decisão e alternativas: [ADR-0011](architecture/adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md).
+
+- **Sem URL pública.** A pasta `Media:Storage:Path` fica fora do site e nenhum servidor web a publica; o arquivo só sai por `GET /api/Usuarios/{id}/foto` (Bearer), com `Cache-Control: private, no-cache`, `ETag` e `Cross-Origin-Resource-Policy: same-origin`.
+- **Entrada.** O multipart é lido em streaming (sem `IFormFile` e sem arquivo temporário), com uma única parte `arquivo` de até `Media:Images:MaxUploadSizeMb` (10 MB; o nginx corta em 11 MB só nessa rota). Requisição com `Content-Encoding` é recusada (`415`): não há descompressão no transporte (zip bomb).
+- **Conteúdo.** Só JPEG, PNG e WebP, com a assinatura real igual à extensão e ao `Content-Type`. O cabeçalho é lido antes de decodificar e imagens acima de `MaxMegapixels` são recusadas (`422`) sem alocar os pixels (decompression bomb). A imagem é decodificada já reduzida, orientada pelo EXIF e regravada em WebP de no máximo 1024×1024, sem EXIF/GPS, perfil ICC ou XMP; a saída é conferida de novo. O original nunca é gravado.
+- **Abuso.** `UploadsPerUserPerWindow` envios por usuário autenticado a cada `UploadWindowMinutes`, no máximo `MaxConcurrentProcessing` imagens processadas ao mesmo tempo (`429` com `Retry-After`) e prazo de `ProcessingTimeoutMs` por imagem.
+- **Disco.** Nome aleatório de 128 bits na pasta do próprio usuário (a CHECK `CK_Usuarios_FotoCaminho` confere o formato), gravação atômica, links simbólicos e junções recusados e, no Linux, permissões `0600`/`0700`. Na troca, o arquivo anterior só é apagado depois do commit; sobras ficam para a faxina diária (`FotosCleanupService`).
+- **Auditoria.** Troca e remoção da foto passam pelo trigger de histórico de `Usuarios` (responsável, IP e caminho anterior).
 
 ## Proteção contra força bruta (#33)
 

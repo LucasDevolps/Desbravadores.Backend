@@ -19,11 +19,24 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
+    <!-- Fotos de usuários (issue #116): decodificação/reencode com Skia (MIT). O binário nativo do Windows vem com o
+         pacote SkiaSharp; o do Linux (imagem Docker) vem do NoDependencies, sem fontconfig. Escolha e mitigações: ADR-0011. -->
+    <PackageReference Include="SkiaSharp" Version="4.153.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Almirante.ServiceDefaults\Almirante.ServiceDefaults.csproj" />
   </ItemGroup>
+
+  <!-- O binário nativo do Skia para Windows vem com o libSkiaSharp.pdb (~90 MB por arquitetura): símbolos de depuração da
+       biblioteca nativa, sem uso no servidor. Fica fora da saída do build e do publish. -->
+  <Target Name="SemPdbNativoDoSkia" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="'%(Filename)%(Extension)' == 'libSkiaSharp.pdb'" />
+      <RuntimeTargetsCopyLocalItems Remove="@(RuntimeTargetsCopyLocalItems)" Condition="'%(Filename)%(Extension)' == 'libSkiaSharp.pdb'" />
+    </ItemGroup>
+  </Target>
 
 </Project>

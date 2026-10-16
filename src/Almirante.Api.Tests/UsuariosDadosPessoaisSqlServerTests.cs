@@ -27,8 +27,8 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
 
     private static string NovoEmail(string prefixo = "pessoal") => $"{prefixo}-{Guid.NewGuid():N}@local.dev";
 
-    // 11 dígitos começando por zero: prova que o CPF é texto (zero à esquerda preservado).
-    private static string NovoCpf() => "0" + Random.Shared.NextInt64(0, 10_000_000_000).ToString("D10");
+    // CPF válido começando por zero: prova que o CPF é texto (zero à esquerda preservado).
+    private static string NovoCpf() => TestHelpers.NovoCpf();
 
     private static string Mascarar(string cpf) => $"{cpf[..3]}.{cpf[3..6]}.{cpf[6..9]}-{cpf[9..]}";
 
@@ -109,7 +109,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
         Assert.Equal(cpf, (string)json["cpf"]!);
         Assert.Equal("2001-05-17", (string)json["dataNascimento"]!);   // só a data, sem horário nem fuso
-        Assert.Equal("(11) 98765-4321", (string)json["telefone"]!);
+        Assert.Equal("11987654321", (string)json["telefone"]!);         // só dígitos: a máscara é apresentação
         Assert.Equal(email, (string)json["email"]!);
         var id = Guid.Parse((string)json["id"]!);
 
@@ -117,14 +117,14 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(cpf, salvo.Cpf);
         Assert.StartsWith("0", salvo.Cpf);
         Assert.Equal(new DateOnly(2001, 5, 17), salvo.DataNascimento);
-        Assert.Equal("(11) 98765-4321", salvo.Telefone);
+        Assert.Equal("11987654321", salvo.Telefone);
 
         // GET /api/Usuarios (fonte da tela de edição) devolve os mesmos valores.
         var lista = JsonNode.Parse(await Client.GetStringAsync("/api/Usuarios"))!.AsArray();
         var item = lista.Single(u => (string)u!["id"]! == id.ToString())!;
         Assert.Equal(cpf, (string)item["cpf"]!);
         Assert.Equal("2001-05-17", (string)item["dataNascimento"]!);
-        Assert.Equal("(11) 98765-4321", (string)item["telefone"]!);
+        Assert.Equal("11987654321", (string)item["telefone"]!);
         Assert.Equal(email, (string)item["email"]!);
     }
 
@@ -190,27 +190,27 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     [Fact]
     public async Task Put_AtualizaOsQuatroCampos_EPersiste()
     {
-        var alvo = await CriarAsync(NovoCpf(), new DateOnly(1990, 1, 2), "1111-1111");
+        var alvo = await CriarAsync(NovoCpf(), new DateOnly(1990, 1, 2), "(11) 3456-7890");
         var novoCpf = NovoCpf();
         var novoEmail = NovoEmail("Atualizado");
 
         var response = await PutAsync(Client, alvo.Id, new
         {
             nome = alvo.Nome, email = novoEmail, cargoId = alvo.Cargo.Id,
-            cpf = Mascarar(novoCpf), dataNascimento = "1985-12-31", telefone = "+55 21 99999-0000",
+            cpf = Mascarar(novoCpf), dataNascimento = "1985-12-31", telefone = "(21) 99999-0000",
         });
 
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         var dto = (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
         Assert.Equal(novoCpf, dto.Cpf);
         Assert.Equal(new DateOnly(1985, 12, 31), dto.DataNascimento);
-        Assert.Equal("+55 21 99999-0000", dto.Telefone);
+        Assert.Equal("21999990000", dto.Telefone);
         Assert.Equal(novoEmail, dto.Email);
 
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal(novoCpf, salvo.Cpf);
         Assert.Equal(new DateOnly(1985, 12, 31), salvo.DataNascimento);
-        Assert.Equal("+55 21 99999-0000", salvo.Telefone);
+        Assert.Equal("21999990000", salvo.Telefone);
         Assert.Equal(novoEmail.ToUpperInvariant(), salvo.EmailNormalizado);
     }
 
@@ -218,7 +218,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     public async Task Put_CamposPessoaisOmitidos_SaoPreservados_ESemMudancaNaoGeraHistorico()
     {
         var cpf = NovoCpf();
-        var alvo = await CriarAsync(cpf, new DateOnly(2000, 2, 29), "3333-3333");
+        var alvo = await CriarAsync(cpf, new DateOnly(2000, 2, 29), "(31) 3333-3333");
 
         // Contrato anterior (só nome/email/cargoId): não apaga nada.
         var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo));
@@ -227,7 +227,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal(cpf, salvo.Cpf);
         Assert.Equal(new DateOnly(2000, 2, 29), salvo.DataNascimento);
-        Assert.Equal("3333-3333", salvo.Telefone);
+        Assert.Equal("3133333333", salvo.Telefone);
         Assert.Empty(await HistoricoAsync(alvo.Id));
     }
 
@@ -235,7 +235,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     public async Task Put_NullOuVazioExplicito_LimpaOCampo_EHistoricoGuardaOValorAnterior()
     {
         var cpf = NovoCpf();
-        var alvo = await CriarAsync(cpf, new DateOnly(1999, 9, 9), "4444-4444");
+        var alvo = await CriarAsync(cpf, new DateOnly(1999, 9, 9), "(41) 4444-4444");
 
         var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c =>
         {
@@ -253,7 +253,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var linha = Assert.Single(await HistoricoAsync(alvo.Id));
         Assert.Equal(cpf, linha.Cpf);
         Assert.Equal(new DateOnly(1999, 9, 9), linha.DataNascimento);
-        Assert.Equal("4444-4444", linha.Telefone);
+        Assert.Equal("4144444444", linha.Telefone);
 
         // O CPF liberado pode ser usado por outro usuário.
         var outro = await CriarAsync(cpf);
@@ -290,7 +290,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         await CriarAsync(cpfOutro);
         var alvo = await CriarAsync(NovoCpf());
 
-        var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = Mascarar(cpfOutro); c["telefone"] = "9999"; }));
+        var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = Mascarar(cpfOutro); c["telefone"] = "(19) 99999-9999"; }));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal("Existe outro usuário cadastrado com esse CPF.", await DetalheAsync(response));
@@ -307,11 +307,11 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var alvo = await CriarAsync(cpf);
 
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["cpf"] = Mascarar(cpf)))).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = cpf; c["telefone"] = "5555"; }))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = cpf; c["telefone"] = "(51) 5555-5555"; }))).StatusCode);
 
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal(cpf, salvo.Cpf);
-        Assert.Equal("5555", salvo.Telefone);
+        Assert.Equal("5155555555", salvo.Telefone);
     }
 
     [Fact]
@@ -456,18 +456,18 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     public async Task Put_HistoricoGuardaOEstadoAnteriorCompleto_ACadaAlteracao()
     {
         var cpf1 = NovoCpf();
-        var alvo = await CriarAsync(cpf1, new DateOnly(1980, 3, 4), "1000-0001", role: "SEC");
+        var alvo = await CriarAsync(cpf1, new DateOnly(1980, 3, 4), "(11) 2000-0001", role: "SEC");
         var email1 = alvo.Email;
         var cpf2 = NovoCpf();
         var email2 = NovoEmail("segunda-versao");
 
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, new
         {
-            nome = "Versão 2", email = email2, cargoId = await CargoIdAsync("DIR"), cpf = cpf2, dataNascimento = "1981-04-05", telefone = "2000-0002",
+            nome = "Versão 2", email = email2, cargoId = await CargoIdAsync("DIR"), cpf = cpf2, dataNascimento = "1981-04-05", telefone = "(21) 2000-0002",
         })).StatusCode);
         // Segunda alteração muda SÓ o telefone (os demais omitidos/iguais): ainda assim é mudança cadastral auditada.
         var v2 = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == alvo.Id);
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(v2, c => c["telefone"] = "3000-0003"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(v2, c => c["telefone"] = "(31) 3000-0003"))).StatusCode);
 
         var historico = await HistoricoAsync(alvo.Id);
         Assert.Equal(2, historico.Count);
@@ -476,7 +476,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(email1, historico[0].Email);
         Assert.Equal(cpf1, historico[0].Cpf);
         Assert.Equal(new DateOnly(1980, 3, 4), historico[0].DataNascimento);
-        Assert.Equal("1000-0001", historico[0].Telefone);
+        Assert.Equal("1120000001", historico[0].Telefone);
         Assert.Equal("Secretário", historico[0].CargoNome);
         Assert.True(historico[0].Ativo);
         Assert.Equal(UsuarioHistorico.OperacaoUpdate, historico[0].TipoOperacao);
@@ -488,19 +488,19 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(email2, historico[1].Email);
         Assert.Equal(cpf2, historico[1].Cpf);
         Assert.Equal(new DateOnly(1981, 4, 5), historico[1].DataNascimento);
-        Assert.Equal("2000-0002", historico[1].Telefone);
+        Assert.Equal("2120000002", historico[1].Telefone);
         Assert.Equal("Diretor", historico[1].CargoNome);
 
         var atual = await UsuarioAsync(alvo.Id);
         Assert.Equal(cpf2, atual.Cpf);
-        Assert.Equal("3000-0003", atual.Telefone);
+        Assert.Equal("3130000003", atual.Telefone);
     }
 
     [Fact]
     public async Task Delete_HistoricoGuardaOEstadoAnteriorCompleto_InclusiveDadosPessoais()
     {
         var cpf = NovoCpf();
-        var alvo = await CriarAsync(cpf, new DateOnly(1975, 7, 8), "7777-7777", role: "TES");
+        var alvo = await CriarAsync(cpf, new DateOnly(1975, 7, 8), "(71) 3777-7777", role: "TES");
 
         Assert.Equal(HttpStatusCode.NoContent, (await DeleteAsync(Client, alvo.Id)).StatusCode);
 
@@ -511,7 +511,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(alvo.Email, linha.Email);
         Assert.Equal(cpf, linha.Cpf);
         Assert.Equal(new DateOnly(1975, 7, 8), linha.DataNascimento);
-        Assert.Equal("7777-7777", linha.Telefone);
+        Assert.Equal("7137777777", linha.Telefone);
         Assert.Equal("Tesoureiro", linha.CargoNome);
         Assert.Equal(fx.AdminId, linha.UsuarioResponsavelId);
         Assert.Equal(IpTeste, linha.IpResponsavel);
@@ -525,8 +525,8 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     [Fact]
     public async Task Trigger_UpdateDeVariasLinhas_GeraUmHistoricoPorUsuario_ComOValorAnteriorDeCada()
     {
-        var a = await CriarAsync(NovoCpf(), telefone: "1111");
-        var b = await CriarAsync(null, new DateOnly(1995, 5, 5), "2222");
+        var a = await CriarAsync(NovoCpf(), telefone: "(11) 2111-1111");
+        var b = await CriarAsync(null, new DateOnly(1995, 5, 5), "(22) 2222-2222");
 
         Assert.Equal(2, await ExecSqlAsync("""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@resp;
@@ -536,10 +536,10 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
 
         var ha = Assert.Single(await HistoricoAsync(a.Id));
         var hb = Assert.Single(await HistoricoAsync(b.Id));
-        Assert.Equal("1111", ha.Telefone);
+        Assert.Equal("1121111111", ha.Telefone);
         Assert.Equal(a.Cpf, ha.Cpf);
         Assert.Null(ha.DataNascimento);
-        Assert.Equal("2222", hb.Telefone);
+        Assert.Equal("2222222222", hb.Telefone);
         Assert.Null(hb.Cpf);
         Assert.Equal(new DateOnly(1995, 5, 5), hb.DataNascimento);
         Assert.All(new[] { ha, hb }, h => Assert.Equal("192.0.2.9", h.IpResponsavel));
@@ -563,7 +563,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     public async Task FalhaAoGravarHistorico_DesfazAAlteracao_NoPutENaExclusaoLogica()
     {
         var cpf = NovoCpf();
-        var alvo = await CriarAsync(cpf, new DateOnly(1970, 1, 1), "8888-8888");
+        var alvo = await CriarAsync(cpf, new DateOnly(1970, 1, 1), "(81) 3888-8888");
         var versaoAntes = (await UsuarioAsync(alvo.Id)).SecurityVersion;
 
         // Falha injetada só para ESTE usuário: o INSERT do trigger em _usuarios_hist viola a constraint.
@@ -571,7 +571,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         await ExecSqlAsync($"ALTER TABLE dbo._usuarios_hist WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK (UsuarioId <> '{alvo.Id}')");
         try
         {
-            var put = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = NovoCpf(); c["telefone"] = "0000"; c["dataNascimento"] = "1971-01-01"; }));
+            var put = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = NovoCpf(); c["telefone"] = "(11) 2000-0000"; c["dataNascimento"] = "1971-01-01"; }));
             Assert.Equal(HttpStatusCode.InternalServerError, put.StatusCode);
             Assert.DoesNotContain(constraint, await put.Content.ReadAsStringAsync());
 
@@ -586,13 +586,13 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal(cpf, salvo.Cpf);
         Assert.Equal(new DateOnly(1970, 1, 1), salvo.DataNascimento);
-        Assert.Equal("8888-8888", salvo.Telefone);
+        Assert.Equal("8138888888", salvo.Telefone);
         Assert.True(salvo.Ativo);
         Assert.Equal(versaoAntes, salvo.SecurityVersion);
         Assert.Empty(await HistoricoAsync(alvo.Id));
 
         // Sem a falha, a mesma operação passa normalmente.
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["telefone"] = "0000"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["telefone"] = "(11) 3000-0000"))).StatusCode);
         Assert.Single(await HistoricoAsync(alvo.Id));
     }
 
@@ -606,7 +606,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var post = await PostAsync(new { nome = "Login", email, senha, cargoId = await CargoIdAsync("DS"), cpf = NovoCpf(), dataNascimento = "2002-02-02" });
         Assert.Equal(HttpStatusCode.Created, post.StatusCode);
         var criado = (await post.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, criado.Id, CorpoPut(criado, c => c["telefone"] = "1234"))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, criado.Id, CorpoPut(criado, c => c["telefone"] = "(12) 3456-7890"))).StatusCode);
 
         using var novo = Factory.CreateClient();
         await TestHelpers.AddCsrfAsync(novo);

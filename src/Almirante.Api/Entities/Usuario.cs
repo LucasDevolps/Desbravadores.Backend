@@ -14,6 +14,18 @@ public class Usuario
     public DateOnly? DataNascimento { get; set; }
     public string? Telefone { get; set; }
 
+    // Responsável legal (NULL em registros legados). Nome e e-mail são exigidos só para menor de 18 anos (ver
+    // RegraResponsavel); CPF não é único (irmãos têm o mesmo responsável). Todos varchar: o nome é recusado se tiver
+    // caractere fora da página 1252 (TextoVarchar), os demais são ASCII como os do próprio usuário.
+    public string? ResponsavelNome { get; set; }
+    public string? ResponsavelEmail { get; set; }
+    public string? ResponsavelCpf { get; set; }
+    public string? ResponsavelTelefone { get; set; }
+
+    // Foto de perfil: só o caminho RELATIVO à pasta Media:Storage:Path, no formato usuarios/{Id:N}/{aleatório}.webp
+    // (CHECK CK_Usuarios_FotoCaminho garante o formato e que a foto é deste usuário). O binário nunca vai para o banco.
+    public string? FotoCaminho { get; set; }
+
     public required string SenhaHash { get; set; }
     public Guid CargoId { get; set; }
     public Cargo? Cargo { get; set; }
