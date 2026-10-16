@@ -80,6 +80,27 @@ jobs:
           PUBLIC_HOST: ${{ steps.compose-mode.outputs.public_host }}
         run: bash scripts/deploy-config.sh gerar-host-tls nginx/generated/tls-host.conf "$PUBLIC_HOST"
 
+      # Modo https (HTTPS local em 127.0.0.1:API_HTTPS_HOST_PORT, compose.https.yaml): o certificado fica fixo na
+      # máquina, em $HOME/almirante/certs (ao lado do .env), e é copiado para nginx/certs, que o checkout limpa a
+      # cada execução. Se faltar, ou vencer em menos de 30 dias, é gerado aqui como em docs/local-login.md
+      # (autoassinado para localhost e 127.0.0.1): nada a preparar à mão na máquina.
+      - name: Preparar certificado HTTPS local (modo https)
+        if: steps.compose-mode.outputs.mode == 'https'
+        run: |
+          certs="$HOME/almirante/certs"
+          if ! openssl x509 -checkend 2592000 -noout -in "$certs/localhost.pem" > /dev/null 2>&1 || [ ! -f "$certs/localhost.key" ]; then
+            mkdir -p "$certs"
+            chmod 700 "$certs"
+            openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -noenc \
+              -keyout "$certs/localhost.key" -out "$certs/localhost.pem" \
+              -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' 2> /dev/null
+            chmod 600 "$certs/localhost.key"
+            echo "Certificado HTTPS local gerado em $certs (autoassinado, 825 dias)."
+          fi
+          mkdir -p nginx/certs
+          cp "$certs/localhost.pem" "$certs/localhost.key" nginx/certs/
+          echo "Certificado HTTPS local: $certs/localhost.pem (vence em $(openssl x509 -enddate -noout -in "$certs/localhost.pem" | cut -d= -f2))"
+
       - name: Validar configuração efetiva do Compose
         run: docker compose ${{ steps.compose-mode.outputs.files }} config --quiet
 
@@ -124,8 +145,13 @@ jobs:
           MODE: ${{ steps.compose-mode.outputs.mode }}
           PUBLIC_HOST: ${{ steps.compose-mode.outputs.public_host }}
           HOST_PORT: ${{ steps.compose-mode.outputs.port }}
+          HTTPS_PORT: ${{ steps.compose-mode.outputs.https_port }}
         run: |
-          if [ "$MODE" = "tls" ]; then
+          if [ "$MODE" = "https" ]; then
+            # Modo https: confere a porta HTTPS publicada, confiando só no certificado local (sem -k).
+            url="https://localhost:${HTTPS_PORT}/health"
+            curl_flags=(-fsS --cacert nginx/certs/localhost.pem)
+          elif [ "$MODE" = "tls" ]; then
             # Modo TLS: exige a borda HTTPS pública de verdade (certificado válido para o
             # host, resposta final 200). Sem -k/--insecure — um certificado inválido deve
             # reprovar o deploy, não ser contornado. compose.tls.yaml publica só 443.

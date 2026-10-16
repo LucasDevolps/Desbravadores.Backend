@@ -64,6 +64,16 @@ modo $'DEPLOY_MODE=tls\nNGINX_CONF_FILE=nginx.tls.conf'; if [[ $? -ne 0 ]]; then
 modo $'DEPLOY_MODE=tls\nNGINX_CONF_FILE=nginx.tls.conf\nTLS_PUBLIC_HOST=api.exemplo.com.br'; if [[ $? -ne 0 ]]; then ok "tls sem certificado recusado antes do deploy"; else falha "tls sem certificado recusado antes do deploy" ""; fi
 modo $'API_HOST_PORT=99999'; if [[ $? -ne 0 ]]; then ok "porta inválida recusada"; else falha "porta inválida recusada" ""; fi
 modo $'DEPLOY_MODE=tls\nNGINX_CONF_FILE=nginx.tls.conf\nTLS_PUBLIC_HOST=API.exemplo.com;evil'; if [[ $? -ne 0 ]]; then ok "host com caractere inválido recusado"; else falha "host com caractere inválido recusado" ""; fi
+# https: HTTPS local (compose.https.yaml) na porta API_HTTPS_HOST_PORT
+modo $'DEPLOY_MODE=https\nAPI_HOST_PORT=8091\nAPI_HTTPS_HOST_PORT=8444'
+if grep -q '^mode=https$' "$TMP/out" && grep -q '^files=-f compose.yaml -f compose.https.yaml$' "$TMP/out" \
+  && grep -q '^port=8091$' "$TMP/out" && grep -q '^https_port=8444$' "$TMP/out"; then ok "https usa compose.https.yaml e a porta HTTPS do .env"
+else falha "https usa compose.https.yaml e a porta HTTPS do .env" "$(cat "$TMP/out" "$TMP/msg")"; fi
+modo $'DEPLOY_MODE=https'; if grep -q '^https_port=8443$' "$TMP/out"; then ok "https sem porta usa 8443"; else falha "https sem porta usa 8443" "$(cat "$TMP/out" "$TMP/msg")"; fi
+modo $'DEPLOY_MODE=https\nNGINX_CONF_FILE=nginx.tls.conf'; if [[ $? -ne 0 ]]; then ok "https + nginx.tls.conf recusado"; else falha "https + nginx.tls.conf recusado" ""; fi
+modo $'DEPLOY_MODE=https\nAPI_HTTPS_HOST_PORT=0'; if [[ $? -ne 0 ]]; then ok "porta HTTPS inválida recusada"; else falha "porta HTTPS inválida recusada" ""; fi
+modo $'DEPLOY_MODE=https\nAPI_HOST_PORT=8444\nAPI_HTTPS_HOST_PORT=8444'; if [[ $? -ne 0 ]]; then ok "HTTP e HTTPS na mesma porta recusados"; else falha "HTTP e HTTPS na mesma porta recusados" ""; fi
+modo $'API_HTTPS_HOST_PORT=8444'; if grep -q '^mode=http$' "$TMP/out" && grep -q '^https_port=$' "$TMP/out"; then ok "sem DEPLOY_MODE continua http"; else falha "sem DEPLOY_MODE continua http" "$(cat "$TMP/out" "$TMP/msg")"; fi
 
 # identidades SQL (sem fallback para sa)
 modo_sql $'SQL_SA_PASSWORD=Sa.Senha.2026'; if [[ $? -ne 0 ]] && grep -q 'SQL_ADMIN_USER ausente' "$TMP/msg"; then ok "sem SQL_ADMIN_USER recusado (sem fallback para sa)"; else falha "sem SQL_ADMIN_USER recusado" "$(cat "$TMP/msg")"; fi

@@ -338,6 +338,15 @@ if [[ -f "$DP" ]]; then
   exige_em "$DP" deploy-linux '--user root --cap-add CHOWN --entrypoint chown api app:app' "dá a pasta ao usuário app só com CAP_CHOWN"
   exige_em "$DP" deploy-windows "IIS AppPool\\\${pool}:(OI)(CI)(R,W,D)" "cria a pasta com a ACL restrita do pool"
   exige_em "$DP" deploy-windows "-Value @{ name = 'Media__Storage__Path'; value = \$pasta }" "define Media__Storage__Path no pool quando falta"
+  # Modo https: certificado local mantido pelo próprio deploy e healthcheck que valida o certificado (sem -k).
+  exige_em "$DP" deploy-linux "if: steps.compose-mode.outputs.mode == 'https'" "prepara o certificado só no modo https"
+  exige_em "$DP" deploy-linux 'openssl x509 -checkend 2592000' "renova o certificado local antes de vencer"
+  exige_em "$DP" deploy-linux 'curl_flags=(-fsS --cacert nginx/certs/localhost.pem)' "healthcheck HTTPS confiando só no certificado local"
+  if bloco_do_job "$DP" deploy-linux | grep -E 'curl[^#]*(-k|--insecure)' > /dev/null; then
+    erro "backend-deploy.yml/deploy-linux: healthcheck não pode ignorar o certificado (-k/--insecure)."
+  else
+    ok "backend-deploy.yml/deploy-linux: healthcheck sem -k/--insecure"
+  fi
 else
   erro "backend-deploy.yml não encontrado."
 fi

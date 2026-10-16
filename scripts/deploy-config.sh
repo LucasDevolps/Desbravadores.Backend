@@ -95,11 +95,11 @@ cmd_gerar_host_tls() {
 }
 
 # modo ARQUIVO_ENV [SAIDA_GITHUB]: valida o modo de deploy ANTES de qualquer alteração de serviço e
-# emite mode/files (e public_host) no formato de GITHUB_OUTPUT.
+# emite mode/files (e public_host/port/https_port) no formato de GITHUB_OUTPUT.
 cmd_modo() {
   [[ $# -ge 1 ]] || erro "uso: modo ARQUIVO_ENV [SAIDA]"
   local env_file=$1 out=${2:-/dev/stdout}
-  local mode nginx_conf host cert key port
+  local mode nginx_conf host cert key port https_port=""
   valida_identidades_sql "$env_file"
   mode=$(dotenv_get "$env_file" DEPLOY_MODE); mode=${mode:-http}
   nginx_conf=$(dotenv_get "$env_file" NGINX_CONF_FILE)
@@ -108,10 +108,18 @@ cmd_modo() {
 
   local files
   case "$mode" in
-    http)
-      [[ -z "$nginx_conf" || "$nginx_conf" == "nginx.conf" ]] || erro "DEPLOY_MODE=http mas NGINX_CONF_FILE não é nginx.conf (nem vazio)."
+    http|https)
+      [[ -z "$nginx_conf" || "$nginx_conf" == "nginx.conf" ]] || erro "DEPLOY_MODE=$mode mas NGINX_CONF_FILE não é nginx.conf (nem vazio)."
       files="-f compose.yaml"
       host=""
+      # https: HTTP em API_HOST_PORT + HTTPS local (compose.https.yaml, 127.0.0.1:API_HTTPS_HOST_PORT) com o
+      # certificado autoassinado que o workflow mantém em $HOME/almirante/certs. Não é o TLS público (modo tls).
+      if [[ "$mode" == "https" ]]; then
+        https_port=$(dotenv_get "$env_file" API_HTTPS_HOST_PORT); https_port=${https_port:-8443}
+        [[ "$https_port" =~ ^[0-9]{1,5}$ && "$https_port" -ge 1 && "$https_port" -le 65535 ]] || erro "API_HTTPS_HOST_PORT inválida"
+        [[ "$https_port" != "$port" ]] || erro "API_HTTPS_HOST_PORT não pode ser igual a API_HOST_PORT."
+        files="-f compose.yaml -f compose.https.yaml"
+      fi
       # Aviso (não falha): em modo http o nginx repassa o Host do cliente e, com AllowedHosts="*",
       # a API aceita qualquer nome. Não é bloqueante porque este mesmo compose serve desenvolvimento
       # local, onde fixar a lista atrapalharia; mas num host publicado é config que falta.
@@ -132,13 +140,14 @@ cmd_modo() {
       [[ -n "$key" && -f "$key" && -r "$key" ]] || erro "TLS_KEY_PATH ausente ou ilegível (a chave deve existir no host antes do deploy)."
       files="-f compose.yaml -f compose.tls.yaml"
       ;;
-    *) erro "DEPLOY_MODE inválido (use 'http' ou 'tls')." ;;
+    *) erro "DEPLOY_MODE inválido (use 'http', 'https' ou 'tls')." ;;
   esac
   {
     echo "mode=$mode"
     echo "files=$files"
     echo "public_host=$host"
     echo "port=$port"
+    echo "https_port=$https_port"
   } >> "$out"
 }
 
