@@ -4,7 +4,7 @@ on:
   push:
     branches: [develop]
     paths:
-      - "backend/**"
+      - "src/**"
       - "compose.yaml"
       - "compose.tls.yaml"
       - "compose.https.yaml"
@@ -142,7 +142,7 @@ jobs:
 
       # win-x64: só os binários nativos do Windows x64 (o Skia das fotos traz os de todas as plataformas).
       - name: Publish
-        run: dotnet publish backend/Almirante.Api/Almirante.Api.csproj --configuration Release --runtime win-x64 --self-contained false --output "${{ env.PUBLISH_PATH }}"
+        run: dotnet publish src/Almirante.Api/Almirante.Api.csproj --configuration Release --runtime win-x64 --self-contained false --output "${{ env.PUBLISH_PATH }}"
 
       # Liga o stdout log do ANCM (desligado por padrão). Se a aplicação
       # travar na inicialização (ex.: erro de migration ou de configuração),

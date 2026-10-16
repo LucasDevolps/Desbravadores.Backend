@@ -109,17 +109,17 @@ Outras alternativas avaliadas, como outro reverse proxy, não foram encontradas 
 - [`nginx/nginx.conf`](../../../nginx/nginx.conf), [`nginx/https.conf`](../../../nginx/https.conf),
   [`nginx/nginx.tls.conf`](../../../nginx/nginx.tls.conf) e
   [`nginx/nginx.windows.conf`](../../../nginx/nginx.windows.conf).
-- [`Program.cs`](../../../backend/Almirante.Api/Program.cs): `ForwardedHeadersOptions`,
+- [`Program.cs`](../../../src/Almirante.Api/Program.cs): `ForwardedHeadersOptions`,
   `app.UseForwardedHeaders()` e a ordem do pipeline.
-- [`ReverseProxyOptions.cs`](../../../backend/Almirante.Api/Options/ReverseProxyOptions.cs) e
-  [`SecurityHeadersMiddleware.cs`](../../../backend/Almirante.Api/Security/SecurityHeadersMiddleware.cs).
+- [`ReverseProxyOptions.cs`](../../../src/Almirante.Api/Options/ReverseProxyOptions.cs) e
+  [`SecurityHeadersMiddleware.cs`](../../../src/Almirante.Api/Security/SecurityHeadersMiddleware.cs).
 - [`backend-deploy.yml`](../../../.github/workflows/backend-deploy.yml): jobs `deploy-linux` e
   `deploy-windows`. Os modos `http` e `tls` são escolhidos por
   [`scripts/deploy-config.sh`](../../../scripts/deploy-config.sh).
-- Testes: [`ForwardedHeadersTests.cs`](../../../backend/Almirante.Api.Tests/ForwardedHeadersTests.cs),
-  [`LoginProtectionTests.cs`](../../../backend/Almirante.Api.Tests/LoginProtectionTests.cs)
+- Testes: [`ForwardedHeadersTests.cs`](../../../src/Almirante.Api.Tests/ForwardedHeadersTests.cs),
+  [`LoginProtectionTests.cs`](../../../src/Almirante.Api.Tests/LoginProtectionTests.cs)
   (`RateLimit_IgnoraXForwardedForDeOrigemNaoConfiavel`),
-  [`SecurityRegressionTests.cs`](../../../backend/Almirante.Api.Tests/SecurityRegressionTests.cs)
+  [`SecurityRegressionTests.cs`](../../../src/Almirante.Api.Tests/SecurityRegressionTests.cs)
   (`TrustedNetworkCidr_AmploDemais_RecusaIniciar`) e
   [`scripts/tests/nginx.test.sh`](../../../scripts/tests/nginx.test.sh).
 - Documentação: [`README.md`](../../../README.md#arquitetura-com-nginx-docker-compose) e

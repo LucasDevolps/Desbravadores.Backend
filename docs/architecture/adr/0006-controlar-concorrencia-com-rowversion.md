@@ -89,29 +89,29 @@ Alternativas históricas não foram encontradas no repositório.
 
 ## Evidências no repositório
 
-- [`Evento.cs`](../../../backend/Almirante.Api/Entities/Evento.cs) (`Versao`),
-  [`AuthSession.cs`](../../../backend/Almirante.Api/Entities/AuthSession.cs) e
-  [`RefreshToken.cs`](../../../backend/Almirante.Api/Entities/RefreshToken.cs) (`RowVersion`).
-- [`AlmiranteDbContext.cs`](../../../backend/Almirante.Api/Data/AlmiranteDbContext.cs): `IsRowVersion`
+- [`Evento.cs`](../../../src/Almirante.Api/Entities/Evento.cs) (`Versao`),
+  [`AuthSession.cs`](../../../src/Almirante.Api/Entities/AuthSession.cs) e
+  [`RefreshToken.cs`](../../../src/Almirante.Api/Entities/RefreshToken.cs) (`RowVersion`).
+- [`AlmiranteDbContext.cs`](../../../src/Almirante.Api/Data/AlmiranteDbContext.cs): `IsRowVersion`
   e `SecurityVersion` com `IsConcurrencyToken`.
-- [`EventosService.cs`](../../../backend/Almirante.Api/Services/EventosService.cs): comentário com a
+- [`EventosService.cs`](../../../src/Almirante.Api/Services/EventosService.cs): comentário com a
   ordem de locks, `TravarGrupoAsync`, `TravarCadastroAsync`, `SalvarAsync`.
-- [`LancamentosService.cs`](../../../backend/Almirante.Api/Services/LancamentosService.cs):
+- [`LancamentosService.cs`](../../../src/Almirante.Api/Services/LancamentosService.cs):
   `AtualizarStatusDeEventoAsync`.
-- [`EventoRegras.cs`](../../../backend/Almirante.Api/Services/EventoRegras.cs):
+- [`EventoRegras.cs`](../../../src/Almirante.Api/Services/EventoRegras.cs):
   `VersaoParaTexto`, `TentarLerVersao`.
-- [`AuthService.cs`](../../../backend/Almirante.Api/Services/AuthService.cs): tratamento de
+- [`AuthService.cs`](../../../src/Almirante.Api/Services/AuthService.cs): tratamento de
   `DbUpdateConcurrencyException` em `RefreshAsync` e `LoginAsync`.
-- Migrations [`20260921160617_AddEventos.cs`](../../../backend/Almirante.Api/Data/Migrations/20260921160617_AddEventos.cs)
-  e [`20260917000000_AddAuthenticationSessions.cs`](../../../backend/Almirante.Api/Data/Migrations/20260917000000_AddAuthenticationSessions.cs).
-- Testes: [`EventosSqlServerTests.cs`](../../../backend/Almirante.Api.Tests/EventosSqlServerTests.cs)
+- Migrations [`20260921160617_AddEventos.cs`](../../../src/Almirante.Api/Data/Migrations/20260921160617_AddEventos.cs)
+  e [`20260917000000_AddAuthenticationSessions.cs`](../../../src/Almirante.Api/Data/Migrations/20260917000000_AddAuthenticationSessions.cs).
+- Testes: [`EventosSqlServerTests.cs`](../../../src/Almirante.Api.Tests/EventosSqlServerTests.cs)
   (`Put_DoisPutsSimultaneosComAMesmaVersao_UmVenceEOutroRecebe409`,
   `MudancaDeStatusDoLancamento_AlteraAVersaoDoEvento_EInvalidaPutComVersaoAnterior`,
   `Delete_VersaoDesatualizada_Retorna409`),
-  [`EventosGrupoLockSqlTests.cs`](../../../backend/Almirante.Api.Tests/EventosGrupoLockSqlTests.cs)
+  [`EventosGrupoLockSqlTests.cs`](../../../src/Almirante.Api.Tests/EventosGrupoLockSqlTests.cs)
   (`PagamentoPutPostEDeleteSimultaneosNoMesmoPasseio_NaoGeramDeadlockNemEstadoIncoerente`),
-  [`LancamentoPagamentoResilienciaSqlTests.cs`](../../../backend/Almirante.Api.Tests/LancamentoPagamentoResilienciaSqlTests.cs)
-  e [`SecurityRegressionTests.cs`](../../../backend/Almirante.Api.Tests/SecurityRegressionTests.cs)
+  [`LancamentoPagamentoResilienciaSqlTests.cs`](../../../src/Almirante.Api.Tests/LancamentoPagamentoResilienciaSqlTests.cs)
+  e [`SecurityRegressionTests.cs`](../../../src/Almirante.Api.Tests/SecurityRegressionTests.cs)
   (`ResetConcluidoNoMeioDoLogin_NaoDeixaSessaoUtilizavel`).
 - Documentação: [`README.md`](../../../README.md#eventos) (parágrafo "Concorrência").
 - Histórico: PR #46 (commit `3d4fe16`) e PR #62 (commit `bab8c84`).

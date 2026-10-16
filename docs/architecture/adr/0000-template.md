@@ -65,8 +65,8 @@ ele existiu. Se nada for encontrado, escreva:
 
 <!--
 Links relativos para os arquivos, com o símbolo relevante no texto. Exemplos:
-- [`Program.cs`](../../../backend/Almirante.Api/Program.cs): `AddJwtBearer`, `OnTokenValidated`.
-- Teste: [`AuthTests.cs`](../../../backend/Almirante.Api.Tests/AuthTests.cs).
+- [`Program.cs`](../../../src/Almirante.Api/Program.cs): `AddJwtBearer`, `OnTokenValidated`.
+- Teste: [`AuthTests.cs`](../../../src/Almirante.Api.Tests/AuthTests.cs).
 - Workflow, migration, documento, commit (hash curto) e PR (#N).
 -->
 

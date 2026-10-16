@@ -15,11 +15,11 @@ Os workflows não usam filtro de caminhos: toda mudança em C#, no Dockerfile ou
 
 ## Dependabot
 
-- **NuGet** em `/backend`: o Dependabot parte de `Almirante.slnx`, atualiza os quatro `.csproj` e também
+- **NuGet** em `/src`: o Dependabot parte de `Almirante.slnx`, atualiza os quatro `.csproj` e também
   `.config/dotnet-tools.json` (ReportGenerator).
 - **GitHub Actions** em `/`: atualiza o SHA pinado **e** o comentário de versão juntos, mantendo a política
   de `scripts/tests/workflows.test.sh` (SHA de 40 caracteres).
-- **Docker** em `/backend/Almirante.Api`: imagens base `dotnet/sdk` e `dotnet/aspnet`, agrupadas.
+- **Docker** em `/src/Almirante.Api`: imagens base `dotnet/sdk` e `dotnet/aspnet`, agrupadas.
 - Minor/patch vêm em **um PR agrupado por ecossistema**; majors vêm em PRs individuais. Majors de pacotes
   acoplados ao runtime (`Microsoft.AspNetCore.*`, `Microsoft.EntityFrameworkCore.*`,
   `Microsoft.Extensions.*`) e das imagens `dotnet/*` são ignorados: trocar de .NET 10 para 11 exige mudar
@@ -32,7 +32,7 @@ Os workflows não usam filtro de caminhos: toda mudança em C#, no Dockerfile ou
 ## CodeQL
 
 - Linguagem `csharp`, suíte `security-extended`.
-- Build **manual** (`dotnet restore`/`dotnet build backend/Almirante.slnx`) com o .NET 10 instalado pelo
+- Build **manual** (`dotnet restore`/`dotnet build src/Almirante.slnx`) com o .NET 10 instalado pelo
   `setup-dotnet`, em vez de `autobuild`: compila exatamente a solução `.slnx` do projeto.
 - Resultados na aba **Security → Code scanning** e como anotações na PR (categoria `/language:csharp`).
 - Só o job `analyze-csharp` recebe `security-events: write` (publicar o resultado); o workflow fica em
@@ -41,7 +41,7 @@ Os workflows não usam filtro de caminhos: toda mudança em C#, no Dockerfile ou
 ## Scan da imagem (Trivy)
 
 ```text
-checkout → docker build (backend/Almirante.Api/Dockerfile, contexto backend/, --pull)
+checkout → docker build (src/Almirante.Api/Dockerfile, contexto src/, --pull)
          → trivy image: relatório completo (JSON) → SARIF HIGH/CRITICAL + Job Summary
          → SBOM CycloneDX da mesma imagem → artifact
          → gate: HIGH/CRITICAL com correção disponível reprova o job

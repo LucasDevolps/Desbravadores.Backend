@@ -283,7 +283,7 @@ public class SqlIdentityRepositoryPolicyTests
     [Fact]
     public void CodigoDaApi_NaoTemUsuarioSaNemSegredoDoSaForaDaPolitica()
     {
-        var api = Path.Combine(RepositoryRoot(), "backend", "Almirante.Api");
+        var api = Path.Combine(RepositoryRoot(), "src", "Almirante.Api");
         foreach (var file in Directory.EnumerateFiles(api, "*.*", SearchOption.AllDirectories)
                      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
                      .Where(f => f.EndsWith(".cs") || f.EndsWith(".json") || f.EndsWith(".http") || f.EndsWith("Dockerfile")))
@@ -300,7 +300,7 @@ public class SqlIdentityRepositoryPolicyTests
     [Fact]
     public void AppHost_NaoRepassaOSaParaAApi_ERodaOBootstrapAntesDela()
     {
-        var text = string.Join('\n', File.ReadAllLines(Path.Combine(RepositoryRoot(), "backend", "Almirante.AppHost", "AppHost.cs"))
+        var text = string.Join('\n', File.ReadAllLines(Path.Combine(RepositoryRoot(), "src", "Almirante.AppHost", "AppHost.cs"))
             .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 
         Assert.DoesNotContain(".WithReference(", text);

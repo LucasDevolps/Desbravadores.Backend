@@ -55,7 +55,7 @@ report() {
   local i=0 relatorios=""
   for arquivo in "${arquivos[@]}"; do
     i=$((i + 1))
-    normalize "$REPO/backend" "$arquivo" "$saida/entradas/$i.cobertura.xml"
+    normalize "$REPO/src" "$arquivo" "$saida/entradas/$i.cobertura.xml"
     relatorios+="${relatorios:+;}$saida/entradas/$i.cobertura.xml"
     echo "entrada $i: $arquivo"
   done

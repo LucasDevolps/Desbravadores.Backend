@@ -13,11 +13,11 @@ build-and-test (Windows)          sqlserver-integration (Linux + SQL Server 2022
                     \                   /
                      coverage (Linux)
                        normaliza caminhos → ReportGenerator → HTML + Cobertura + resumo
-                       quality gate contra backend/coverage-baseline.json
+                       quality gate contra src/coverage-baseline.json
                        → Job Summary + artifact coverage-<sha>
 ```
 
-1. **Coleta:** os dois jobs de teste rodam `dotnet test` com `--settings backend/coverage.runsettings
+1. **Coleta:** os dois jobs de teste rodam `dotnet test` com `--settings src/coverage.runsettings
    --collect "XPlat Code Coverage"` (`coverlet.collector`, já referenciado pelo projeto de testes). A
    coleta não muda os filtros nem os testes: o `sqlserver-integration` continua rodando todos os
    `Category=RequiresSqlServer` contra o SQL Server descartável, com senha aleatória e porta em loopback.
@@ -34,7 +34,7 @@ build-and-test (Windows)          sqlserver-integration (Linux + SQL Server 2022
      `.config/dotnet-tools.json` (`dotnet tool restore`, sem versão flutuante). Linhas e branches são a
      **união** das duas suítes: uma linha coberta pelas duas conta uma vez.
 4. **Quality gate:** `bash scripts/coverage.sh gate` compara o Cobertura consolidado com
-   `backend/coverage-baseline.json`, escreve a tabela no Job Summary e falha o job se houver regressão.
+   `src/coverage-baseline.json`, escreve a tabela no Job Summary e falha o job se houver regressão.
 5. **Relatório:** o artifact `coverage-<sha>` (14 dias, como os demais) é publicado mesmo quando o gate
    reprova.
 
@@ -65,7 +65,7 @@ nesse processo filho não soma cobertura — é uma subestimação, nunca uma in
 ### Exclusões
 
 Ficam fora da métrica **apenas** arquivos gerados por ferramenta, declarados em
-`backend/coverage.runsettings` (`ExcludeByFile`):
+`src/coverage.runsettings` (`ExcludeByFile`):
 
 | Padrão | O que é | Por quê |
 |---|---|---|
@@ -93,7 +93,7 @@ Detalhe: suíte sem dependências externas sozinha = 1927/4113 linhas; suíte SQ
 3514/4113. O consolidado é a união das duas.
 
 Este é um **baseline observado**, não uma meta escolhida: os números são truncados (nunca arredondados
-para cima) do relatório consolidado real e ficam em `backend/coverage-baseline.json`. A medição foi
+para cima) do relatório consolidado real e ficam em `src/coverage-baseline.json`. A medição foi
 reproduzida localmente com o mesmo fluxo do CI (suíte unitária no Windows; suíte SQL Server em Linux, num
 contêiner .NET 10 ao lado de um SQL Server 2022 descartável) e conferida contra o Job Summary do CI.
 
@@ -120,7 +120,7 @@ aprova se  cobertos × 10000 ≥ mínimo_em_centésimos × válidos      (linhas
 O baseline só muda por PR, com os números do **Job Summary do CI** desse PR (nunca inventados):
 
 - **Subir:** quando a cobertura aumentar de forma consistente, copie os valores atuais (truncados, 2 casas)
-  e as contagens para `backend/coverage-baseline.json`, atualize `measuredAtCommit`/`measuredAt` e a
+  e as contagens para `src/coverage-baseline.json`, atualize `measuredAtCommit`/`measuredAt` e a
   seção [Baseline atual](#baseline-atual). Isso evita que uma melhora seja perdida depois dentro da
   tolerância.
 - **Descer:** só com justificativa explícita no PR (por exemplo, remoção de código bem testado que
@@ -135,21 +135,21 @@ Requer .NET 10 SDK e Bash. Os diretórios `TestResults/` e `coverage-report/` s�
 
 ```bash
 dotnet tool restore
-dotnet restore backend/Almirante.slnx
-dotnet build backend/Almirante.slnx --configuration Release --no-restore
+dotnet restore src/Almirante.slnx
+dotnet build src/Almirante.slnx --configuration Release --no-restore
 
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build \
+dotnet test src/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build \
   --filter "Category!=RequiresDocker&Category!=RequiresSqlServer" \
-  --settings backend/coverage.runsettings --collect "XPlat Code Coverage" --results-directory TestResults/unit
+  --settings src/coverage.runsettings --collect "XPlat Code Coverage" --results-directory TestResults/unit
 
 # Só contra um SQL Server descartável/dedicado a testes — ver "Testes" no README e o CONTRIBUTING.
 ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha-descartável>;Encrypt=True;TrustServerCertificate=True" \
-dotnet test backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build \
+dotnet test src/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration Release --no-build \
   --filter "Category=RequiresSqlServer" \
-  --settings backend/coverage.runsettings --collect "XPlat Code Coverage" --results-directory TestResults/sqlserver
+  --settings src/coverage.runsettings --collect "XPlat Code Coverage" --results-directory TestResults/sqlserver
 
 bash scripts/coverage.sh report TestResults coverage-report
-bash scripts/coverage.sh gate coverage-report/Cobertura.xml backend/coverage-baseline.json
+bash scripts/coverage.sh gate coverage-report/Cobertura.xml src/coverage-baseline.json
 ```
 
 Abra `coverage-report/index.html` no navegador. Sem a suíte SQL Server, o número local fica bem abaixo do
@@ -171,5 +171,5 @@ no workflow é verificada por `bash scripts/tests/workflows.test.sh`.
   propriedades (`net10.0`, `Nullable`, `ImplicitUsings`) e usam SDKs diferentes (Web, Aspire AppHost,
   padrão); centralizar isso não traz ganho para a cobertura e mudaria a política de build de todos os
   projetos, inclusive o AppHost. A configuração de cobertura já está centralizada no
-  `backend/coverage.runsettings`. `TreatWarningsAsErrors` e analyzers ficam para uma issue própria, se
+  `src/coverage.runsettings`. `TreatWarningsAsErrors` e analyzers ficam para uma issue própria, se
   desejado.

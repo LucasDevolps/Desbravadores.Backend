@@ -1,8 +1,8 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Sem valor padrão versionado: defina fora do Git antes de executar, por exemplo
-//   dotnet user-secrets set "Parameters:sql-password" "<senha forte do sa>" --project backend/Almirante.AppHost
-//   dotnet user-secrets set "Parameters:sql-admin-password" "<16+ caracteres, ver .env.example>" --project backend/Almirante.AppHost
+//   dotnet user-secrets set "Parameters:sql-password" "<senha forte do sa>" --project src/Almirante.AppHost
+//   dotnet user-secrets set "Parameters:sql-admin-password" "<16+ caracteres, ver .env.example>" --project src/Almirante.AppHost
 // ou as variáveis de ambiente Parameters__sql-password / Parameters__sql-admin-password. Se o volume
 // almirante-sqlserver-data já existir, use a mesma senha do sa com que ele foi criado (ou recrie o volume).
 //
