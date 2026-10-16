@@ -1,13 +1,16 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# Arquitetura da imagem (definida pelo BuildKit): o publish leva só o binário nativo do Skia dela (issue #116), e não os
+# de todas as plataformas que o pacote traz (centenas de MB a mais na imagem).
+ARG TARGETARCH
 WORKDIR /src
 
 COPY Almirante.Api/Almirante.Api.csproj Almirante.Api/
 COPY Almirante.ServiceDefaults/Almirante.ServiceDefaults.csproj Almirante.ServiceDefaults/
-RUN dotnet restore Almirante.Api/Almirante.Api.csproj
+RUN dotnet restore Almirante.Api/Almirante.Api.csproj -a "$TARGETARCH"
 
 COPY Almirante.Api/ Almirante.Api/
 COPY Almirante.ServiceDefaults/ Almirante.ServiceDefaults/
-RUN dotnet publish Almirante.Api/Almirante.Api.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish Almirante.Api/Almirante.Api.csproj -c Release -a "$TARGETARCH" --self-contained false -o /app/publish --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
@@ -28,6 +31,12 @@ RUN apt-get update \
 RUN mkdir -p /var/lib/almirante/dataprotection \
     && chown app:app /var/lib/almirante/dataprotection \
     && chmod 700 /var/lib/almirante/dataprotection
+
+# Fotos de usuários (Media__Storage__Path no compose.yaml, issue #116): mesmo motivo do diretório acima. Só o usuário
+# "app" entra na pasta; a API grava cada foto com permissão 0600 (nunca executável).
+RUN mkdir -p /var/lib/almirante/fotos \
+    && chown app:app /var/lib/almirante/fotos \
+    && chmod 700 /var/lib/almirante/fotos
 
 USER app
 
