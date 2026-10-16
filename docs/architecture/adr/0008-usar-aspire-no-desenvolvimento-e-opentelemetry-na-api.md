@@ -17,7 +17,7 @@ telemetria.
 ## Decisão
 
 **Almirante.AppHost é usado só para desenvolvimento local.** `dotnet run --project
-backend/Almirante.AppHost`:
+src/Almirante.AppHost`:
 
 - inicia um container SQL Server (`sql`) com `ContainerLifetime.Persistent` e o volume
   `almirante-sqlserver-data`;
@@ -54,7 +54,7 @@ definido, o health check do componente é desligado e substituído por `DbConnec
 
 - Pelo AppHost: inferido, o Aspire define `OTEL_EXPORTER_OTLP_ENDPOINT` na API apontando para o seu
   dashboard. O repositório configura o endpoint OTLP do dashboard em
-  `backend/Almirante.AppHost/Properties/launchSettings.json` (`ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL`).
+  `src/Almirante.AppHost/Properties/launchSettings.json` (`ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL`).
 - No Compose e no IIS: nenhuma configuração versionada define `OTEL_EXPORTER_OTLP_ENDPOINT`. Os logs
   vão para a saída padrão do processo (`docker compose logs`, ou log stdout do ANCM no IIS, habilitado
   pelo workflow).
@@ -99,19 +99,19 @@ Alternativas históricas não foram encontradas no repositório.
 
 ## Evidências no repositório
 
-- [`AppHost.cs`](../../../backend/Almirante.AppHost/AppHost.cs),
-  [`Almirante.AppHost.csproj`](../../../backend/Almirante.AppHost/Almirante.AppHost.csproj) e
-  [`launchSettings.json`](../../../backend/Almirante.AppHost/Properties/launchSettings.json).
-- [`Extensions.cs`](../../../backend/Almirante.ServiceDefaults/Extensions.cs): `AddServiceDefaults`,
+- [`AppHost.cs`](../../../src/Almirante.AppHost/AppHost.cs),
+  [`Almirante.AppHost.csproj`](../../../src/Almirante.AppHost/Almirante.AppHost.csproj) e
+  [`launchSettings.json`](../../../src/Almirante.AppHost/Properties/launchSettings.json).
+- [`Extensions.cs`](../../../src/Almirante.ServiceDefaults/Extensions.cs): `AddServiceDefaults`,
   `ConfigureOpenTelemetry`, `AddOpenTelemetryExporters`, `MapDefaultEndpoints`.
-- [`Almirante.ServiceDefaults.csproj`](../../../backend/Almirante.ServiceDefaults/Almirante.ServiceDefaults.csproj):
+- [`Almirante.ServiceDefaults.csproj`](../../../src/Almirante.ServiceDefaults/Almirante.ServiceDefaults.csproj):
   pacotes OpenTelemetry, `Microsoft.Extensions.ServiceDiscovery` e `Microsoft.Extensions.Http.Resilience`.
-- [`Program.cs`](../../../backend/Almirante.Api/Program.cs): `AddServiceDefaults`,
+- [`Program.cs`](../../../src/Almirante.Api/Program.cs): `AddServiceDefaults`,
   `AddSqlServerDbContext`, `DbConnectivityHealthCheck`, `MapDefaultEndpoints`.
-- [`DbConnectivityHealthCheck.cs`](../../../backend/Almirante.Api/Infrastructure/DbConnectivityHealthCheck.cs).
-- [`EventosSqlSupport.cs`](../../../backend/Almirante.Api.Tests/EventosSqlSupport.cs): retry equivalente
+- [`DbConnectivityHealthCheck.cs`](../../../src/Almirante.Api/Infrastructure/DbConnectivityHealthCheck.cs).
+- [`EventosSqlSupport.cs`](../../../src/Almirante.Api.Tests/EventosSqlSupport.cs): retry equivalente
   ao do Aspire nos testes.
-- [`Dockerfile`](../../../backend/Almirante.Api/Dockerfile), [`compose.yaml`](../../../compose.yaml)
+- [`Dockerfile`](../../../src/Almirante.Api/Dockerfile), [`compose.yaml`](../../../compose.yaml)
   (healthchecks) e [`backend-deploy.yml`](../../../.github/workflows/backend-deploy.yml).
 - Documentação: [`README.md`](../../../README.md#executar-com-net-aspire) e
   [`README.md`](../../../README.md#observabilidade-e-saúde).

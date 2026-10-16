@@ -64,7 +64,7 @@ O backend está em fase de **MVP funcional** e possui:
 │       ├── codeql.yml              # análise estática CodeQL (C#)
 │       ├── container-security.yml  # scan da imagem da API (Trivy) e SBOM CycloneDX
 │       └── release.yml             # release: tag SemVer → imagem no GHCR + GitHub Release
-├── backend/
+├── src/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
 │   ├── Almirante.Api.Tests/        # testes de integração
 │   ├── Almirante.AppHost/          # orquestração local com Aspire
@@ -277,7 +277,7 @@ local — a proteção de rate limit só se aplica aos dois caminhos de deploy (
 Execute o AppHost:
 
 ```bash
-dotnet run --project backend/Almirante.AppHost
+dotnet run --project src/Almirante.AppHost
 ```
 
 O AppHost:
@@ -291,11 +291,11 @@ O AppHost:
 Nenhuma credencial fica versionada. Antes da primeira execução, defina os segredos locais fora do Git:
 
 ```bash
-dotnet user-secrets set "Parameters:sql-password" "<senha do sa do SQL Server>" --project backend/Almirante.AppHost
-dotnet user-secrets set "Parameters:sql-admin-password" "<senha administrativa dedicada, 16+ caracteres>" --project backend/Almirante.AppHost
-dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project backend/Almirante.Api
-dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project backend/Almirante.Api
-dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project backend/Almirante.Api
+dotnet user-secrets set "Parameters:sql-password" "<senha do sa do SQL Server>" --project src/Almirante.AppHost
+dotnet user-secrets set "Parameters:sql-admin-password" "<senha administrativa dedicada, 16+ caracteres>" --project src/Almirante.AppHost
+dotnet user-secrets set "Jwt:ActiveKeyId" "dev" --project src/Almirante.Api
+dotnet user-secrets set "Jwt:Keys:dev" "<openssl rand -base64 32>" --project src/Almirante.Api
+dotnet user-secrets set "SeedAdmin:Senha" "<senha forte>" --project src/Almirante.Api
 ```
 
 O e-mail do administrador inicial é `admin@local.dev`. Se o volume `almirante-sqlserver-data` já existir, use a senha do SQL Server com que ele foi criado.
@@ -617,7 +617,7 @@ antiga e nova da API simultaneamente contra o schema convertido.
 ## Testes
 
 ```bash
-dotnet test backend/Almirante.slnx
+dotnet test src/Almirante.slnx
 ```
 
 A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
@@ -639,7 +639,7 @@ Sem `ALMIRANTE_TEST_SQLSERVER`, todos os testes `RequiresSqlServer` falham de pr
 descartável em contêiner e a conexão `sa` no formato do CI:
 
 ```bash
-ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx
+ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx
 ```
 
 Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
@@ -650,7 +650,7 @@ bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o C
 A API sob teste nunca usa essa conexão. Exemplo com Windows Auth:
 
 ```bash
-ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test backend/Almirante.slnx --filter Category=RequiresSqlServer
+ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx --filter Category=RequiresSqlServer
 ```
 
 ### Cenários manuais do rate limit do Nginx

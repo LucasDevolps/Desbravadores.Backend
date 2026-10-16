@@ -95,7 +95,7 @@ services:
 
   api:
     build:
-      context: ./backend
+      context: ./src
       dockerfile: Almirante.Api/Dockerfile
     container_name: almirante-api
     depends_on:

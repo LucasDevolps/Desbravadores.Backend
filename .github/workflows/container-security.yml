@@ -44,9 +44,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # Mesmo Dockerfile e contexto (backend/) do deploy; --pull pega o patch mais recente das imagens base.
+      # Mesmo Dockerfile e contexto (src/) do deploy; --pull pega o patch mais recente das imagens base.
       - name: Build da imagem da API
-        run: docker build --pull -f backend/Almirante.Api/Dockerfile -t "$IMAGE" backend
+        run: docker build --pull -f src/Almirante.Api/Dockerfile -t "$IMAGE" src
 
       - name: Instalar Trivy (SHA256 conferido)
         run: |

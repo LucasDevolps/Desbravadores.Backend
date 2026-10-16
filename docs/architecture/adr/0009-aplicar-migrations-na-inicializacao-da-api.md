@@ -8,7 +8,7 @@ issue #69. Não estava na lista inicial da issue, mas está implementada e docum
 
 ## Contexto
 
-O schema do banco evolui por migrations do EF Core em `backend/Almirante.Api/Data/Migrations`. Um push
+O schema do banco evolui por migrations do EF Core em `src/Almirante.Api/Data/Migrations`. Um push
 em `develop` que altere o backend dispara o deploy automático (`backend-deploy.yml`), e nenhum passo
 do workflow aplica migrations separadamente. O `CONTRIBUTING.md` registra: "Migrations são aplicadas
 automaticamente na inicialização da API, inclusive no deploy".
@@ -74,24 +74,24 @@ Alternativas históricas não foram encontradas no repositório.
 
 ## Evidências no repositório
 
-- [`Program.cs`](../../../backend/Almirante.Api/Program.cs): `DbCredentialManager.InitializeAsync` e
+- [`Program.cs`](../../../src/Almirante.Api/Program.cs): `DbCredentialManager.InitializeAsync` e
   `DbSeeder.SeedAsync` antes de `app.Run()`.
-- [`DbSeeder.cs`](../../../backend/Almirante.Api/Data/DbSeeder.cs): `SeedAsync`,
+- [`DbSeeder.cs`](../../../src/Almirante.Api/Data/DbSeeder.cs): `SeedAsync`,
   `MigrateWithRetryAsync`, `SeedCargosAsync`, `SeedAdminAsync`, `SeedLancamentosAsync`.
-- [`DbCredentialManager.cs`](../../../backend/Almirante.Api/Infrastructure/DbCredentialManager.cs):
+- [`DbCredentialManager.cs`](../../../src/Almirante.Api/Infrastructure/DbCredentialManager.cs):
   `InitializeAsync`.
-- [`AlmiranteDbContextFactory.cs`](../../../backend/Almirante.Api/Data/AlmiranteDbContextFactory.cs).
-- Migrations: [`backend/Almirante.Api/Data/Migrations`](../../../backend/Almirante.Api/Data/Migrations).
+- [`AlmiranteDbContextFactory.cs`](../../../src/Almirante.Api/Data/AlmiranteDbContextFactory.cs).
+- Migrations: [`src/Almirante.Api/Data/Migrations`](../../../src/Almirante.Api/Data/Migrations).
 - [`backend-deploy.yml`](../../../.github/workflows/backend-deploy.yml): passos "Aguardar API ficar
   saudável" e "Publicação concluída — verificar manualmente".
-- Testes: [`MigrationsTests.cs`](../../../backend/Almirante.Api.Tests/MigrationsTests.cs)
+- Testes: [`MigrationsTests.cs`](../../../src/Almirante.Api.Tests/MigrationsTests.cs)
   (`TodasAsMigrationsDoAssemblySaoDescobertasPeloEf`, `SnapshotCorrespondeAoModelo`),
-  [`SqlServerIntegrationTests.cs`](../../../backend/Almirante.Api.Tests/SqlServerIntegrationTests.cs)
+  [`SqlServerIntegrationTests.cs`](../../../src/Almirante.Api.Tests/SqlServerIntegrationTests.cs)
   (`Startup_AplicaTodasAsMigrations_ESchemaFunciona`),
-  [`SqlIdentityModelTests.cs`](../../../backend/Almirante.Api.Tests/SqlIdentityModelTests.cs)
+  [`SqlIdentityModelTests.cs`](../../../src/Almirante.Api.Tests/SqlIdentityModelTests.cs)
   (`Migrations_ExecutamComAdministradorDedicado_SemDbOwnerNemSysadmin`),
-  [`EventosMigrationTests.cs`](../../../backend/Almirante.Api.Tests/EventosMigrationTests.cs) e
-  [`LancamentosEnumMigrationTests.cs`](../../../backend/Almirante.Api.Tests/LancamentosEnumMigrationTests.cs).
+  [`EventosMigrationTests.cs`](../../../src/Almirante.Api.Tests/EventosMigrationTests.cs) e
+  [`LancamentosEnumMigrationTests.cs`](../../../src/Almirante.Api.Tests/LancamentosEnumMigrationTests.cs).
 - Documentação: [`CONTRIBUTING.md`](../../../CONTRIBUTING.md#mudanças-de-banco-e-migrations) e
   [`README.md`](../../../README.md#banco-de-dados-e-migrations).
 

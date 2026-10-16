@@ -95,13 +95,13 @@ obrigatório do CI.
 
 - [`backend-ci.yml`](../../../.github/workflows/backend-ci.yml): jobs `build-and-test`,
   `sqlserver-integration` e `coverage`.
-- [`Almirante.Api.Tests.csproj`](../../../backend/Almirante.Api.Tests/Almirante.Api.Tests.csproj):
+- [`Almirante.Api.Tests.csproj`](../../../src/Almirante.Api.Tests/Almirante.Api.Tests.csproj):
   pacotes de teste e cópia de `docs/sql/*.sql` para a saída.
-- Harness: [`SqlServerIntegrationTests.cs`](../../../backend/Almirante.Api.Tests/SqlServerIntegrationTests.cs)
-  (`SqlServerApiFactory`), [`SqlIdentityEnvironment.cs`](../../../backend/Almirante.Api.Tests/SqlIdentityEnvironment.cs),
-  [`ApiProcess.cs`](../../../backend/Almirante.Api.Tests/ApiProcess.cs) e
-  [`AlmiranteApiFactory.cs`](../../../backend/Almirante.Api.Tests/AlmiranteApiFactory.cs) (InMemory).
-- [`EventosService.cs`](../../../backend/Almirante.Api/Services/EventosService.cs): `ExecutarAsync`
+- Harness: [`SqlServerIntegrationTests.cs`](../../../src/Almirante.Api.Tests/SqlServerIntegrationTests.cs)
+  (`SqlServerApiFactory`), [`SqlIdentityEnvironment.cs`](../../../src/Almirante.Api.Tests/SqlIdentityEnvironment.cs),
+  [`ApiProcess.cs`](../../../src/Almirante.Api.Tests/ApiProcess.cs) e
+  [`AlmiranteApiFactory.cs`](../../../src/Almirante.Api.Tests/AlmiranteApiFactory.cs) (InMemory).
+- [`EventosService.cs`](../../../src/Almirante.Api/Services/EventosService.cs): `ExecutarAsync`
   recusa provider não relacional.
 - [`scripts/tests/workflows.test.sh`](../../../scripts/tests/workflows.test.sh): política de runners.
 - Documentação: [`CONTRIBUTING.md`](../../../CONTRIBUTING.md#testes-e-ci),

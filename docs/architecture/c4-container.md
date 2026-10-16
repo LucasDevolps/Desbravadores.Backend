@@ -13,12 +13,12 @@ que é deploy com o que é desenvolvimento:
 | --- | --- | --- |
 | [Docker Compose](#topologia-1-docker-compose) | deploy Linux (`deploy-linux`) e execução local | [`compose.yaml`](../../compose.yaml), [`compose.https.yaml`](../../compose.https.yaml), [`compose.tls.yaml`](../../compose.tls.yaml) |
 | [Windows/IIS](#topologia-2-windowsiis) | deploy Windows (`deploy-windows`), acessível só pela própria máquina | [`backend-deploy.yml`](../../.github/workflows/backend-deploy.yml), [`nginx/nginx.windows.conf`](../../nginx/nginx.windows.conf) |
-| [.NET Aspire](#topologia-3-net-aspire-desenvolvimento) | somente desenvolvimento local | [`AppHost.cs`](../../backend/Almirante.AppHost/AppHost.cs) |
+| [.NET Aspire](#topologia-3-net-aspire-desenvolvimento) | somente desenvolvimento local | [`AppHost.cs`](../../src/Almirante.AppHost/AppHost.cs) |
 
 ## Projetos .NET e containers
 
 Projeto .NET não é sinônimo de container. A solução
-[`Almirante.slnx`](../../backend/Almirante.slnx) tem quatro projetos:
+[`Almirante.slnx`](../../src/Almirante.slnx) tem quatro projetos:
 
 | Projeto | O que é em runtime |
 | --- | --- |
@@ -79,18 +79,18 @@ colchetes. Linha contínua é uso durante a operação normal. Linha tracejada �
 | Container | Tecnologia | Responsabilidade | Exposição | Evidência |
 | --- | --- | --- | --- | --- |
 | `nginx` | `nginx:1.27-alpine` | Único ponto de entrada HTTP. Termina TLS nos overlays, limita login e refresh por IP, repassa o IP e o esquema originais e, no modo TLS, aceita só o host canônico. | Porta `API_HOST_PORT` (padrão 8090) para a 80. `compose.https.yaml` publica `127.0.0.1:8443` para a 443. `compose.tls.yaml` publica 443 e faz a 80 só redirecionar. | [`compose.yaml`](../../compose.yaml), [`nginx/`](../../nginx), [ADR-0002](adr/0002-usar-nginx-como-reverse-proxy-e-ponto-de-entrada.md) |
-| `api` | ASP.NET Core em .NET 10 ([`Dockerfile`](../../backend/Almirante.Api/Dockerfile)), usuário não-root `app` | API REST/JSON: autenticação e sessões, RBAC, usuários, cargos, lançamentos e eventos. Aplica migrations e rotaciona a credencial SQL de runtime. | Só `expose: 8080` na rede interna. Não publica porta no host. | [`compose.yaml`](../../compose.yaml), [`Program.cs`](../../backend/Almirante.Api/Program.cs) |
+| `api` | ASP.NET Core em .NET 10 ([`Dockerfile`](../../src/Almirante.Api/Dockerfile)), usuário não-root `app` | API REST/JSON: autenticação e sessões, RBAC, usuários, cargos, lançamentos e eventos. Aplica migrations e rotaciona a credencial SQL de runtime. | Só `expose: 8080` na rede interna. Não publica porta no host. | [`compose.yaml`](../../compose.yaml), [`Program.cs`](../../src/Almirante.Api/Program.cs) |
 | `sqlserver` | `mcr.microsoft.com/mssql/server:2022-latest` (edição Developer) | Sistema de registro: todas as tabelas da aplicação, triggers de auditoria e histórico de migrations. | `127.0.0.1:14330` (padrão), apenas para ferramentas locais. A API usa `sqlserver:1433` pela rede interna. | [`compose.yaml`](../../compose.yaml) |
 | `sql-bootstrap` | Mesma imagem do SQL Server, usando só o `sqlcmd` | Cria ou atualiza o banco e as identidades SQL da API e sai. É o único serviço, além do `sqlserver`, que conhece a senha do `sa`. | Nenhuma. | [`compose.yaml`](../../compose.yaml), [`scripts/sql-bootstrap.sh`](../../scripts/sql-bootstrap.sh), [ADR-0005](adr/0005-separar-identidades-sql-e-rotacionar-credenciais.md) |
-| `almirante-dataprotection` | Volume Docker | Chaves do Data Protection usadas pelo antiforgery. Sobrevivem à recriação do container da API. | Montado em `/var/lib/almirante/dataprotection` na API. | [`compose.yaml`](../../compose.yaml), [`Dockerfile`](../../backend/Almirante.Api/Dockerfile) |
+| `almirante-dataprotection` | Volume Docker | Chaves do Data Protection usadas pelo antiforgery. Sobrevivem à recriação do container da API. | Montado em `/var/lib/almirante/dataprotection` na API. | [`compose.yaml`](../../compose.yaml), [`Dockerfile`](../../src/Almirante.Api/Dockerfile) |
 
 ### Relações
 
 | De | Para | Protocolo e conteúdo | Evidência |
 | --- | --- | --- | --- |
 | Cliente | `nginx` | HTTP ou HTTPS. Autenticação exige HTTPS (cookies `Secure`). | [`compose.yaml`](../../compose.yaml), [`docs/local-login.md`](../local-login.md) |
-| `nginx` | `api` | HTTP para `api:8080`, com `Host`, `X-Real-IP`, `X-Forwarded-For` e `X-Forwarded-Proto`. A API só confia nesses headers vindos de `API_TRUSTED_PROXY_CIDR`. | [`nginx/nginx.conf`](../../nginx/nginx.conf), `ForwardedHeadersOptions` em [`Program.cs`](../../backend/Almirante.Api/Program.cs) |
-| `api` | `sqlserver` | TDS com `Encrypt=True`. A identidade de runtime é usada nas requisições; a administrativa, no startup. `TrustServerCertificate` vem de `SQL_TRUST_SERVER_CERTIFICATE` (padrão `False`); o valor `True` é recusado em Production e com `Security:RequireTrustedSqlServerCertificate=true`, padrão do `compose.tls.yaml`. | `ConnectionStrings__*` em [`compose.yaml`](../../compose.yaml), [`SqlServerConnectionSecurityValidator.cs`](../../backend/Almirante.Api/Infrastructure/SqlServerConnectionSecurityValidator.cs) |
+| `nginx` | `api` | HTTP para `api:8080`, com `Host`, `X-Real-IP`, `X-Forwarded-For` e `X-Forwarded-Proto`. A API só confia nesses headers vindos de `API_TRUSTED_PROXY_CIDR`. | [`nginx/nginx.conf`](../../nginx/nginx.conf), `ForwardedHeadersOptions` em [`Program.cs`](../../src/Almirante.Api/Program.cs) |
+| `api` | `sqlserver` | TDS com `Encrypt=True`. A identidade de runtime é usada nas requisições; a administrativa, no startup. `TrustServerCertificate` vem de `SQL_TRUST_SERVER_CERTIFICATE` (padrão `False`); o valor `True` é recusado em Production e com `Security:RequireTrustedSqlServerCertificate=true`, padrão do `compose.tls.yaml`. | `ConnectionStrings__*` em [`compose.yaml`](../../compose.yaml), [`SqlServerConnectionSecurityValidator.cs`](../../src/Almirante.Api/Infrastructure/SqlServerConnectionSecurityValidator.cs) |
 | `api` | `almirante-dataprotection` | Leitura e escrita das chaves em disco. | `DataProtection__KeysPath` em [`compose.yaml`](../../compose.yaml) |
 | `sql-bootstrap` | `sqlserver` | `sqlcmd` como `sa`, com senha por variável de ambiente, executando [`criar-usuario-admin-app.sql`](../sql/criar-usuario-admin-app.sql). | [`scripts/sql-bootstrap.sh`](../../scripts/sql-bootstrap.sh) |
 | Operador | `sqlserver` | Ferramentas SQL pela porta publicada só em loopback. Para acesso remoto, o `compose.yaml` recomenda túnel SSH. | comentário do serviço `sqlserver` em [`compose.yaml`](../../compose.yaml) |
@@ -163,7 +163,7 @@ flowchart LR
 
 ## Topologia 3: .NET Aspire (desenvolvimento)
 
-`dotnet run --project backend/Almirante.AppHost` sobe um ambiente local completo. Esta topologia não é
+`dotnet run --project src/Almirante.AppHost` sobe um ambiente local completo. Esta topologia não é
 usada em nenhum deploy ([ADR-0008](adr/0008-usar-aspire-no-desenvolvimento-e-opentelemetry-na-api.md)).
 
 ```mermaid
@@ -204,7 +204,7 @@ flowchart TB
 - Não há nginx: rate limit de borda, TLS do proxy e forwarded headers não são exercitados.
 - A seta OTLP é inferida. O `ServiceDefaults` só exporta quando `OTEL_EXPORTER_OTLP_ENDPOINT` existe, e
   o AppHost configura o endpoint OTLP do dashboard em
-  [`launchSettings.json`](../../backend/Almirante.AppHost/Properties/launchSettings.json). A injeção
+  [`launchSettings.json`](../../src/Almirante.AppHost/Properties/launchSettings.json). A injeção
   dessa variável na API é comportamento padrão do Aspire, não código do repositório.
 - O volume `almirante-sqlserver-data` tem o mesmo nome usado pelo Compose.
 
@@ -227,7 +227,7 @@ não aparece no `compose.yaml` nem no `.env.example`.
 
 ## Inicialização da API
 
-Sequência em [`Program.cs`](../../backend/Almirante.Api/Program.cs), relevante para deploy e operação:
+Sequência em [`Program.cs`](../../src/Almirante.Api/Program.cs), relevante para deploy e operação:
 
 1. Valida as opções de startup antes de acessar o banco, entre elas as chaves JWT, a política TLS do
    SQL Server e a política de identidades SQL. Qualquer falha impede a inicialização.

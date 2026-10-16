@@ -83,14 +83,14 @@ public static class AdminPasswordResetCli
         }
     }
 
-    // Entrada de linha de comando: `dotnet run --project backend/Almirante.Api -- reset-admin-password <email>`.
+    // Entrada de linha de comando: `dotnet run --project src/Almirante.Api -- reset-admin-password <email>`.
     // Roda antes do host normal subir (ver Program.cs) e nunca aceita a senha como argumento —
     // só via prompt interativo sem eco, para não sobrar em histórico de shell/log de processo.
     public static async Task<int> RunAsync(IServiceProvider services, string[] args, string? connectionStringOverride = null, CancellationToken cancellationToken = default)
     {
         if (args.Length < 2 || string.IsNullOrWhiteSpace(args[1]))
         {
-            Console.Error.WriteLine($"Uso: dotnet run --project backend/Almirante.Api -- {CommandName} <email>");
+            Console.Error.WriteLine($"Uso: dotnet run --project src/Almirante.Api -- {CommandName} <email>");
             return 1;
         }
 

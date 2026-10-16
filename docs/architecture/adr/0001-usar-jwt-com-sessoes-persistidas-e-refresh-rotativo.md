@@ -126,31 +126,31 @@ Outras alternativas avaliadas não foram encontradas no repositório.
 
 ## Evidências no repositório
 
-- [`Program.cs`](../../../backend/Almirante.Api/Program.cs): `AddJwtBearer`,
+- [`Program.cs`](../../../src/Almirante.Api/Program.cs): `AddJwtBearer`,
   `TokenValidationParameters`, `OnTokenValidated`, `AddAntiforgery`, `AddDataProtection`,
   `AddHostedService<AuthSessionCleanupService>`.
-- [`AuthController.cs`](../../../backend/Almirante.Api/Controllers/AuthController.cs): rotas `csrf`,
+- [`AuthController.cs`](../../../src/Almirante.Api/Controllers/AuthController.cs): rotas `csrf`,
   `login`, `refresh`, `logout` e `Me`, e as opções do cookie de refresh.
-- [`AuthService.cs`](../../../backend/Almirante.Api/Services/AuthService.cs): `LoginAsync`,
+- [`AuthService.cs`](../../../src/Almirante.Api/Services/AuthService.cs): `LoginAsync`,
   `RefreshAsync`, `LogoutAsync`.
-- [`JwtTokenService.cs`](../../../backend/Almirante.Api/Security/JwtTokenService.cs): `GenerateToken`,
+- [`JwtTokenService.cs`](../../../src/Almirante.Api/Security/JwtTokenService.cs): `GenerateToken`,
   `JwtKeySet`, `JwtOptionsValidator`.
-- [`JwtOptions.cs`](../../../backend/Almirante.Api/Options/JwtOptions.cs): limites de duração.
-- Entidades [`AuthSession.cs`](../../../backend/Almirante.Api/Entities/AuthSession.cs),
-  [`RefreshToken.cs`](../../../backend/Almirante.Api/Entities/RefreshToken.cs) e
-  [`Usuario.cs`](../../../backend/Almirante.Api/Entities/Usuario.cs) (`SecurityVersion`).
-- Mapeamento em [`AlmiranteDbContext.cs`](../../../backend/Almirante.Api/Data/AlmiranteDbContext.cs) e
-  migration [`20260917000000_AddAuthenticationSessions.cs`](../../../backend/Almirante.Api/Data/Migrations/20260917000000_AddAuthenticationSessions.cs).
-- [`AuthSessionCleanupService.cs`](../../../backend/Almirante.Api/Services/AuthSessionCleanupService.cs).
-- [`AdminPasswordResetCli.cs`](../../../backend/Almirante.Api/Cli/AdminPasswordResetCli.cs): revogação
+- [`JwtOptions.cs`](../../../src/Almirante.Api/Options/JwtOptions.cs): limites de duração.
+- Entidades [`AuthSession.cs`](../../../src/Almirante.Api/Entities/AuthSession.cs),
+  [`RefreshToken.cs`](../../../src/Almirante.Api/Entities/RefreshToken.cs) e
+  [`Usuario.cs`](../../../src/Almirante.Api/Entities/Usuario.cs) (`SecurityVersion`).
+- Mapeamento em [`AlmiranteDbContext.cs`](../../../src/Almirante.Api/Data/AlmiranteDbContext.cs) e
+  migration [`20260917000000_AddAuthenticationSessions.cs`](../../../src/Almirante.Api/Data/Migrations/20260917000000_AddAuthenticationSessions.cs).
+- [`AuthSessionCleanupService.cs`](../../../src/Almirante.Api/Services/AuthSessionCleanupService.cs).
+- [`AdminPasswordResetCli.cs`](../../../src/Almirante.Api/Cli/AdminPasswordResetCli.cs): revogação
   das sessões no reset.
-- Testes: [`AuthTests.cs`](../../../backend/Almirante.Api.Tests/AuthTests.cs)
+- Testes: [`AuthTests.cs`](../../../src/Almirante.Api.Tests/AuthTests.cs)
   (`Logout_RevogaSessao_EBearerAnteriorDeixaDeAutorizar`,
   `Login_ERefresh_ExpoemSomenteEnvelopeToken_EJwtMinimo`),
-  [`SecurityRegressionTests.cs`](../../../backend/Almirante.Api.Tests/SecurityRegressionTests.cs)
+  [`SecurityRegressionTests.cs`](../../../src/Almirante.Api.Tests/SecurityRegressionTests.cs)
   (`ResetConcluidoNoMeioDoLogin_NaoDeixaSessaoUtilizavel`,
   `Reset_IncrementaSecurityVersion_InvalidandoAccessTokenAnterior`) e
-  [`AdminPasswordResetCliTests.cs`](../../../backend/Almirante.Api.Tests/AdminPasswordResetCliTests.cs).
+  [`AdminPasswordResetCliTests.cs`](../../../src/Almirante.Api.Tests/AdminPasswordResetCliTests.cs).
 - Configuração: [`compose.yaml`](../../../compose.yaml) (`Jwt__*`, `DataProtection__KeysPath`) e
   [`.env.example`](../../../.env.example).
 - Documentação: [`docs/authentication-security.md`](../../authentication-security.md) e

@@ -85,31 +85,31 @@ idempotência de eventos ficou separada de `LancamentosOperacoes`.
 
 ## Evidências no repositório
 
-- [`LancamentosController.cs`](../../../backend/Almirante.Api/Controllers/LancamentosController.cs):
+- [`LancamentosController.cs`](../../../src/Almirante.Api/Controllers/LancamentosController.cs):
   `Registrar` e o header `Idempotency-Key`.
-- [`LancamentoGeralService.cs`](../../../backend/Almirante.Api/Services/LancamentoGeralService.cs):
+- [`LancamentoGeralService.cs`](../../../src/Almirante.Api/Services/LancamentoGeralService.cs):
   `RegistrarAsync`, `CalcularHash`, `ResultadoExistente`.
-- [`RegistrarLancamentoRequestValidator.cs`](../../../backend/Almirante.Api/Validation/Lancamentos/RegistrarLancamentoRequestValidator.cs):
+- [`RegistrarLancamentoRequestValidator.cs`](../../../src/Almirante.Api/Validation/Lancamentos/RegistrarLancamentoRequestValidator.cs):
   obrigatoriedade no modo geral e limite de 100 caracteres.
-- [`LancamentoOperacao.cs`](../../../backend/Almirante.Api/Entities/LancamentoOperacao.cs) e
-  [`EventoOperacao.cs`](../../../backend/Almirante.Api/Entities/EventoOperacao.cs).
-- [`EventosService.cs`](../../../backend/Almirante.Api/Services/EventosService.cs): `RegistrarAsync`,
+- [`LancamentoOperacao.cs`](../../../src/Almirante.Api/Entities/LancamentoOperacao.cs) e
+  [`EventoOperacao.cs`](../../../src/Almirante.Api/Entities/EventoOperacao.cs).
+- [`EventosService.cs`](../../../src/Almirante.Api/Services/EventosService.cs): `RegistrarAsync`,
   `LerOperacaoAsync`, `ReplayAsync`, `SalvarAsync`.
-- [`EventoRegras.cs`](../../../backend/Almirante.Api/Services/EventoRegras.cs):
+- [`EventoRegras.cs`](../../../src/Almirante.Api/Services/EventoRegras.cs):
   `NormalizarIdempotencyKey` e `Hash`.
-- [`EventoValidators.cs`](../../../backend/Almirante.Api/Validation/Eventos/EventoValidators.cs): chave
+- [`EventoValidators.cs`](../../../src/Almirante.Api/Validation/Eventos/EventoValidators.cs): chave
   obrigatória em formato UUID.
-- [`AlmiranteDbContext.cs`](../../../backend/Almirante.Api/Data/AlmiranteDbContext.cs): índices únicos
+- [`AlmiranteDbContext.cs`](../../../src/Almirante.Api/Data/AlmiranteDbContext.cs): índices únicos
   de `LancamentoOperacao` e `EventoOperacao`.
-- Migrations [`20260916174441_AddLancamentoGeral.cs`](../../../backend/Almirante.Api/Data/Migrations/20260916174441_AddLancamentoGeral.cs),
-  [`20260921160617_AddEventos.cs`](../../../backend/Almirante.Api/Data/Migrations/20260921160617_AddEventos.cs) e
-  [`20260921222826_AddEventosOperacoesResposta.cs`](../../../backend/Almirante.Api/Data/Migrations/20260921222826_AddEventosOperacoesResposta.cs).
-- Testes: [`LancamentosConcurrencyTests.cs`](../../../backend/Almirante.Api.Tests/LancamentosConcurrencyTests.cs)
+- Migrations [`20260916174441_AddLancamentoGeral.cs`](../../../src/Almirante.Api/Data/Migrations/20260916174441_AddLancamentoGeral.cs),
+  [`20260921160617_AddEventos.cs`](../../../src/Almirante.Api/Data/Migrations/20260921160617_AddEventos.cs) e
+  [`20260921222826_AddEventosOperacoesResposta.cs`](../../../src/Almirante.Api/Data/Migrations/20260921222826_AddEventosOperacoesResposta.cs).
+- Testes: [`LancamentosConcurrencyTests.cs`](../../../src/Almirante.Api.Tests/LancamentosConcurrencyTests.cs)
   (`RegistrarTodos_ConcorrenciaPersisteUmaOperacao_EUmLancamentoPorMembro`),
-  [`EventosReplaySqlTests.cs`](../../../backend/Almirante.Api.Tests/EventosReplaySqlTests.cs)
+  [`EventosReplaySqlTests.cs`](../../../src/Almirante.Api.Tests/EventosReplaySqlTests.cs)
   (`DuasRequisicoesEquivalentesConcorrentes_UmEventoUmaOperacaoEUmConjuntoDeLancamentos_RespostaOriginalConsistente`,
   `MesmaChaveParaUsuariosDistintos_IsolaOReplay_SemVazarRespostaAlheia`) e
-  [`LancamentosTests.cs`](../../../backend/Almirante.Api.Tests/LancamentosTests.cs)
+  [`LancamentosTests.cs`](../../../src/Almirante.Api.Tests/LancamentosTests.cs)
   (`RegistrarTodos_EIdempotente_EConflitaPayloadDiferente`).
 - Documentação: [`README.md`](../../../README.md#eventos) (parágrafo "Idempotência").
 - Histórico: PR #39 (commit `636cfb2`) e PR #62 (commit `bab8c84`).
