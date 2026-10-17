@@ -3,12 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace Almirante.Api.Entities;
 
-// Janela de compatibilidade da transição "Despesa" -> "Saida" (enum tipado da issue #50).
-//   - Entrada (request): aceita "Entrada", "Saida", "Saída", o nome legado "Despesa" (sem diferenciar
-//     maiúsculas/minúsculas) e o valor numérico 0/1 — clientes antigos continuam enviando "Despesa".
-//   - Saída (response): "Saida" por padrão. Enquanto houver cliente antigo que LÊ "Despesa" na resposta,
-//     ligue Compatibility:LegacyTipoFluxoDespesa=true; desligue quando todos os clientes usarem "Saida".
-// Registrado em JsonOptions (Program.cs), que tem precedência sobre o [JsonConverter] do enum.
 public sealed class TipoFluxoLancamentoJsonConverter(bool emitLegacyName) : JsonConverter<TipoFluxoLancamento>
 {
     public override TipoFluxoLancamento Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)

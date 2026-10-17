@@ -6,8 +6,6 @@ using Almirante.Api.Dtos;
 
 namespace Almirante.Api.Services;
 
-// Regras puras de eventos (sem I/O): normalização, cálculo, datas e hash de idempotência. Um único ponto
-// usado por POST, PUT, validadores e testes, para que nenhum formato de entrada tenha regra própria.
 public sealed record EventoNormalizado(
     DateOnly DataEvento,
     string Local,
@@ -27,15 +25,12 @@ public sealed record EventoNormalizado(
 
 public static class EventoRegras
 {
-    // Capacidade de decimal(18,2).
     public const decimal ValorMaximo = 9_999_999_999_999_999.99m;
     public const int LocalMaximo = 200;
     public const int MotivoMaximo = 255;
 
-    // Primeiro dia do mês corrente na referência UTC (TimeProvider), independente do fuso da máquina.
     public static DateOnly PrimeiroDiaDoMes(DateTimeOffset agoraUtc) => new(agoraUtc.UtcDateTime.Year, agoraUtc.UtcDateTime.Month, 1);
 
-    // Regra de CRIAÇÃO (POST de uma operação nova): a data do evento é a partir do primeiro dia do mês atual (UTC).
     public static bool DataDeCadastroValida(DateOnly dataEvento, DateTimeOffset agoraUtc) => dataEvento >= PrimeiroDiaDoMes(agoraUtc);
 
     public static string MensagemDataDeCadastro(DateTimeOffset agoraUtc) =>
@@ -44,11 +39,9 @@ public static class EventoRegras
     public static DateOnly UltimoDiaDoMes(DateTimeOffset agoraUtc) =>
         PrimeiroDiaDoMes(agoraUtc).AddMonths(1).AddDays(-1);
 
-    // Período padrão do GET: mês atual inteiro, mais 30 dias antes do início e 30 dias depois do fim.
     public static (DateOnly Inicial, DateOnly Final) PeriodoPadrao(DateTimeOffset agoraUtc) =>
         (PrimeiroDiaDoMes(agoraUtc).AddDays(-30), UltimoDiaDoMes(agoraUtc).AddDays(30));
 
-    // Trim + colapso de espaços internos: "  Parque   Ibirapuera " e "Parque Ibirapuera" são o mesmo local.
     public static string NormalizarLocal(string? local) =>
         string.Join(' ', (local ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
@@ -57,8 +50,6 @@ public static class EventoRegras
     public static string? NormalizarIdempotencyKey(string? key) =>
         Guid.TryParse(key?.Trim(), out var id) ? id.ToString("D") : null;
 
-    // Só chamar depois da validação de presença dos campos obrigatórios. Componentes ignorados pelos
-    // booleanos viram zero ANTES de qualquer validação de valor (o número recebido é descartado).
     public static EventoNormalizado Normalizar(EventoConteudoRequest request)
     {
         var gratis = request.Transporte!.EhGratis!.Value;
@@ -80,9 +71,6 @@ public static class EventoRegras
         return texto.Length <= 500 ? texto : texto[..500];
     }
 
-    // Hash da operação lógica: só dados normalizados (forma JSON de "membros", ordem dos GUIDs e valores
-    // ignorados pelos booleanos não interferem). O local é serializado como JSON para que separadores dentro
-    // dele não gerem colisões entre campos.
     public static string Hash(EventoNormalizado e, Guid? eventoReferenciaId)
     {
         var canonical = string.Join('|',

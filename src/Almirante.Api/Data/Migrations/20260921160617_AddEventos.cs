@@ -284,7 +284,6 @@ namespace Almirante.Api.Data.Migrations
                 principalColumn: "Id",
                 onDelete: ReferentialAction.Restrict);
 
-            // O trigger de Lancamentos passa a copiar EventoId e a aceitar Finalidade nula (lançamentos de evento).
             migrationBuilder.Sql("DROP TRIGGER IF EXISTS [TR_Lancamentos_AuditoriaExclusaoLogica];");
             migrationBuilder.Sql(LancamentosTrigger(comEventoId: true));
             migrationBuilder.Sql(EventosTrigger);
@@ -351,7 +350,6 @@ namespace Almirante.Api.Data.Migrations
             migrationBuilder.Sql(LancamentosTrigger(comEventoId: false));
         }
 
-        // Mesmo texto do trigger criado em UnifyLancamentosFlow, acrescido de EventoId quando pedido.
         private static string LancamentosTrigger(bool comEventoId) => $$"""
             CREATE TRIGGER [TR_Lancamentos_AuditoriaExclusaoLogica] ON [Lancamentos] AFTER UPDATE AS
             BEGIN
@@ -367,10 +365,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Auditoria da exclusão lógica de eventos: dispara SOMENTE na transição Ativo 1 -> 0 (várias linhas por
-        // vez), exige o SESSION_CONTEXT definido pela aplicação e é a única a escrever em historico_eventos.
-        // O snapshot dos participantes/lançamentos é lido no instante da desativação (a aplicação desativa o
-        // evento antes dos participantes) e guardado em JSON, sem depender de linhas que continuam mutáveis.
         private const string EventosTrigger = """
             CREATE TRIGGER [TR_eventos_AuditoriaExclusaoLogica] ON [eventos] AFTER UPDATE AS
             BEGIN

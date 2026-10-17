@@ -8,10 +8,6 @@ using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Almirante.Api.Infrastructure;
 
-// Documentação OpenAPI de /api/Eventos: o Swashbuckle não representa sozinho um campo que aceita
-// "GUID | GUID[]" (conversor customizado), então o schema de "membros" é declarado explicitamente
-// como oneOf; os exemplos mostram as duas formas.
-
 /// <summary>Declara <c>membros</c> como <c>oneOf [GUID, GUID[]]</c>.</summary>
 public sealed class MembrosSchemaFilter : ISchemaFilter
 {

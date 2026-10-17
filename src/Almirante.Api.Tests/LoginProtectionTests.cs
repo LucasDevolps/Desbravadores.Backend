@@ -6,14 +6,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-// Relógio controlável para o lockout (AuthService/LoginLockout usam TimeProvider).
 public sealed class MutableTimeProvider : TimeProvider
 {
     public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
     public override DateTimeOffset GetUtcNow() => Now;
 }
 
-// Proteção de POST /api/Auth/login diretamente na API (TestServer, sem nginx).
 public class LoginProtectionTests
 {
     private const string SenhaErrada = "senha-errada-123";
@@ -47,7 +45,6 @@ public class LoginProtectionTests
         Assert.Equal("application/problem+json", bloqueada.Content.Headers.ContentType?.MediaType);
         Assert.Equal("Muitas tentativas de login.", (await bloqueada.Content.ReadFromJsonAsync<ProblemDetails>())!.Title);
 
-        // Outros endpoints não são afetados pelo limite do login.
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Auth/csrf")).StatusCode);
 
         await Task.Delay(TimeSpan.FromSeconds(2.5));
@@ -69,7 +66,6 @@ public class LoginProtectionTests
     [Fact]
     public async Task RateLimit_IgnoraXForwardedForDeOrigemNaoConfiavel()
     {
-        // Proxy confiável configurado, mas a conexão vem de fora dele: variar o header não cria novos buckets.
         using var factory = RateLimitFactory(permits: 2, windowSeconds: 60, trustedCidr: "172.30.0.0/24");
         using var client = await ClientWithCsrfAsync(factory);
 
@@ -100,12 +96,9 @@ public class LoginProtectionTests
         for (var i = 0; i < 2; i++) await TestHelpers.PostLoginAsync(client, AlmiranteApiFactory.AdminEmail, SenhaErrada, nginx, xForwardedFor: "198.51.100.10");
         Assert.Equal(HttpStatusCode.TooManyRequests,
             (await TestHelpers.PostLoginAsync(client, AlmiranteApiFactory.AdminEmail, SenhaErrada, nginx, xForwardedFor: "198.51.100.10")).StatusCode);
-        // Outro cliente atrás do mesmo proxy tem bucket próprio; valor forjado à esquerda é descartado (ForwardLimit=1).
         Assert.Equal(HttpStatusCode.Unauthorized,
             (await TestHelpers.PostLoginAsync(client, AlmiranteApiFactory.AdminEmail, SenhaErrada, nginx, xForwardedFor: "198.51.100.10, 198.51.100.11")).StatusCode);
     }
-
-    // ---- Lockout por conta ----
 
     private static (ConfiguredApiFactory Factory, MutableTimeProvider Clock) LockoutFactory(int maxFailures = 3)
     {
@@ -147,7 +140,6 @@ public class LoginProtectionTests
         Assert.Equal(await TestHelpers.NormalizedProblemAsync(inexistente), corpo);
         Assert.False(bloqueada.Headers.Contains("Retry-After"));
 
-        // Tentativas durante o bloqueio não o prolongam.
         clock.Now = clock.Now.AddMinutes(10);
         await TestHelpers.PostLoginAsync(client, AlmiranteApiFactory.AdminEmail, SenhaErrada);
         Assert.Equal(bloqueadoAte, (await EstadoAdminAsync(factory)).BloqueadoAte);

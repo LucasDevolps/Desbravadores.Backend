@@ -16,7 +16,6 @@ public sealed record LancamentoDto
     public decimal Valor { get; init; }
     public DateOnly Vencimento { get; init; }
     public required StatusLancamento Status { get; init; }
-    // Preenchido quando o lançamento foi gerado por um cadastro de evento (edição só via /api/Eventos).
     public Guid? EventoId { get; init; }
 }
 
@@ -65,8 +64,6 @@ public sealed record LancamentoGeralResponse
 public sealed class UpdateLancamentoRequest : IRequest<LancamentoDto?>
 {
     [JsonIgnore] public Guid Id { get; set; }
-    // Preenchido pelo controller a partir da identidade autenticada (User.TentarObterUsuarioId);
-    // nunca aceito do body — ver LancamentosController.Update.
     [JsonIgnore] public Guid UsuarioResponsavelId { get; set; }
     public string? Finalidade { get; set; }
     public string? Descricao { get; set; }

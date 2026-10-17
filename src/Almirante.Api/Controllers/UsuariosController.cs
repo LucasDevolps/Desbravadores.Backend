@@ -13,9 +13,6 @@ using Microsoft.Net.Http.Headers;
 
 namespace Almirante.Api.Controllers;
 
-// Controller fino (mesmo desenho de EventosController): autorização, dados que só o servidor fornece (responsável
-// das claims, IP da conexão, papel do solicitante) e envio ao MediatR. Nenhuma regra de negócio aqui; na foto, só o
-// que é HTTP: limites de envio (429), leitura do multipart e os headers da resposta.
 [ApiController]
 [Route("api/Usuarios")]
 [Authorize(Policy = Policies.GestaoCadastros)]
@@ -126,7 +123,6 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
             return IdentidadeInvalida();
         }
 
-        // Antes de ler o corpo: o custo de receber e decodificar só acontece dentro dos limites.
         using (var envio = limitador.RegistrarEnvio(usuarioId))
         {
             if (!envio.IsAcquired)
@@ -183,14 +179,12 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         return NoContent();
     }
 
-    // Inalcançável com o pipeline atual (OnTokenValidated exige sub GUID), mantido como defesa.
     private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails
     {
         Title = "Identidade autenticada inválida.",
         Status = StatusCodes.Status401Unauthorized,
     });
 
-    // 429 com Retry-After: a janela por usuário informa quando libera; a fila de processamento, não (5 s).
     private ObjectResult MuitosEnvios(RateLimitLease recusa, Guid usuarioId, string titulo, string detalhe)
     {
         var segundos = recusa.TryGetMetadata(MetadataName.RetryAfter, out var espera) ? Math.Max(1, (int)Math.Ceiling(espera.TotalSeconds)) : 5;

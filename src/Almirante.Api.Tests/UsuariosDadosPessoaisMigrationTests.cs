@@ -10,9 +10,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Almirante.Api.Tests;
 
-// Migration AddUsuariosDadosPessoais sobre um banco já populado (usuários e _usuarios_hist gravados pela trigger
-// ANTERIOR): preserva tudo, deixa os campos novos NULL, recusa e-mails incompatíveis com varchar(100) ASCII sem alterar
-// nada e tem rollback estrutural coerente. Mesmo desenho de LancamentosAuditMigrationTests.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosDadosPessoaisMigrationTests
 {
@@ -44,7 +41,6 @@ public sealed class UsuariosDadosPessoaisMigrationTests
         return usuario;
     }
 
-    // Alteração cadastral com contexto de auditoria: a trigger vigente grava o histórico (formato da época).
     private static Task AlterarNomeAuditadoAsync(AlmiranteDbContext db, Guid id, Guid responsavel, string nome) =>
         db.Database.ExecuteSqlInterpolatedAsync($"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={responsavel};
@@ -89,12 +85,10 @@ public sealed class UsuariosDadosPessoaisMigrationTests
             var cargo = await SemearCargosAsync(db);
 
             legado = await InserirLegadoAsync(db, cargo.Id, "Legado.Pessoal@Local.Dev");
-            // Exatamente 100 caracteres: o limite novo, aceito sem truncar.
             var emailLimite = new string('a', 100 - "@local.dev".Length) + "@local.dev";
             limite = await InserirLegadoAsync(db, cargo.Id, emailLimite, "Limite");
             Assert.Equal(100, emailLimite.Length);
 
-            // Duas versões no histórico, gravadas pela trigger ANTERIOR (sem colunas de dados pessoais).
             await AlterarNomeAuditadoAsync(db, legado.Id, limite.Id, "Legado v2");
             await AlterarNomeAuditadoAsync(db, legado.Id, limite.Id, "Legado v3");
 
@@ -109,7 +103,7 @@ public sealed class UsuariosDadosPessoaisMigrationTests
             Assert.Equal(2, usuarios.Count);
             var salvo = usuarios.Single(u => u.Id == legado.Id);
             Assert.Equal("Legado v3", salvo.Nome);
-            Assert.Equal("Legado.Pessoal@Local.Dev", salvo.Email);              // caixa e conteúdo preservados
+            Assert.Equal("Legado.Pessoal@Local.Dev", salvo.Email);
             Assert.Equal("LEGADO.PESSOAL@LOCAL.DEV", salvo.EmailNormalizado);
             Assert.Equal(limite.Email, usuarios.Single(u => u.Id == limite.Id).Email);
             Assert.All(usuarios, u =>
@@ -122,11 +116,11 @@ public sealed class UsuariosDadosPessoaisMigrationTests
 
             var historico = await db.UsuariosHistorico.AsNoTracking().Where(h => h.UsuarioId == legado.Id).OrderBy(h => h.AlteradoEmUtc).ToListAsync();
             Assert.Equal(2, historico.Count);
-            Assert.Equal(new[] { "Legado", "Legado v2" }, historico.Select(h => h.Nome).Order()); // podem empatar em AlteradoEmUtc
+            Assert.Equal(new[] { "Legado", "Legado v2" }, historico.Select(h => h.Nome).Order());
             Assert.All(historico, h =>
             {
                 Assert.Equal("Legado.Pessoal@Local.Dev", h.Email);
-                Assert.Null(h.Cpf);                 // não preenchido com dado atual
+                Assert.Null(h.Cpf);
                 Assert.Null(h.DataNascimento);
                 Assert.Null(h.Telefone);
                 Assert.Equal(limite.Id, h.UsuarioResponsavelId);
@@ -139,8 +133,6 @@ public sealed class UsuariosDadosPessoaisMigrationTests
             Assert.Equal("1", await EscalarAsync(db, "SELECT COUNT(*) FROM sys.indexes WHERE name = 'UX_Usuarios_Cpf' AND is_unique = 1 AND has_filter = 1"));
         }
 
-        // A aplicação sobe sobre o mesmo banco (migrations já aplicadas, seed idempotente): o login por e-mail do usuário
-        // legado continua (sem diferenciar caixa) e um PUT acrescenta CPF, auditando o estado anterior com CPF NULL.
         using var cliente = factory.CreateClient();
         await TestHelpers.AddCsrfAsync(cliente);
         Assert.Equal(HttpStatusCode.OK, (await TestHelpers.PostLoginAsync(cliente, "legado.pessoal@local.dev", TestHelpers.SenhaPadraoTeste)).StatusCode);
@@ -183,9 +175,8 @@ public sealed class UsuariosDadosPessoaisMigrationTests
         Assert.Contains(longo.Id.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(acentuado.Id.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(valido.Id.ToString(), ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("joão", ex.Message);  // diagnóstico sem dado pessoal
+        Assert.DoesNotContain("joão", ex.Message);
 
-        // Nada foi aplicado: nem a migration, nem a redução da coluna, nem colunas novas; e-mails intactos.
         Assert.DoesNotContain(MigrationEmTeste, await db.Database.GetAppliedMigrationsAsync());
         Assert.Equal("nvarchar(512)", await TipoAsync(db, "Usuarios", "Email"));
         Assert.Null(await TipoAsync(db, "Usuarios", "Cpf"));
@@ -204,7 +195,6 @@ public sealed class UsuariosDadosPessoaisMigrationTests
         var usuario = await InserirLegadoAsync(db, cargo.Id, "rollback@local.dev");
         await migrator.MigrateAsync();
 
-        // Com o schema novo: dado pessoal gravado e auditado pela trigger nova.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={usuario.Id};
             EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={"198.51.100.2"};
@@ -221,7 +211,6 @@ public sealed class UsuariosDadosPessoaisMigrationTests
         Assert.Equal("rollback@local.dev", await EscalarAsync(db, $"SELECT Email FROM dbo.Usuarios WHERE Id = '{usuario.Id}'"));
         Assert.Equal("1", await EscalarAsync(db, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{usuario.Id}'"));
 
-        // A trigger restaurada funciona sobre o schema anterior (não referencia colunas removidas).
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={usuario.Id};
             EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={"198.51.100.3"};
@@ -229,7 +218,6 @@ public sealed class UsuariosDadosPessoaisMigrationTests
             """);
         Assert.Equal("2", await EscalarAsync(db, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{usuario.Id}'"));
 
-        // E a migration pode ser reaplicada depois do rollback.
         await migrator.MigrateAsync();
         Assert.Contains(MigrationEmTeste, await db.Database.GetAppliedMigrationsAsync());
     }

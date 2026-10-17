@@ -7,7 +7,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Tests;
 
-// Configuração das fotos (Media): validação no startup do host e pasta padrão de Development.
 public sealed class MediaOptionsTests : IDisposable
 {
     private readonly string _base = Path.Combine(Path.GetTempPath(), "almirante-testes-media", Guid.NewGuid().ToString("N"));
@@ -54,7 +53,7 @@ public sealed class MediaOptionsTests : IDisposable
         Assert.True(Validar(pasta).Succeeded);
         Assert.True(Directory.Exists(pasta));
         Assert.Empty(Directory.GetFileSystemEntries(pasta));
-        Assert.True(Validar(pasta, ambiente: new AmbienteSemWeb(Site)).Succeeded);       // sem WebRootPath
+        Assert.True(Validar(pasta, ambiente: new AmbienteSemWeb(Site)).Succeeded);
         Assert.True(Validar(pasta, ambiente: new Ambiente(Site, webRoot: null)).Succeeded);
     }
 
@@ -70,7 +69,7 @@ public sealed class MediaOptionsTests : IDisposable
     {
         Assert.Contains("dentro do site", Validar(Path.Combine(Site, "fotos")).FailureMessage);
         Assert.Contains("dentro do site", Validar(Path.Combine(Site, "wwwroot", "fotos"), ambiente: new Ambiente(Path.Combine(_base, "outro"), Path.Combine(Site, "wwwroot"))).FailureMessage);
-        Assert.Contains("dentro do site", Validar(_base).FailureMessage);   // contém o site
+        Assert.Contains("dentro do site", Validar(_base).FailureMessage);
         Assert.Contains("dentro do site", Validar(Site + Path.DirectorySeparatorChar).FailureMessage);
     }
 
@@ -103,8 +102,6 @@ public sealed class MediaOptionsTests : IDisposable
         Assert.Equal(512L * 1024, limites.MaxStoredBytes);
         Assert.Equal(25_000_000L, limites.MaxPixels);
     }
-
-    // ------------------------------------------------------------------ no host real
 
     [Fact]
     public void Development_SemPastaConfigurada_UsaAPastaDescartavelNoTemp()

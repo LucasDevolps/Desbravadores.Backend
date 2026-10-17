@@ -8,7 +8,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Almirante.Api.Tests;
 
-// Faxina das fotos (FotosCleanupService): o que sai, o que fica e o comportamento do laço em background.
 public sealed class FotosCleanupServiceTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private sealed class LogEmLista : ILogger<FotosCleanupService>
@@ -20,7 +19,6 @@ public sealed class FotosCleanupServiceTests(AlmiranteApiFactory factory) : ICla
             Entradas.Enqueue($"{logLevel}: {formatter(state, exception)}");
     }
 
-    // Armazenamento que falha (ou trava até o cancelamento) para exercitar o laço.
     private sealed class ArmazenamentoDeTeste(Func<CancellationToken, Task<int>> purge) : IFileStorage
     {
         public Task SaveAsync(string chave, ReadOnlyMemory<byte> conteudo, CancellationToken ct) => Task.CompletedTask;
@@ -30,7 +28,6 @@ public sealed class FotosCleanupServiceTests(AlmiranteApiFactory factory) : ICla
         public Task<int> PurgeIncompleteAsync(DateTime anterioresAUtc, CancellationToken ct) => purge(ct);
     }
 
-    // Relógio cujos timers só disparam quando o teste manda: as 24 h entre duas faxinas passam na hora.
     private sealed class RelogioManual : TimeProvider
     {
         private readonly ConcurrentQueue<(TimerCallback Callback, object? Estado, TimeSpan Prazo)> pendentes = new();
@@ -43,7 +40,6 @@ public sealed class FotosCleanupServiceTests(AlmiranteApiFactory factory) : ICla
             return new TimerManual();
         }
 
-        // Dispara o timer mais antigo e devolve o prazo que ele pedia.
         public TimeSpan Disparar()
         {
             Assert.True(pendentes.TryDequeue(out var timer));
@@ -134,7 +130,6 @@ public sealed class FotosCleanupServiceTests(AlmiranteApiFactory factory) : ICla
         var log = new LogEmLista();
         var servico = Servico(new ArmazenamentoDeTeste(_ => throw new IOException("disco indisponível")), log);
 
-        // No .NET 10 o ExecuteAsync roda em segundo plano: espera a primeira faxina acontecer antes de parar.
         await servico.StartAsync(CancellationToken.None);
         for (var i = 0; i < 250 && !log.Entradas.Any(e => e.StartsWith("Error")); i++) await Task.Delay(20);
         await servico.StopAsync(CancellationToken.None);
@@ -156,9 +151,9 @@ public sealed class FotosCleanupServiceTests(AlmiranteApiFactory factory) : ICla
 
         await servico.StartAsync(CancellationToken.None);
         for (var i = 0; i < 250 && relogio.Pendentes == 0; i++) await Task.Delay(20);
-        Assert.Equal(1, Volatile.Read(ref faxinas));                                 // a primeira roda na subida
+        Assert.Equal(1, Volatile.Read(ref faxinas));
 
-        Assert.Equal(FotosCleanupService.Intervalo, relogio.Disparar());             // passam 24 h: roda de novo
+        Assert.Equal(FotosCleanupService.Intervalo, relogio.Disparar());
         for (var i = 0; i < 250 && relogio.Pendentes == 0; i++) await Task.Delay(20);
         Assert.Equal(2, Volatile.Read(ref faxinas));
 

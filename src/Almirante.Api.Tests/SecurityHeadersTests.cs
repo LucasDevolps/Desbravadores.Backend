@@ -86,7 +86,6 @@ public class SecurityHeadersTests
         var viaHttp = await http.GetAsync("/api/Auth/csrf");
         AssertCabecalhosBasicos(viaHttp);
         Assert.False(viaHttp.Headers.Contains("Strict-Transport-Security"));
-        // Sem porta HTTPS configurada não há redirecionamento (nem loop) — nginx/IIS terminam TLS.
         Assert.NotEqual(HttpStatusCode.RedirectKeepVerb, viaHttp.StatusCode);
         Assert.NotEqual(HttpStatusCode.TemporaryRedirect, viaHttp.StatusCode);
 
@@ -94,14 +93,13 @@ public class SecurityHeadersTests
     }
 
     [Theory]
-    [InlineData("172.30.0.5", true)]     // proxy confiável informou HTTPS
-    [InlineData("203.0.113.77", false)]  // cliente direto tentando forjar X-Forwarded-Proto
+    [InlineData("172.30.0.5", true)]
+    [InlineData("203.0.113.77", false)]
     public async Task Producao_AtrasDeProxy_HstsSoConfiaEmXForwardedProtoDoProxyConfiavel(string conexao, bool esperaHsts)
     {
         using var factory = new ConfiguredApiFactory("Production", new Dictionary<string, string?> { ["ReverseProxy:TrustedNetworkCidr"] = "172.30.0.0/24" });
         using var client = factory.CreateClient(new() { BaseAddress = new Uri("http://api.almirante.test"), AllowAutoRedirect = false });
 
-        // /alive: /api/Auth/csrf exige HTTPS (cookie antiforgery Secure) e responderia 500 via HTTP.
         var request = new HttpRequestMessage(HttpMethod.Get, "/alive");
         request.Headers.Add(AlmiranteApiFactory.TestRemoteIpHeader, conexao);
         request.Headers.Add("X-Forwarded-For", "198.51.100.7");
@@ -124,8 +122,6 @@ public class SecurityHeadersTests
         Assert.Equal("text/html", index.Content.Headers.ContentType?.MediaType);
         AssertCabecalhosBasicos(index, SecurityHeadersMiddleware.SwaggerContentSecurityPolicy);
 
-        // A CSP do Swagger não permite script inline; a página servida também não traz estilo inline
-        // (o swagger-ui só injeta estilo em runtime, coberto por style-src 'unsafe-inline').
         var html = await index.Content.ReadAsStringAsync();
         Assert.DoesNotMatch(new Regex(@"<script(?![^>]*\bsrc=)[^>]*>\s*\S", RegexOptions.IgnoreCase), html);
         Assert.DoesNotMatch(new Regex(@"<style[\s>]|\sstyle\s*=|\son[a-z]+\s*=", RegexOptions.IgnoreCase), html);

@@ -3,10 +3,6 @@ using MediatR;
 
 namespace Almirante.Api.Validation;
 
-// Roda, antes de qualquer Handler, todos os IValidator<TRequest> registrados para o request do
-// MediatR (ver Program.cs: AddValidatorsFromAssemblyContaining + AddOpenBehavior). Falhas viram
-// FluentValidation.ValidationException, tratada globalmente por ValidationExceptionHandler — os
-// Handlers em si nunca precisam validar entrada.
 public sealed class ValidationBehavior<TRequest, TResponse>(IEnumerable<IValidator<TRequest>> validators)
     : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull

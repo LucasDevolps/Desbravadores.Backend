@@ -8,18 +8,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Infrastructure;
 
-// Aplica o modelo de duas identidades SQL da API (nenhuma delas é "sa"; ver SqlIdentityPolicy):
-//   - ADMINISTRATIVA (ConnectionStrings:AlmiranteAdmin): usuário contido do banco criado por
-//     docs/sql/criar-usuario-admin-app.sql. Roda as migrations, concede as tabelas à role de runtime e troca
-//     a senha da identidade de runtime. Sem papel de servidor, sem db_owner (DbPrivilegeAuditor prova isso
-//     antes de qualquer alteração e recusa o startup se falhar).
-//   - RUNTIME (DbCredentials:AppUser): também usuário contido, membro só de almirante_app_role. Permissões:
-//     SELECT/INSERT/UPDATE nas tabelas de negócio; DELETE somente em dbo.AuthSessions (limpeza de sessões
-//     expiradas — AuthSessionCleanupService; as exclusões de negócio são lógicas); nenhuma escrita direta na
-//     auditoria e nenhum DDL. A senha é gerada aqui (CSPRNG), vive só em memória e é rotacionada.
-//
-// Quem CRIA as identidades e o banco é o bootstrap (fora da API, com o sysadmin do servidor); a API só
-// concede/rotaciona. Sem o bootstrap, o startup falha com uma mensagem que diz o que executar.
 public sealed partial class DbCredentialManager(
     IConfiguration configuration,
     IOptions<DbCredentialOptions> options,
@@ -36,12 +24,6 @@ public sealed partial class DbCredentialManager(
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,62}$")]
     private static partial Regex IdentifierRegex();
 
-    // Ordem deliberada — nada é alterado antes de a identidade administrativa ser aprovada:
-    //   1. política de configuração (sem sa, sem SQL_SA_PASSWORD, admin dedicado obrigatório);
-    //   2. auditoria dos privilégios EFETIVOS da identidade administrativa (fail closed);
-    //   3. migrations (DDL) pela identidade administrativa;
-    //   4. concessões da role de runtime, tabela a tabela;
-    //   5. senha nova da identidade de runtime, e conferência do menor privilégio com essa senha.
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         SqlIdentityPolicy.EnsureValid(configuration);
@@ -64,18 +46,6 @@ public sealed partial class DbCredentialManager(
         await RotateAsync(cancellationToken);
     }
 
-    // Troca a senha da identidade de runtime (ALTER USER ... WITH PASSWORD) e passa a usá-la na hora.
-    //
-    // Garantias:
-    //   - a senha nova é gerada por CSPRNG, nunca aparece em log/exceção e só chega à aplicação depois do
-    //     ALTER USER bem-sucedido; se ele falhar, a credencial anterior segue válida e em uso;
-    //   - entre o ALTER USER e a publicação da credencial nova, aberturas de conexão esperam (BeginSwitch):
-    //     nenhuma abertura NOVA parte da senha que acabou de ser invalidada;
-    //   - o pool de conexões da credencial anterior é esvaziado: uma conexão já autenticada com a senha antiga
-    //     não é reaproveitada, nem "aceita" a credencial antiga depois da rotação;
-    //   - a conferência do menor privilégio roda de novo, agora com a credencial nova.
-    // Uma abertura que já tinha lido a credencial antiga e estava no meio do handshake no exato instante do
-    // ALTER USER pode falhar uma vez (18456); a requisição correspondente é a única afetada.
     public async Task RotateAsync(CancellationToken cancellationToken = default)
     {
         var user = options.Value.AppUser!;
@@ -88,8 +58,6 @@ public sealed partial class DbCredentialManager(
             SqlCredential? previous;
             using (provider.BeginSwitch())
             {
-                // Sem o token de cancelamento: cancelar depois de o servidor aplicar o ALTER USER, mas antes de
-                // Set(), deixaria a aplicação com uma senha que o banco já não aceita.
                 await ExecuteAdminAsync(sql, "rotacionar a senha da identidade de runtime", password, CancellationToken.None);
                 previous = provider.Set(user, password);
             }
@@ -127,8 +95,6 @@ public sealed partial class DbCredentialManager(
         }
     }
 
-    // Executa um lote pela identidade administrativa. A senha (quando há) é literal do SQL — ALTER USER não
-    // aceita parâmetro —, então nada do SqlException original (que poderia citar trechos do lote) sai daqui.
     private async Task ExecuteAdminAsync(string sql, string action, string? secret, CancellationToken cancellationToken)
     {
         try
@@ -146,7 +112,6 @@ public sealed partial class DbCredentialManager(
         }
     }
 
-    // Só o número/estado do erro do SQL Server e um roteiro; a mensagem original pode ecoar parte do lote.
     private static InvalidOperationException Sanitize(SqlException exception, string action, string? secret)
     {
         var hint = exception.Number switch
@@ -161,7 +126,6 @@ public sealed partial class DbCredentialManager(
         return new InvalidOperationException(text);
     }
 
-    // Esvazia o pool da credencial que acabou de ser substituída (ver RotateAsync).
     private void ClearPool(SqlCredential? previous)
     {
         if (previous is null) return;
@@ -169,8 +133,6 @@ public sealed partial class DbCredentialManager(
         SqlConnection.ClearPool(probe);
     }
 
-    // Identificadores validados por regex e senha só alfanumérica (sem aspas): CREATE/ALTER USER ... WITH
-    // PASSWORD não aceitam parâmetro para a senha.
     public static string BuildRotateSql(string user, string password)
     {
         EnsureValidUserName(user);
@@ -179,15 +141,6 @@ public sealed partial class DbCredentialManager(
         return $"ALTER USER [{user}] WITH PASSWORD = N'{password}';";
     }
 
-    // Permissões da role de runtime, tabela a tabela (nada no schema inteiro, nenhum papel fixo):
-    //   - SELECT/INSERT/UPDATE nas tabelas de negócio; DELETE só em AuthSessions (limpeza de sessões);
-    //   - somente SELECT em __EFMigrationsHistory e em lancamentos_deletados, com DENY de escrita nesta
-    //     última: o histórico de exclusões só é gravado pelo trigger (cadeia de propriedade dbo), nunca
-    //     diretamente pela identidade da aplicação.
-    // Recriadas a cada startup (REVOKE + GRANT) — só no startup, com a API ainda sem tráfego: a rotação
-    // periódica troca apenas a senha e nunca mexe em permissões.
-    // Usuário/role e a normalização de papéis vêm do bootstrap (a identidade administrativa não tem, de
-    // propósito, ALTER ANY ROLE nem CONTROL no banco); um desvio ali é pego por VerifyLeastPrivilegeAsync.
     public static string BuildProvisionSql(string user)
     {
         EnsureValidUserName(user);
@@ -221,9 +174,6 @@ public sealed partial class DbCredentialManager(
             """;
     }
 
-    // Prova, com a senha recém-rotacionada e do ponto de vista do próprio SQL Server, que a identidade de
-    // runtime não tem privilégio excessivo. Falha (sem segredos na mensagem) em vez de operar com uma
-    // identidade que o bootstrap deixou mais privilegiada do que deveria.
     private async Task VerifyLeastPrivilegeAsync(string user, CancellationToken cancellationToken)
     {
         var credential = provider.Current ?? throw new InvalidOperationException("Credencial de runtime ausente.");
@@ -254,7 +204,6 @@ public sealed partial class DbCredentialManager(
         while (true)
         {
             var chars = RandomNumberGenerator.GetString(Alphabet, PasswordLength);
-            // CHECK_POLICY exige complexidade: ao menos maiúscula, minúscula e dígito.
             if (chars.Any(char.IsAsciiLetterUpper) && chars.Any(char.IsAsciiLetterLower) && chars.Any(char.IsAsciiDigit))
                 return chars;
         }

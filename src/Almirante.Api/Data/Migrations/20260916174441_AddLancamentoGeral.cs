@@ -11,9 +11,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // defaultValue: true (não false, como o scaffolding gerou por padrão): lançamentos
-            // pré-existentes (CRUD genérico e seed demonstrativo) nunca foram excluídos e devem
-            // continuar ativos — mesmo default do lado C# em Entities/Lancamento.cs.
             migrationBuilder.AddColumn<bool>(
                 name: "Ativo",
                 table: "Lancamentos",
@@ -123,49 +120,18 @@ namespace Almirante.Api.Data.Migrations
                 column: "IdempotencyKey",
                 unique: true);
 
-            // Defesa extra em nível de banco: mesmo que uma futura alteração de código ignore a
-            // validação da API (Trim + 1-255 caracteres em LancamentosGeraisController), o banco
-            // nunca aceita um Motivo vazio, só espaços, ou além do tamanho da coluna.
             migrationBuilder.Sql(
                 """
                 ALTER TABLE [lancamentos_deletados]
                 ADD CONSTRAINT [CK_lancamentos_deletados_Motivo] CHECK (LEN(LTRIM(RTRIM([Motivo]))) BETWEEN 1 AND 255);
                 """);
 
-            // Gerada pelo banco: o trigger abaixo sempre define ExcluidoEmUtc explicitamente via
-            // SYSUTCDATETIME(), mas o DEFAULT fica como rede de segurança (ex.: um INSERT manual
-            // de diagnóstico que omita a coluna continua recebendo um horário UTC do próprio
-            // banco, nunca do relógio da aplicação).
             migrationBuilder.Sql(
                 """
                 ALTER TABLE [lancamentos_deletados]
                 ADD CONSTRAINT [DF_lancamentos_deletados_ExcluidoEmUtc] DEFAULT (SYSUTCDATETIME()) FOR [ExcluidoEmUtc];
                 """);
 
-            // Trigger de auditoria da exclusão lógica (requisito 6/7 da issue #14): audita
-            // exclusivamente a transição Ativo 1 -> 0 em Lancamentos, suporta UPDATE de múltiplas
-            // linhas (uma linha de auditoria por lançamento desativado no mesmo UPDATE) e nunca
-            // audita updates que não envolvam essa transição (ex.: o PUT genérico existente em
-            // LancamentosController, que nunca toca a coluna Ativo).
-            //
-            // O contexto (usuário responsável, IP, motivo) chega via SESSION_CONTEXT, alimentado
-            // pela aplicação na mesma conexão/transação do UPDATE (ver
-            // LancamentosGeraisService.DeleteAsync) — nunca a partir de dados enviados livremente
-            // pelo frontend, e nunca a partir do login da própria conexão SQL. Se o contexto
-            // estiver ausente ou o motivo for inválido, o trigger lança erro: com XACT_ABORT ON,
-            // isso desfaz a transação inteira, incluindo o UPDATE em Lancamentos — não é possível
-            // desativar um lançamento sem um contexto de auditoria válido.
-            //
-            // CREATE TRIGGER precisa ser a única instrução do lote em que roda — mas o EF Core não
-            // sabe disso sobre um Sql() bruto e, ao aplicar a migration (Database.MigrateAsync,
-            // usado por DbSeeder), agrupa comandos adjacentes no mesmo lote sempre que pode
-            // (confirmado gerando `dotnet ef migrations script`: sem o EXEC abaixo, este CREATE
-            // TRIGGER cairia no mesmo lote dos CREATE INDEX/ALTER TABLE anteriores e falharia no
-            // SQL Server real com "Msg 111: 'CREATE TRIGGER' must be the first statement in a
-            // query batch"). EXEC(N'...') roda o texto como um lote dinâmico isolado, o que
-            // satisfaz a exigência sem depender de GO (que não é T-SQL, só funciona em
-            // sqlcmd/SSMS). Aspas simples dentro do texto do trigger são dobradas ('') porque todo
-            // o corpo agora é, ele mesmo, uma string T-SQL.
             migrationBuilder.Sql(
                 """
                 EXEC(N'

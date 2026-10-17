@@ -6,14 +6,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// CPF obrigatório no cadastro, RG opcional, tipo sanguíneo e doenças/alergias em /api/Usuarios sem SQL Server (validação,
-// normalização e contrato). PUT, histórico, tipos das colunas e CHECK: ver UsuariosRgTipoSanguineoDoencasSqlServerTests.
 public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private Task<Guid> CargoIdAsync() =>
         TestHelpers.WithDbAsync(factory, db => db.Cargos.Where(c => c.Role == "DS").Select(c => c.Id).SingleAsync());
 
-    // Corpo mínimo válido (com CPF) mais os campos extras; um extra com valor null é enviado como null, e "remover" tira o campo.
     private async Task<(HttpResponseMessage Response, string Email)> PostAsync(HttpClient client, Action<JsonObject>? extras = null)
     {
         var email = $"saude-{Guid.NewGuid():N}@local.dev";
@@ -36,8 +33,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
     }
 
     private Task<bool> ExisteAsync(string email) => TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == email));
-
-    // ------------------------------------------------------------------ CPF obrigatório
 
     [Theory]
     [InlineData(null)]
@@ -69,9 +64,9 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
     }
 
     [Theory]
-    [InlineData("529.982.247-26")]   // dígito verificador errado
-    [InlineData("111.111.111-11")]   // sequência de um único dígito
-    [InlineData("5299822472")]       // 10 dígitos
+    [InlineData("529.982.247-26")]
+    [InlineData("111.111.111-11")]
+    [InlineData("5299822472")]
     [InlineData("abc.def.ghi-jk")]
     public async Task Post_CpfInvalido_Retorna400_ENaoCria(string cpf)
     {
@@ -80,8 +75,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
         Assert.StartsWith("cpf inválido", (string)(await ErrosAsync(response))["Cpf"]![0]!);
         Assert.False(await ExisteAsync(email));
     }
-
-    // ------------------------------------------------------------------ RG, tipo sanguíneo e doenças/alergias
 
     [Fact]
     public async Task Post_SemRgTipoSanguineoEDoencas_Cria_ComNull()
@@ -141,7 +134,7 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
     [InlineData("AB")]
     [InlineData("A +")]
     [InlineData("C+")]
-    [InlineData("A−")]   // sinal de menos Unicode
+    [InlineData("A−")]
     [InlineData("O positivo")]
     public async Task Post_TipoSanguineoForaDoConjunto_Retorna400_ENaoCria(string tipo)
     {
@@ -152,9 +145,9 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
     }
 
     [Theory]
-    [InlineData("123456789012345678901")]   // 21 caracteres
-    [InlineData("ABC")]                     // sem dígito
-    [InlineData("12.345.678-É")]            // acento
+    [InlineData("123456789012345678901")]
+    [InlineData("ABC")]
+    [InlineData("12.345.678-É")]
     [InlineData("12;345")]
     [InlineData("12\t345")]
     public async Task Post_RgInvalido_Retorna400_ENaoCria(string rg)
@@ -169,7 +162,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
     public async Task Post_DoencasAlergiasNoLimite_PersisteIntegral_EUmAcima_Retorna400SemTruncar()
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-        // 2000 caracteres com acentos e quebras de linha (cada \n conta 1).
         var limite = string.Concat(Enumerable.Repeat("Alergia fictícia ção\n", 100))[..1999] + "X";
         Assert.Equal(2000, limite.Length);
 
@@ -186,7 +178,7 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
     [Theory]
     [InlineData("Alergia a 🥜")]
     [InlineData("Alergia\tcom tab")]
-    [InlineData("Аллергия")]   // cirílico: fora da página 1252
+    [InlineData("Аллергия")]
     public async Task Post_DoencasAlergiasForaDaPagina1252_Retorna400(string texto)
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
@@ -194,8 +186,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
         Assert.StartsWith("doencasAlergias contém caracteres não suportados", (string)(await ErrosAsync(response))["DoencasAlergias"]![0]!);
         Assert.False(await ExisteAsync(email));
     }
-
-    // ------------------------------------------------------------------ privacidade
 
     [Fact]
     public async Task DadosDeSaude_NaoSaemParaQuemNaoGerenciaCadastros_NemEmMe()
@@ -205,7 +195,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
         var (criado, _) = await PostAsync(admin, c => { c["doencasAlergias"] = marcador; c["tipoSanguineo"] = "B+"; c["rg"] = "MG-12.345.678"; });
         Assert.Equal(HttpStatusCode.Created, criado.StatusCode);
 
-        // Papel fora da diretoria: a listagem continua negada (policy GestaoCadastros inalterada).
         var (membro, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DS");
         using (membro)
         {
@@ -213,7 +202,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
             Assert.Equal(HttpStatusCode.Forbidden, negado.StatusCode);
             Assert.DoesNotContain(marcador, await negado.Content.ReadAsStringAsync());
 
-            // /Me continua com o contrato mínimo (sem CPF, RG, tipo sanguíneo nem saúde).
             var me = JsonNode.Parse(await membro.GetStringAsync("/api/Auth/Me"))!.AsObject();
             Assert.DoesNotContain(me, p => p.Key is "cpf" or "rg" or "tipoSanguineo" or "doencasAlergias");
         }

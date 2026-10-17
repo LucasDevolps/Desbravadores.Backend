@@ -5,10 +5,6 @@ using FluentValidation;
 
 namespace Almirante.Api.Validation.Usuarios;
 
-// Regras de formato comuns a POST e PUT. Unicidade do e-mail e do CPF e existência/atividade do cargo dependem do banco
-// e são verificadas em UsuariosService. Dados pessoais e do responsável são opcionais aqui: só o valor informado é
-// validado (o CPF é obrigatório só no POST, em RegistrarUsuarioRequestValidator). A obrigatoriedade do responsável para menor de idade (RegraResponsavel) é checada no POST abaixo e, no PUT,
-// em UsuariosService, com os valores efetivos (o que não veio no corpo é lido do banco).
 public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T : UsuarioConteudoRequest
 {
     protected UsuarioConteudoValidator(TimeProvider clock)
@@ -33,16 +29,12 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
         CpfOpcional(x => x.Cpf, nameof(UsuarioConteudoRequest.Cpf), "cpf");
         TelefoneOpcional(x => x.Telefone, nameof(UsuarioConteudoRequest.Telefone), "telefone");
 
-        // Mesma referência de "hoje" do restante da API (data UTC do servidor, TimeProvider). No Brasil a data UTC
-        // nunca é anterior à local, então quem nasceu hoje (horário local) nunca é recusado.
         RuleFor(x => x.DataNascimento!.Value)
             .LessThanOrEqualTo(_ => DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime))
             .WithMessage("dataNascimento não pode ser uma data futura.")
             .OverridePropertyName(nameof(UsuarioConteudoRequest.DataNascimento))
             .When(x => x.DataNascimento.HasValue);
 
-        // Responsável: mesmas regras de formato dos campos equivalentes do usuário. O nome vai para varchar, então
-        // também precisa caber na página de código 1252 (acentos do português cabem; emoji e outros alfabetos não).
         RuleFor(x => UsuariosService.NormalizarTexto(x.ResponsavelNome))
             .Must(nome => nome!.Length <= UsuariosService.NomeMaximo)
             .WithMessage($"responsavelNome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.")
@@ -63,7 +55,6 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
         CpfOpcional(x => x.ResponsavelCpf, nameof(UsuarioConteudoRequest.ResponsavelCpf), "responsavelCpf");
         TelefoneOpcional(x => x.ResponsavelTelefone, nameof(UsuarioConteudoRequest.ResponsavelTelefone), "responsavelTelefone");
 
-        // RG e tipo sanguíneo: opcionais; só o valor informado (normalizado) é validado.
         RuleFor(x => Rg.Normalizar(x.Rg))
             .Must(rg => rg!.Length <= Rg.Maximo).WithMessage($"rg deve ter no máximo {Rg.Maximo} caracteres.")
             .Must(Rg.EhValido)
@@ -77,7 +68,6 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .OverridePropertyName(nameof(UsuarioConteudoRequest.TipoSanguineo))
             .When(x => TipoSanguineo.Normalizar(x.TipoSanguineo) is not null);
 
-        // Doenças/alergias: texto de várias linhas em varchar. Acima do limite é recusado (nunca truncado em silêncio).
         RuleFor(x => UsuariosService.NormalizarTexto(x.DoencasAlergias))
             .Must(texto => texto!.Length <= UsuariosService.DoencasAlergiasMaximo)
             .WithMessage($"doencasAlergias deve ter no máximo {UsuariosService.DoencasAlergiasMaximo} caracteres.")
@@ -87,8 +77,6 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .When(x => UsuariosService.NormalizarTexto(x.DoencasAlergias) is not null);
     }
 
-    // CPF e telefone, do usuário e do responsável: validados sobre o valor que será gravado (sem máscara e sem espaços
-    // externos), só quando informados.
     private void CpfOpcional(Func<T, string?> campo, string propriedade, string nomeJson) =>
         RuleFor(x => UsuariosService.NormalizarCpf(campo(x)))
             .Must(Cpf.EhValido)
@@ -108,13 +96,10 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
 {
     public RegistrarUsuarioRequestValidator(TimeProvider clock, DataCivil dataCivil) : base(clock)
     {
-        // CPF é o documento obrigatório do cadastro (o formato é validado na regra comum, quando informado). No PUT ele
-        // continua opcional para usuários antigos sem CPF; remover um CPF gravado é recusado em UsuariosService.
         RuleFor(x => UsuariosService.NormalizarCpf(x.Cpf))
             .NotNull().WithMessage("cpf é obrigatório.")
             .OverridePropertyName(nameof(UsuarioConteudoRequest.Cpf));
 
-        // Mesma política usada no bootstrap do administrador; nunca ecoa a senha na mensagem.
         RuleFor(x => x.Senha).Custom((senha, context) =>
         {
             foreach (var erro in PasswordPolicy.Validate(senha, context.InstanceToValidate.Email?.Trim()))
@@ -123,7 +108,6 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
             }
         });
 
-        // No cadastro não existe valor gravado: a regra do responsável usa só o corpo.
         RuleFor(x => x).Custom((request, context) =>
         {
             var erros = RegraResponsavel.Validar(request.DataNascimento,

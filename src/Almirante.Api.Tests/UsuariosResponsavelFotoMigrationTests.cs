@@ -8,8 +8,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Almirante.Api.Tests;
 
-// Migration AddUsuariosResponsavelEFoto sobre um banco já populado pela versão anterior: campos novos NULL, trigger
-// auditando os campos novos, CHECK do caminho, rollback estrutural (trigger anterior restaurada) e a trava de collation.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosResponsavelFotoMigrationTests
 {
@@ -38,7 +36,6 @@ public sealed class UsuariosResponsavelFotoMigrationTests
         return await comando.ExecuteScalarAsync();
     }
 
-    // Alteração com contexto de auditoria, como a aplicação faz (o trigger exige responsável e IP).
     private static Task<int> AtualizarAuditadoAsync(string cs, Guid responsavel, string set, Guid id, params (string, object)[] parametros) =>
         ExecAsync(cs, $"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@resp;
@@ -74,7 +71,7 @@ public sealed class UsuariosResponsavelFotoMigrationTests
                     """, ("@id", id), ("@nome", nome), ("@email", $"{id:N}@local.dev"), ("@cargo", cargo.Id));
             }
 
-            await AtualizarAuditadoAsync(cs, responsavel, "Telefone = '1134567890'", legado);   // histórico no formato anterior
+            await AtualizarAuditadoAsync(cs, responsavel, "Telefone = '1134567890'", legado);
             await db.GetService<IMigrator>().MigrateAsync();
         }
 
@@ -88,7 +85,6 @@ public sealed class UsuariosResponsavelFotoMigrationTests
             Assert.Null((await db.UsuariosHistorico.AsNoTracking().SingleAsync(h => h.UsuarioId == legado)).ResponsavelNome);
         }
 
-        // Trigger novo: o estado anterior dos campos novos vai para _usuarios_hist.
         var foto = FotoChave.Gerar(legado);
         await AtualizarAuditadoAsync(cs, responsavel, "ResponsavelNome = 'Mãe Legada', FotoCaminho = @foto", legado, ("@foto", foto));
         await AtualizarAuditadoAsync(cs, responsavel, "FotoCaminho = NULL", legado);
@@ -100,11 +96,9 @@ public sealed class UsuariosResponsavelFotoMigrationTests
             Assert.Equal(("Mãe Legada", foto), (historico[2].ResponsavelNome, historico[2].FotoCaminho));
         }
 
-        // CHECK do caminho já vale no banco migrado.
         var erro = await Assert.ThrowsAsync<SqlException>(() => AtualizarAuditadoAsync(cs, responsavel, "FotoCaminho = @foto", legado, ("@foto", FotoChave.Gerar(responsavel))));
         Assert.Equal(547, erro.Number);
 
-        // Down: colunas, CHECK e trigger nova saem; a trigger anterior volta e continua auditando.
         await using (var db = Contexto(cs))
         {
             await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
@@ -115,7 +109,6 @@ public sealed class UsuariosResponsavelFotoMigrationTests
         await AtualizarAuditadoAsync(cs, responsavel, "Telefone = '2134567890'", legado);
         Assert.Equal(4, (int)(await EscalarAsync(cs, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{legado}'"))!);
 
-        // E sobe de novo.
         await using (var db = Contexto(cs))
         {
             await db.GetService<IMigrator>().MigrateAsync();

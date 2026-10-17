@@ -15,7 +15,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // 1) Antes de qualquer alteração: DoencasAlergias é varchar e a aplicação só aceita nele caracteres da página 1252.
             migrationBuilder.Sql(VerificarCollation);
 
             migrationBuilder.AddColumn<string>(
@@ -42,7 +41,6 @@ namespace Almirante.Api.Data.Migrations
                 maxLength: 3,
                 nullable: true);
 
-            // Histórico: mesmos tipos de Usuarios, NULL nas linhas antigas (o valor da época não existia).
             migrationBuilder.AddColumn<string>(
                 name: "DoencasAlergias",
                 table: "_usuarios_hist",
@@ -67,13 +65,11 @@ namespace Almirante.Api.Data.Migrations
                 maxLength: 3,
                 nullable: true);
 
-            // 2) Defesa em profundidade do tipo sanguíneo (mesma constante do modelo, AlmiranteDbContext.CheckTipoSanguineo).
             migrationBuilder.AddCheckConstraint(
                 name: "CK_Usuarios_TipoSanguineo",
                 table: "Usuarios",
                 sql: "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')");
 
-            // 3) Trigger com as colunas novas (CREATE OR ALTER: mantém o objeto e as permissões, troca só a definição).
             migrationBuilder.Sql(TriggerComRgTipoSanguineoDoencas);
         }
 
@@ -116,7 +112,6 @@ namespace Almirante.Api.Data.Migrations
                 table: "_usuarios_hist");
         }
 
-        // Colunas novas herdam a collation do banco: só a página 1252 (Latin1) é aceita.
         private const string VerificarCollation = """
             DECLARE @Collation sysname = CONVERT(sysname, DATABASEPROPERTYEX(DB_NAME(), 'Collation'));
             IF CONVERT(int, COLLATIONPROPERTY(@Collation, 'CodePage')) <> 1252
@@ -128,10 +123,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Igual à de AddUsuariosResponsavelEFoto, com Rg, TipoSanguineo e DoencasAlergias: copiados do estado ANTERIOR
-        // (deleted) e considerados mudança cadastral. EXCEPT compara NULL com NULL como iguais (o "<>" não detectaria
-        // NULL -> valor); BIN2 detecta mudança só de caixa. Continua set-based e na mesma instrução/transação do UPDATE:
-        // falha no INSERT do histórico desfaz a alteração.
         private const string TriggerComRgTipoSanguineoDoencas = """
             CREATE OR ALTER TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN
@@ -178,7 +169,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Definição de AddUsuariosResponsavelEFoto, restaurada no Down (cópia literal; aquela migration não é alterada).
         private const string TriggerAnterior = """
             CREATE OR ALTER TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN

@@ -4,10 +4,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Infrastructure;
 
-// Fotos em disco, na pasta Media:Storage:Path (validada no startup: absoluta, fora do site e gravável). A chave relativa
-// usuarios/{id}/{aleatório}.webp só é aceita no formato de FotoChave, então nenhum valor leva para fora da raiz.
-// Pastas e arquivos que sejam link simbólico ou junção são recusados (ninguém redireciona a leitura/gravação para outro
-// lugar do disco). No Linux os arquivos nascem 0600 e as pastas 0700; no Windows valem as ACLs herdadas da raiz.
 public sealed class LocalFileStorage(IOptions<MediaOptions> options) : IFileStorage
 {
     private const string PrefixoIncompleto = ".tmp-";
@@ -48,7 +44,6 @@ public sealed class LocalFileStorage(IOptions<MediaOptions> options) : IFileStor
         }
 
         ExigirSemLink(caminho);
-        // FileShare.Delete: uma troca/remoção concorrente apaga o arquivo sem esperar esta leitura terminar.
         Stream conteudo = new FileStream(caminho, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 81920,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
         return Task.FromResult<Stream?>(conteudo);
@@ -101,7 +96,6 @@ public sealed class LocalFileStorage(IOptions<MediaOptions> options) : IFileStor
         return Path.Combine(_raiz, chave.Replace('/', Path.DirectorySeparatorChar));
     }
 
-    // Só as pastas usuarios/{id}/ que não são link: a raiz pertence ao operador; nada fora dela é visitado.
     private IEnumerable<string> ArquivosDasPastasDeUsuario()
     {
         var usuarios = Path.Combine(_raiz, "usuarios");
@@ -115,8 +109,6 @@ public sealed class LocalFileStorage(IOptions<MediaOptions> options) : IFileStor
             .SelectMany(pasta => Directory.EnumerateFiles(pasta, "*", semLinks));
     }
 
-    // O próprio caminho e cada pasta entre ele e a raiz (exclusive). ReparsePoint marca link simbólico e junção no
-    // Windows e link simbólico no Linux (o .NET não segue o link ao ler os atributos).
     private void ExigirSemLink(string caminho)
     {
         for (var atual = caminho; atual.Length > _raiz.Length; atual = Path.GetDirectoryName(atual)!)
@@ -137,7 +129,6 @@ public sealed class LocalFileStorage(IOptions<MediaOptions> options) : IFileStor
         }
         catch (IOException)
         {
-            // Ainda tem arquivo (outra foto em gravação, por exemplo): a pasta fica.
         }
     }
 

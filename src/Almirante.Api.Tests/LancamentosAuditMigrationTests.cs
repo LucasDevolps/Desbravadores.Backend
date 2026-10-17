@@ -8,18 +8,9 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Almirante.Api.Tests;
 
-// Prova que a migration AddAtualizadoPorUsuarioIdToLancamentos (issue #50) é não destrutiva sobre um
-// banco já populado. Nenhum teste existente cobre isso: LancamentosTests roda em InMemory (não aplica
-// migrations reais) e simula o valor nulo escrevendo direto na entidade; SqlServerIntegrationTests só
-// aplica todas as migrations sobre um banco novo, sempre vazio.
-//
-// Estratégia: aplica o schema só até a migration ANTERIOR a esta, insere um usuário e um lançamento
-// "legados" (sem a coluna nova), aplica a migration em teste por cima desses dados, e só então sobe a
-// aplicação normalmente para exercitar um PUT autenticado nesse mesmo lançamento histórico.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class LancamentosAuditMigrationTests
 {
-    // Migration imediatamente anterior a AddAtualizadoPorUsuarioIdToLancamentos.
     private const string MigrationAnterior = "20260917130859_AddLoginLockout";
 
     [Fact]
@@ -34,10 +25,6 @@ public sealed class LancamentosAuditMigrationTests
 
         await using (var db = new AlmiranteDbContext(options))
         {
-            // Schema só até a migration anterior: a tabela Lancamentos ainda NÃO tem
-            // AtualizadoPorUsuarioId neste ponto, embora o modelo compilado do DbContext (mesma
-            // classe usada em produção) já a inclua — por isso o insert do lançamento abaixo usa SQL
-            // bruto. O usuário também (Usuarios.Ativo veio depois); Cargos não mudaram desde esta migration.
             var migrator = db.GetService<IMigrator>();
             await migrator.MigrateAsync(MigrationAnterior);
 
@@ -70,7 +57,6 @@ public sealed class LancamentosAuditMigrationTests
                     ({lancamentoId}, {membroId}, {"Mensalidade"}, {descricao}, {"Clube"}, {20m},
                      {vencimento}, {"Pendente"}, {"Entrada"}, {dataCriacaoLegado}, {(DateTime?)null}, {true}, {(Guid?)null})");
 
-            // Aplica a migration em teste por cima dos dados legados acima.
             await migrator.MigrateAsync();
         }
 
@@ -98,13 +84,8 @@ public sealed class LancamentosAuditMigrationTests
             }
         }
 
-        // Sobe a aplicação normalmente sobre o MESMO banco (já migrado até o fim — o MigrateAsync
-        // automático do DbSeeder é um no-op; Cargos/Lancamentos não vazios fazem o seed padrão pular
-        // a inserção dos cargos/lançamento de exemplo, sem conflitar com os dados acima).
         var (client, atorId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
 
-        // Mesma proteção já coberta em LancamentosTests.Update_IgnoraUsuarioResponsavelEnviadoNoBody:
-        // "usuarioResponsavelId" no body é ignorado; o responsável vem só da identidade autenticada.
         var forjado = Guid.NewGuid();
         var response = await client.PutAsJsonAsync($"/api/Lancamentos/{lancamentoId}", new { status = "Pago", usuarioResponsavelId = forjado });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

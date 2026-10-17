@@ -12,12 +12,7 @@ public sealed class LoginResponse { public required TokenDto Token { get; set; }
 public sealed class MeCargoDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Role { get; set; } }
 public sealed class MeDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public required MeCargoDto Cargo { get; set; } }
 
-// DTOs administrativos permanecem separados do contrato mínimo de /Me.
 public class UsuarioDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public required CargoDto Cargo { get; set; } }
-// Funcao: nome amigável do cargo (Cargos.Nome, ex.: "Diretor"), para exibição no lugar do código técnico (Cargo.Role).
-// Cargo continua no contrato por compatibilidade com os consumidores atuais. Cpf (normalizado), DataNascimento
-// (yyyy-MM-dd), Telefone, Rg, TipoSanguineo, DoencasAlergias (dado de saúde) e os dados do responsável vêm null quando
-// não cadastrados; só saem em /api/Usuarios (policy GestaoCadastros), nunca em /Me. FotoUrl é a rota autenticada da foto (null sem foto): o caminho físico nunca sai da API.
 public class UsuarioListItemDto
 {
     public Guid Id { get; set; }
@@ -39,6 +34,5 @@ public class UsuarioListItemDto
     public bool Ativo { get; set; }
     public required CargoDto Cargo { get; set; }
 
-    // Calculado no SELECT (FotoCaminho IS NOT NULL) sem trazer o caminho; a URL é montada aqui, igual em qualquer provedor.
     [System.Text.Json.Serialization.JsonIgnore] public bool PossuiFoto { get; set; }
 }

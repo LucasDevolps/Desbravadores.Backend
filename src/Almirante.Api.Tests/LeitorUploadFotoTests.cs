@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace Almirante.Api.Tests;
 
-// Leitura do multipart do envio de foto (issue #116) direto no LeitorUploadFoto, com corpo montado byte a byte.
 public sealed class LeitorUploadFotoTests
 {
     private const string Boundary = "----limite-de-teste";
@@ -18,7 +17,6 @@ public sealed class LeitorUploadFotoTests
         public long? MaxRequestBodySize { get; set; } = 30_000_000;
     }
 
-    // Corpo que falha na leitura como o Kestrel/IIS falham ao estourar o limite (ou com outro erro de requisição).
     private sealed class CorpoQueFalha(Exception erro) : MemoryStream
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => throw erro;
@@ -54,8 +52,6 @@ public sealed class LeitorUploadFotoTests
 
     private static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3];
 
-    // ------------------------------------------------------------------ aceito
-
     [Fact]
     public async Task ParteUnicaValida_DevolveOConteudoEOFormato_EAjustaOLimiteDoServidor()
     {
@@ -88,8 +84,6 @@ public sealed class LeitorUploadFotoTests
 
         Assert.Equal(30_000_000, somenteLeitura.MaxRequestBodySize);
     }
-
-    // ------------------------------------------------------------------ transporte e tipo do envio
 
     [Fact]
     public async Task ContentEncoding_EhRecusadoComo415_ZipBombNoTransporte()
@@ -163,8 +157,6 @@ public sealed class LeitorUploadFotoTests
         Assert.Contains("malformado", recusa.Detail);
     }
 
-    // ------------------------------------------------------------------ a parte
-
     [Fact]
     public async Task SemNenhumaParte_Retorna400()
     {
@@ -175,10 +167,10 @@ public sealed class LeitorUploadFotoTests
     }
 
     [Theory]
-    [InlineData("")]                                                         // sem Content-Disposition
-    [InlineData("attachment; name=\"arquivo\"; filename=\"foto.jpg\"")]       // não é form-data
-    [InlineData("form-data; name=\"foto\"; filename=\"foto.jpg\"")]           // campo errado
-    [InlineData("form-data; name=\"arquivo\"")]                               // não é arquivo
+    [InlineData("")]
+    [InlineData("attachment; name=\"arquivo\"; filename=\"foto.jpg\"")]
+    [InlineData("form-data; name=\"foto\"; filename=\"foto.jpg\"")]
+    [InlineData("form-data; name=\"arquivo\"")]
     public async Task ParteSemCampoArquivo_Retorna400(string disposicao)
     {
         var recusa = await RecusaAsync(Requisicao(Parte(Jpeg, disposicao)));
@@ -209,7 +201,7 @@ public sealed class LeitorUploadFotoTests
         var recusa = await RecusaAsync(Requisicao(Parte(grande)));
 
         Assert.Equal(StatusCodes.Status413PayloadTooLarge, recusa.Status);
-        Assert.Contains("no máximo 0 MB", recusa.Detail);   // limite de teste (1 KB) arredondado para MB
+        Assert.Contains("no máximo 0 MB", recusa.Detail);
     }
 
     [Fact]

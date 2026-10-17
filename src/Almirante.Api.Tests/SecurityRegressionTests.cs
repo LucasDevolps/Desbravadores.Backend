@@ -14,12 +14,8 @@ using Microsoft.Extensions.Hosting;
 
 namespace Almirante.Api.Tests;
 
-// Regressões dos bloqueadores da validação da PR #59 (relatório de validação da PR #59): cada teste
-// falhava antes da correção correspondente.
 public sealed class SecurityRegressionTests
 {
-    // Suspende o SaveChanges do login (quando há uma AuthSession sendo inserida) até o teste liberar,
-    // para reproduzir de forma determinística um reset de senha concluindo no meio do login.
     private sealed class LoginGateInterceptor : SaveChangesInterceptor
     {
         public readonly TaskCompletionSource Reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -39,8 +35,6 @@ public sealed class SecurityRegressionTests
         }
     }
 
-    // No SQL Server o SaveChanges é uma transação: quando o UPDATE de Usuarios (token de concorrência) falha,
-    // a sessão e o refresh do mesmo login são revertidos. (O provider InMemory não é transacional.)
     [Fact]
     [Trait("Category", "RequiresSqlServer")]
     public async Task ResetConcluidoNoMeioDoLogin_NaoDeixaSessaoUtilizavel()
@@ -54,7 +48,6 @@ public sealed class SecurityRegressionTests
         var login = TestHelpers.PostLoginAsync(client, usuario.Email, TestHelpers.SenhaPadraoTeste);
         await gate.Reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        // Login já verificou a senha antiga e está prestes a persistir a sessão; o reset conclui agora.
         using (var scope = factory.Services.CreateScope())
         {
             var resultado = await AdminPasswordResetCli.ResetPasswordAsync(
@@ -73,7 +66,6 @@ public sealed class SecurityRegressionTests
         Assert.Equal(0, sessoesUtilizaveis);
         Assert.Equal(1, await TestHelpers.WithDbAsync(factory, db => db.Usuarios.Where(u => u.Id == usuario.Id).Select(u => u.SecurityVersion).SingleAsync()));
 
-        // A senha nova continua funcionando (o reset não foi desfeito por rehash/gravação antiga).
         var novo = factory.CreateClient();
         await TestHelpers.AddCsrfAsync(novo);
         Assert.Equal(HttpStatusCode.OK, (await TestHelpers.PostLoginAsync(novo, usuario.Email, "Uma$enhaNovaBemForte2026")).StatusCode);
@@ -103,7 +95,6 @@ public sealed class SecurityRegressionTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/Auth/Me")).StatusCode);
     }
 
-    // Um Development publicado (IIS/Pop!_OS) liga a mesma política do Production por configuração.
     [Theory]
     [InlineData("Development", null, false)]
     [InlineData("Development", "false", false)]
@@ -142,9 +133,6 @@ public sealed class SecurityRegressionTests
         Assert.True(segura.Succeeded);
     }
 
-    // Reprodução do bloqueador 1: a CLI (mesmo binário, mesma configuração de Production) precisa ser
-    // recusada pela validação ANTES de qualquer conexão — o servidor abaixo nem existe, então, se a CLI
-    // chegasse a conectar, a saída seria outro erro (falha de conexão) e não a recusa por TLS.
     [Theory]
     [InlineData("Production", false)]
     [InlineData("Development", true)]
@@ -191,7 +179,6 @@ public sealed class SecurityRegressionTests
         return await client.SendAsync(request);
     }
 
-    // Development publicado (HTTPS real) emite HSTS quando habilitado; sem a flag, nunca (comportamento de sempre).
     [Theory]
     [InlineData("true", true)]
     [InlineData(null, false)]
@@ -206,7 +193,6 @@ public sealed class SecurityRegressionTests
         Assert.Equal(esperado, response.Headers.Contains("Strict-Transport-Security"));
     }
 
-    // Host desconhecido não chega ao pipeline (nem a redirects que o refletiriam): HostFiltering => 400.
     [Theory]
     [InlineData("Development")]
     [InlineData("Production")]
@@ -219,11 +205,6 @@ public sealed class SecurityRegressionTests
         Assert.Equal(HttpStatusCode.BadRequest, (await GetCsrfAsync(client, "attacker.example")).StatusCode);
     }
 
-    // Uma rede "confiável" larga demais faz a API aceitar X-Forwarded-For/-Proto de qualquer cliente:
-    // dá para forjar o IP (quebrando a partição do rate limit) e marcar a requisição como HTTPS.
-    // Antes isso era aceito em silêncio; agora o startup recusa, com a mesma severidade de uma chave
-    // JWT inválida. /16 (IPv4) e /64 (IPv6) são o limite: a subnet do Compose e o 127.0.0.1/32 do
-    // IIS ficam bem abaixo disso.
     [Theory]
     [InlineData("0.0.0.0/0")]
     [InlineData("10.0.0.0/8")]
@@ -249,12 +230,10 @@ public sealed class SecurityRegressionTests
         Assert.Equal(HttpStatusCode.OK, (await GetCsrfAsync(factory.CreateClient(), "api.exemplo.com")).StatusCode);
     }
 
-    // Swagger descreve toda a superfície da API: fora de Development só aparece por opção explícita.
     [Theory]
     [InlineData("Development", null, true)]
     [InlineData("Development", "false", false)]
     [InlineData("Production", null, false)]
-    // O compose.yaml repassa SWAGGER_ENABLED="" quando a variável não existe: vazio = padrão do ambiente (antes derrubava o startup).
     [InlineData("Development", "", true)]
     [InlineData("Production", "", false)]
     [InlineData("Production", "   ", false)]
@@ -277,8 +256,6 @@ public sealed class SecurityRegressionTests
     }
 
 
-    // Transição "Despesa" -> "Saida": o nome legado continua aceito na entrada; a resposta usa "Saida" e
-    // só volta a "Despesa" durante a janela de compatibilidade (Compatibility:LegacyTipoFluxoDespesa).
     [Theory]
     [InlineData("\"Despesa\"", 1)]
     [InlineData("\"despesa\"", 1)]

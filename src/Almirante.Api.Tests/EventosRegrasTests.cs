@@ -5,7 +5,6 @@ using Almirante.Api.Validation.Eventos;
 
 namespace Almirante.Api.Tests;
 
-// Regras puras (sem banco/HTTP): contrato "GUID | GUID[]", cálculo, datas, hash de idempotência e validação.
 public sealed class EventosRegrasTests
 {
     private static readonly Guid A = Guid.Parse("11111111-1111-4111-8111-111111111111");
@@ -26,8 +25,6 @@ public sealed class EventosRegrasTests
 
     private static IEnumerable<string> Erros(RegistrarEventoRequest request) =>
         new RegistrarEventoRequestValidator().Validate(request).Errors.Select(e => e.ErrorMessage);
-
-    // ------------------------------------------------------------------ GUID | GUID[]
 
     [Fact]
     public void Membros_GuidUnicoEArrayDeUm_ViramAMesmaLista()
@@ -76,7 +73,7 @@ public sealed class EventosRegrasTests
         Assert.Contains(Erros(Ler(Json($"[\"{A}\",\"{Guid.Empty}\"]"))), e => e.Contains("GUID vazio"));
 
         var duplicado = Ler(Json($"[\"{A}\",\"{B}\",\"{A}\"]"));
-        Assert.Equal(3, duplicado.Membros!.Count); // nada removido em silêncio
+        Assert.Equal(3, duplicado.Membros!.Count);
         Assert.Contains(Erros(duplicado), e => e.Contains("repetidos") && e.Contains(A.ToString()));
     }
 
@@ -110,18 +107,15 @@ public sealed class EventosRegrasTests
         public IReadOnlyList<Guid>? Membros { get; set; }
     }
 
-    // ------------------------------------------------------------------ cálculo
-
     [Theory]
-    // transporte, gratis, alimentação, individual, seguro, membros, valorPorMembro, total
-    [InlineData(10, false, 8, false, 2, 2, 20, 40)]     // exemplo da issue
-    [InlineData(10, true, 8, false, 2, 2, 10, 20)]      // transporte grátis ignora o valor
-    [InlineData(10, false, 8, true, 2, 2, 12, 24)]      // alimentação individual ignora o valor
-    [InlineData(10, true, 8, true, 2, 3, 2, 6)]         // só seguro
-    [InlineData(10, false, 8, false, 0, 2, 18, 36)]     // seguro zero
-    [InlineData(0, false, 0, false, 0, 4, 0, 0)]        // todos os componentes zerados: válido
-    [InlineData(10, false, 8, false, 2, 1, 20, 20)]     // um membro
-    [InlineData(3, false, 0, true, 2, 2, 5, 10)]        // segundo grupo do Ibirapuera: 2 × R$ 5
+    [InlineData(10, false, 8, false, 2, 2, 20, 40)]
+    [InlineData(10, true, 8, false, 2, 2, 10, 20)]
+    [InlineData(10, false, 8, true, 2, 2, 12, 24)]
+    [InlineData(10, true, 8, true, 2, 3, 2, 6)]
+    [InlineData(10, false, 8, false, 0, 2, 18, 36)]
+    [InlineData(0, false, 0, false, 0, 4, 0, 0)]
+    [InlineData(10, false, 8, false, 2, 1, 20, 20)]
+    [InlineData(3, false, 0, true, 2, 2, 5, 10)]
     public void Calculo_ValorPorMembroETotal(decimal transporte, bool gratis, decimal alimentacao, bool individual, decimal seguro,
         int membros, decimal esperadoPorMembro, decimal esperadoTotal)
     {
@@ -141,7 +135,6 @@ public sealed class EventosRegrasTests
     [Fact]
     public void Calculo_ComponenteIgnoradoPelosBooleanos_ViraZeroAntesDaValidacao()
     {
-        // valor absurdo (negativo, 3 casas decimais) em campo ignorado não invalida a requisição
         var request = Ler(Json($"\"{A}\"", transporte: """{"valor":-5.123,"ehGratis":true}""", alimentacao: """{"individual":true,"valor":99999999999.999}"""));
         Assert.Empty(Erros(request));
         var normalizado = EventoRegras.Normalizar(request);
@@ -198,41 +191,38 @@ public sealed class EventosRegrasTests
         Assert.Contains(Erros(Ler(Json($"\"{A}\"").Replace("Parque Ibirapuera", "   "))), e => e.Contains("local é obrigatório"));
     }
 
-    // ------------------------------------------------------------------ datas
-
     [Theory]
-    [InlineData("2026-09-01", true)]   // primeiro dia do mês
-    [InlineData("2026-09-10", true)]   // ontem/dia passado dentro do mês
+    [InlineData("2026-09-01", true)]
+    [InlineData("2026-09-10", true)]
     [InlineData("2026-09-17", true)]
-    [InlineData("2026-09-18", true)]   // hoje
+    [InlineData("2026-09-18", true)]
     [InlineData("2026-09-30", true)]
-    [InlineData("2027-03-01", true)]   // futuro
-    [InlineData("2026-08-31", false)]  // último dia do mês anterior
+    [InlineData("2027-03-01", true)]
+    [InlineData("2026-08-31", false)]
     [InlineData("2025-09-18", false)]
     public void DataEvento_AceitaAPartirDoPrimeiroDiaDoMesAtual(string data, bool valida)
     {
-        // regra de CRIAÇÃO: fora do validador (não pode barrar replay); ver EventosService.ValidarDataDeCadastro
         Assert.Equal(valida, EventoRegras.DataDeCadastroValida(DateOnly.Parse(data), DateTimeOffset.Parse("2026-09-18T12:00:00Z")));
-        Assert.Empty(Erros(Ler(Json($"\"{A}\"", data: data))));   // o validador não julga a data pelo relógio
+        Assert.Empty(Erros(Ler(Json($"\"{A}\"", data: data))));
     }
 
     [Theory]
-    [InlineData("2027-01-05T10:00:00Z", "2027-01-01", true)]   // virada de ano
+    [InlineData("2027-01-05T10:00:00Z", "2027-01-01", true)]
     [InlineData("2027-01-05T10:00:00Z", "2026-12-31", false)]
-    [InlineData("2028-02-29T23:59:59Z", "2028-02-01", true)]   // fevereiro bissexto
+    [InlineData("2028-02-29T23:59:59Z", "2028-02-01", true)]
     [InlineData("2028-02-29T23:59:59Z", "2028-01-31", false)]
-    [InlineData("2026-09-30T22:00:00-03:00", "2026-10-01", true)]  // 01:00Z de outubro
-    [InlineData("2026-09-30T22:00:00-03:00", "2026-09-30", false)] // fuso local não conta: referência é UTC
+    [InlineData("2026-09-30T22:00:00-03:00", "2026-10-01", true)]
+    [InlineData("2026-09-30T22:00:00-03:00", "2026-09-30", false)]
     public void DataEvento_UsaReferenciaUtc(string agora, string data, bool valida)
     {
         Assert.Equal(valida, EventoRegras.DataDeCadastroValida(DateOnly.Parse(data), DateTimeOffset.Parse(agora)));
     }
 
     [Theory]
-    [InlineData("2026-09-18T12:00:00Z", "2026-09-01", "2026-09-30", "2026-08-02", "2026-10-30")] // exemplo da issue
-    [InlineData("2027-01-15T00:00:00Z", "2027-01-01", "2027-01-31", "2026-12-02", "2027-03-02")] // virada de ano
-    [InlineData("2028-02-10T00:00:00Z", "2028-02-01", "2028-02-29", "2028-01-02", "2028-03-30")] // bissexto
-    [InlineData("2027-02-10T00:00:00Z", "2027-02-01", "2027-02-28", "2027-01-02", "2027-03-30")] // não bissexto
+    [InlineData("2026-09-18T12:00:00Z", "2026-09-01", "2026-09-30", "2026-08-02", "2026-10-30")]
+    [InlineData("2027-01-15T00:00:00Z", "2027-01-01", "2027-01-31", "2026-12-02", "2027-03-02")]
+    [InlineData("2028-02-10T00:00:00Z", "2028-02-01", "2028-02-29", "2028-01-02", "2028-03-30")]
+    [InlineData("2027-02-10T00:00:00Z", "2027-02-01", "2027-02-28", "2027-01-02", "2027-03-30")]
     public void PeriodoPadrao_MesAtualMais30DiasParaCadaLado(string agora, string primeiro, string ultimo, string inicial, string final)
     {
         var relogio = DateTimeOffset.Parse(agora);
@@ -242,8 +232,6 @@ public sealed class EventosRegrasTests
         Assert.Equal(DateOnly.Parse(inicial), i);
         Assert.Equal(DateOnly.Parse(final), f);
     }
-
-    // ------------------------------------------------------------------ idempotência (hash)
 
     private static string Hash(string json, Guid? referencia = null) =>
         EventoRegras.Hash(EventoRegras.Normalizar(Ler(json)), referencia);
@@ -304,8 +292,6 @@ public sealed class EventosRegrasTests
         request.IdempotencyKey = "abc";
         Assert.Contains(Erros(request), e => e.Contains("UUID válido"));
     }
-
-    // ------------------------------------------------------------------ PUT / DELETE / GET
 
     [Fact]
     public void Put_ExigeVersaoValidaEMotivoLimitado()

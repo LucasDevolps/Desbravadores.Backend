@@ -8,18 +8,13 @@ namespace Almirante.Api.Infrastructure;
 
 public sealed record UploadFoto(byte[] Conteudo, FormatoFoto Formato);
 
-// Leitura do multipart do envio de foto (issue #116) em streaming, sem IFormFile: o original nunca vai para o disco (nem
-// como temporário do ASP.NET) e o corpo é lido no máximo até o limite configurado + 1 byte. Ordem: compressão de
-// transporte, tipo multipart, Content-Length declarado, limite do servidor para o corpo, uma única parte "arquivo" com
-// extensão e Content-Type permitidos e coerentes. A assinatura real e a imagem em si são validadas em ProcessadorFotos.
 public static class LeitorUploadFoto
 {
     public const string Campo = "arquivo";
 
-    // Boundary, Content-Disposition e Content-Type da parte, além do arquivo.
     public const int MargemMultipartBytes = 16 * 1024;
 
-    private const int MaximoBoundary = 70; // RFC 2046
+    private const int MaximoBoundary = 70;
 
     private static readonly Dictionary<string, FormatoFoto> PorExtensao = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -38,8 +33,6 @@ public static class LeitorUploadFoto
 
     public static async Task<UploadFoto> LerAsync(HttpRequest request, long limiteArquivo, CancellationToken ct)
     {
-        // Zip bomb no transporte: a API nunca descomprime corpo de requisição (não há UseRequestDecompression). Um corpo
-        // comprimido é recusado em vez de ser lido como se fosse a imagem (RFC 7694: 415).
         if (request.Headers.ContentEncoding.Count > 0)
         {
             throw NaoSuportado("Content-Encoding não suportado.", "Envie a foto sem compressão de transporte (sem o header Content-Encoding).");
@@ -63,7 +56,6 @@ public static class LeitorUploadFoto
             throw MuitoGrande(limiteArquivo);
         }
 
-        // Kestrel e IIS cortam o corpo (413) assim que passar do limite, mesmo sem Content-Length (chunked).
         var tamanhoMaximo = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
         if (tamanhoMaximo is { IsReadOnly: false })
         {
@@ -93,7 +85,6 @@ public static class LeitorUploadFoto
         }
         catch (IOException)
         {
-            // Fim inesperado do corpo (multipart truncado ou conexão interrompida); BadHttpRequestException também é IOException.
             throw Invalido("Corpo multipart incompleto.");
         }
     }
@@ -107,7 +98,6 @@ public static class LeitorUploadFoto
             throw Invalido($"Envie a foto no campo '{Campo}' do multipart/form-data.");
         }
 
-        // O nome do arquivo só serve para a allowlist de extensão: nunca vira nome físico nem vai para o log.
         var nome = HeaderUtilities.RemoveQuotes(disposicao.FileNameStar.HasValue ? disposicao.FileNameStar : disposicao.FileName).Value;
         if (string.IsNullOrWhiteSpace(nome))
         {

@@ -5,18 +5,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Infrastructure;
 
-// Política de identidades SQL do processo da API: "sa" (e o segredo dele) NUNCA entram aqui.
-//
-// A recusa é técnica, não documental — não existe modo "Warn", "Off" nem fallback:
-//   - o processo não pode receber SQL_SA_PASSWORD/MSSQL_SA_PASSWORD (variável de ambiente ou chave de
-//     configuração): se receber, o startup falha. Só o serviço "sqlserver" (que inicializa a instância) e o
-//     "sql-bootstrap" (que provisiona as identidades da aplicação) do Compose conhecem esse segredo;
-//   - nenhuma connection string da API (runtime e administrativa) pode usar o login "sa";
-//   - com DbCredentials:AppUser habilitado, a identidade administrativa é obrigatória, dedicada (diferente
-//     da de runtime e de "sa") e precisa de credencial.
-// A identidade EFETIVA (sysadmin, CONTROL SERVER, SID 0x01 de um "sa" renomeado...) é conferida no SQL
-// Server por DbPrivilegeAuditor; este arquivo cobre só o que dá para recusar olhando a configuração.
-// Só devolve nomes de opções, nunca valores/connection strings, para poder ir a log e exceção de startup.
 public static class SqlIdentityPolicy
 {
     public const string AdminPrivilegeCheckSettingName = "Security:AdminPrivilegeCheck";
@@ -52,7 +40,6 @@ public static class SqlIdentityPolicy
                     failures.Add($"{name} não pode existir no ambiente/configuração da API: o segredo do login 'sa' pertence só ao serviço " +
                         "do SQL Server e ao sql-bootstrap (a API usa as identidades ConnectionStrings:AlmiranteAdmin e DbCredentials:AppUser).");
 
-            // O modo Warn/Off já existiu: uma configuração antiga que ainda o defina não pode passar a valer em silêncio.
             var check = configuration[AdminPrivilegeCheckSettingName];
             if (!string.IsNullOrWhiteSpace(check) && !string.Equals(check.Trim(), "Enforce", StringComparison.OrdinalIgnoreCase))
                 failures.Add($"{AdminPrivilegeCheckSettingName} foi removida: a auditoria da identidade administrativa é sempre obrigatória. " +
@@ -70,7 +57,6 @@ public static class SqlIdentityPolicy
 
         if (string.IsNullOrWhiteSpace(appUser)) return failures;
 
-        // Daqui em diante: DbCredentials:AppUser habilitado (runtime com credencial rotacionada + admin dedicado).
         if (IsSaName(appUser))
             failures.Add($"{DbCredentialOptions.SectionName}:AppUser não pode ser 'sa'.");
 
@@ -107,7 +93,6 @@ public static class SqlIdentityPolicy
         return failures;
     }
 
-    // Lança InvalidOperationException (sem valores de configuração) se a política for violada.
     public static void EnsureValid(IConfiguration configuration)
     {
         var failures = Validate(configuration).ToList();
@@ -119,13 +104,10 @@ public static class SqlIdentityPolicy
     {
         if (string.IsNullOrWhiteSpace(connectionString)) return null;
         try { return new SqlConnectionStringBuilder(connectionString); }
-        // Malformada: o driver falha ao abrir, com mensagem própria; não é papel desta política.
         catch (Exception) { return null; }
     }
 }
 
-// Executa SqlIdentityPolicy junto das demais validações de startup (IStartupValidator), antes de qualquer
-// acesso ao banco — inclusive para a CLI reset-admin-password.
 public sealed class SqlIdentityPolicyValidator(IConfiguration configuration) : IValidateOptions<ConnectionStringsOptions>
 {
     public ValidateOptionsResult Validate(string? name, ConnectionStringsOptions options)

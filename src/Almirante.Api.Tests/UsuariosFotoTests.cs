@@ -14,13 +14,10 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Tests;
 
-// Foto de perfil (issue #116) via HTTP sem SQL Server: autorização, recusas antes do serviço, leitura (GET), limites de
-// envio e documentação. Envio/troca/exclusão gravados de verdade: UsuariosFotoSqlServerTests.
 public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private static string Rota(Guid id) => $"/api/Usuarios/{id}/foto";
 
-    // Usuário com foto gravada direto no banco (InMemory) e no armazenamento da fábrica.
     private async Task<(Guid Id, string Chave, byte[] Conteudo)> SemearComFotoAsync(AlmiranteApiFactory fabrica, string? chave = null)
     {
         var usuario = await TestHelpers.AddUsuarioAsync(fabrica, $"Com foto {Guid.NewGuid():N}", "DS");
@@ -35,8 +32,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
         });
         return (usuario.Id, foto, conteudo);
     }
-
-    // ------------------------------------------------------------------ autorização e recusas antes do serviço
 
     [Fact]
     public async Task SemToken_Retorna401_EmTodasAsRotasDaFoto()
@@ -78,7 +73,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
     [Fact]
     public async Task Erro500_EmProducao_NaoDevolveDetalhesInternos_ENadaChegaAoDisco()
     {
-        // InMemory => o serviço recusa com NotSupportedException antes de decodificar ou gravar (falha inesperada real).
         using var fabrica = new ConfiguredApiFactory("Production");
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(fabrica);
         var alvo = await TestHelpers.AddUsuarioAsync(fabrica, "Alvo da falha", "DS");
@@ -99,8 +93,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
 
         Assert.Empty(Directory.EnumerateFileSystemEntries(fabrica.FotosPath, "*", SearchOption.AllDirectories));
     }
-
-    // ------------------------------------------------------------------ leitura
 
     [Fact]
     public async Task Get_UsuarioInexistenteOuSemFoto_Retorna404()
@@ -179,8 +171,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
         Assert.DoesNotContain("possuiFoto", json, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ------------------------------------------------------------------ limites de envio (429)
-
     [Fact]
     public async Task LimitePorUsuario_RecusaComRetryAfter_ContandoTambemEnviosRecusados()
     {
@@ -189,7 +179,7 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
         HttpContent Corpo()
         {
             var corpo = FotosTestKit.Multipart(FotosTestKit.Jpeg(100, 100));
-            corpo.Headers.ContentEncoding.Add("gzip");   // recusado (415) depois de contar na janela
+            corpo.Headers.ContentEncoding.Add("gzip");
             return corpo;
         }
 
@@ -210,7 +200,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(fabrica);
         var limitador = fabrica.Services.GetRequiredService<LimitadorEnvioFotos>();
 
-        // 1 vaga + fila de 2: tudo ocupado, a próxima reserva falha na hora.
         using var emUso = await limitador.ReservarProcessamentoAsync(CancellationToken.None);
         using var cancelar = new CancellationTokenSource();
         var naFila = new[] { limitador.ReservarProcessamentoAsync(cancelar.Token).AsTask(), limitador.ReservarProcessamentoAsync(cancelar.Token).AsTask() };
@@ -223,8 +212,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
         await cancelar.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Task.WhenAll(naFila));
     }
-
-    // ------------------------------------------------------------------ identidade sem id (defesa mantida no controller)
 
     private sealed class SemIdentificadorHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder)
         : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
@@ -258,8 +245,6 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
             Assert.Equal("Identidade autenticada inválida.", (string)JsonNode.Parse(await response.Content.ReadAsStringAsync())!["title"]!);
         }
     }
-
-    // ------------------------------------------------------------------ documentação
 
     [Fact]
     public async Task Swagger_DocumentaOCorpoMultipartComOCampoArquivoBinario()

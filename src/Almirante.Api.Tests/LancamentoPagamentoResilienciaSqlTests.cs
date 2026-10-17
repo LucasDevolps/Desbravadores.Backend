@@ -6,9 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Mudança de status (pagamento) de lançamento de evento sob a execution strategy com retry (equivalente à do Aspire)
-// e sob intercalamentos forçados com PUT/DELETE do cadastro. Sempre SQL Server real; o estado persistido é lido
-// por uma conexão independente da API, e comparado com o que a resposta HTTP afirmou.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
 {
@@ -58,13 +55,11 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(StatusLancamento.Pago, (await LerLancamentoAsync(response)).Status);
-        Assert.Equal(2, _falha.TransacoesIniciadas);   // a primeira tentativa foi revertida e a estratégia retentou
+        Assert.Equal(2, _falha.TransacoesIniciadas);
         Assert.Equal(1, _falha.CommitsEfetivados);
-        // o que a resposta afirmou é o que está no banco, lido por outra conexão
         Assert.Equal(1, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
         Assert.NotNull(await Sql<DateTime?>("SELECT DataAtualizacao FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
         Assert.NotEqual(versaoAntes, await Sql<byte[]>("SELECT Versao FROM eventos WHERE Id = @e", ("@e", evento.Id)));
-        // o outro lançamento não foi tocado
         Assert.Equal(0, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", evento.Lancamentos[1].Id)));
     }
 
@@ -81,12 +76,11 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var dto = await LerLancamentoAsync(response);
         Assert.Equal(StatusLancamento.Pago, dto.Status);
-        Assert.Equal(evento.Lancamentos[0].Valor, dto.Valor); // dados reais lidos do banco, não fictícios
-        Assert.Equal(1, _falha.TransacoesIniciadas);          // nenhuma nova tentativa da operação: o commit foi verificado
+        Assert.Equal(evento.Lancamentos[0].Valor, dto.Valor);
+        Assert.Equal(1, _falha.TransacoesIniciadas);
         Assert.Equal(1, _falha.CommitsEfetivados);
         Assert.Equal(1, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
 
-        // e o cadastro segue coerente: um segundo pagamento idempotente do mesmo status não regride nada
         var repetido = await EventosSqlSupport.PagarAsync(_client, alvo);
         Assert.Equal(HttpStatusCode.OK, repetido.StatusCode);
         Assert.Equal(1, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
@@ -113,7 +107,6 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
         var (evento, _) = await EventoAsync(2);
         var alvo = evento.Lancamentos[0].Id;
 
-        // o pagamento já leu o lançamento (ativo) e para ANTES de travar o evento; a exclusão confirma nesse intervalo
         var pausa = _pausa.Armar(TocaEventoParaPagamento);
         var pagar = EventosSqlSupport.PagarAsync(_client, alvo);
         await pausa.Atingida;
@@ -150,7 +143,6 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
         var (evento, membros) = await EventoAsync(1);
         var alvo = evento.Lancamentos[0].Id;
 
-        // o pagamento leu o lançamento com valor 20 e para antes de travar o evento; o PUT confirma os novos custos (87)
         var pausa = _pausa.Armar(TocaEventoParaPagamento);
         var pagar = EventosSqlSupport.PagarAsync(_client, alvo);
         await pausa.Atingida;
@@ -162,7 +154,6 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
         var dto = await LerLancamentoAsync(resposta);
         Assert.Equal(StatusLancamento.Pago, dto.Status);
-        // a resposta reflete o valor confirmado pelo PUT, e o banco tem exatamente isso (evento e lançamento coerentes)
         Assert.Equal(87m, dto.Valor);
         Assert.Equal(87m, await Sql<decimal>("SELECT Valor FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
         Assert.Equal(87m, await Sql<decimal>("SELECT ValorPorMembro FROM eventos WHERE Id = @e", ("@e", evento.Id)));

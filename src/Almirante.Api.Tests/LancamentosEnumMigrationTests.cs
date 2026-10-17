@@ -38,7 +38,6 @@ public sealed class LancamentosEnumMigrationTests
 
         var operacaoId = Guid.NewGuid();
         var key = $"legado-{Guid.NewGuid():N}";
-        // Fixture do contrato histórico, independente da implementação atual do hash.
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("Mensalidade|Legado|Clube|Despesa|50.00|2099-10-01")));
         var vencimento = new DateTime(2099, 10, 1);
         var criadoEm = new DateTime(2026, 1, 1);
@@ -96,7 +95,6 @@ public sealed class LancamentosEnumMigrationTests
         Assert.Equal(TipoFluxoLancamento.Saida, operacao.TipoFluxo);
         Assert.Equal(hash, operacao.RequestHash);
 
-        // As oito colunas foram convertidas, não apenas o modelo CLR.
         Assert.Equal(8, await db.Database.SqlQueryRaw<int>("""
             SELECT COUNT(*) AS Value FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_NAME IN ('Lancamentos', 'LancamentosOperacoes', 'lancamentos_deletados')

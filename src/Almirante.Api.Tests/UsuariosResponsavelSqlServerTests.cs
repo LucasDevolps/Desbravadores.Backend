@@ -8,8 +8,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Dados do responsável (issues #112 e #131) contra SQL Server REAL: no PUT a regra usa os valores EFETIVOS (o que não veio no
-// corpo é lido do banco sob o lock), o trigger audita os campos novos e as colunas são varchar com o tamanho exato.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosResponsavelSqlServerTests(EventosSqlFixture fx) : IClassFixture<EventosSqlFixture>
 {
@@ -84,7 +82,6 @@ public sealed class UsuariosResponsavelSqlServerTests(EventosSqlFixture fx) : IC
     {
         var menor = await CriarAsync(Menor, "Joana Mãe", "joana@local.dev");
 
-        // Sem dataNascimento no corpo: vale a gravada (menor).
         var erros = await ErrosAsync(await PutAsync(menor.Id, CorpoPut(menor, c => c[campo] = null)));
 
         Assert.True(erros.ContainsKey(erro));
@@ -136,7 +133,6 @@ public sealed class UsuariosResponsavelSqlServerTests(EventosSqlFixture fx) : IC
         var cpf = TestHelpers.NovoCpf();
         var adulto = await CriarAsync(Maior, cpf: cpf);
 
-        // cpf omitido no corpo: compara com o gravado.
         var erros = await ErrosAsync(await PutAsync(adulto.Id, CorpoPut(adulto, c => c["responsavelCpf"] = TestHelpers.MascararCpf(cpf))));
 
         Assert.True(erros.ContainsKey("ResponsavelCpf"));
@@ -158,7 +154,7 @@ public sealed class UsuariosResponsavelSqlServerTests(EventosSqlFixture fx) : IC
 
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         var salvo = await UsuarioAsync(menor.Id);
-        Assert.Equal("Ângela Conceição D'Ávila", salvo.ResponsavelNome);   // varchar na página 1252, sem "?"
+        Assert.Equal("Ângela Conceição D'Ávila", salvo.ResponsavelNome);
         Assert.Equal("angela.nova@local.dev", salvo.ResponsavelEmail);
         Assert.Equal(cpf, salvo.ResponsavelCpf);
         Assert.Equal("31998765432", salvo.ResponsavelTelefone);

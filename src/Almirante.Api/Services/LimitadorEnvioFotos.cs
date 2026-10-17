@@ -4,12 +4,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Services;
 
-// Limites do envio de foto (issue #116), aplicados no controller DEPOIS da autenticação (o middleware de rate limit roda
-// antes dela, sem saber quem é o usuário) e ANTES de ler o corpo:
-//   - por usuário: no máximo UploadsPerUserPerWindow envios a cada UploadWindowMinutes (contam também os recusados: o
-//     custo de receber o arquivo já aconteceu);
-//   - global: no máximo MaxConcurrentProcessing decodificações ao mesmo tempo (CPU e memória), com fila curta.
-// Em memória, por instância da API, como o rate limit do login.
 public sealed class LimitadorEnvioFotos : IDisposable
 {
     private readonly PartitionedRateLimiter<Guid> _porUsuario;

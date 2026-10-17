@@ -10,31 +10,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
 
-// Regras de negócio de /api/Eventos. Toda escrita acontece em UMA transação SQL (evento, participantes,
-// lançamentos, idempotência), com um único SaveChanges em lote (sem N+1) e sem chamar /Lancamentos por HTTP.
-//
-// Ordem ÚNICA de locks (evita deadlock entre POST, PUT, DELETE e a mudança de status de lançamentos, ver
-// LancamentosService.UpdateAsync). Cada fluxo adquire só um subconjunto, sempre nesta ordem:
-//   1) coordenador do passeio: sp_getapplock exclusivo, dono = transação, recurso "evento-grupo:{EventoGrupoId}"
-//      (POST com eventoReferenciaId, PUT e DELETE). EventoGrupoId é imutável e sobrevive à exclusão do primeiro
-//      cadastro, então identifica o passeio para todos os cadastros de preço, em qualquer instância da API;
-//   2) UPDATE em eventos filtrado por Id/Ativo/Versao (valida a rowversion e trava a linha do cadastro);
-//   3) leitura/alteração de evento_membros e Lancamentos.
-// O pagamento (LancamentosService) usa (2) e (3): não precisa do coordenador, pois só altera o status. Nenhum fluxo
-// pega um lock de posição menor depois de um de posição maior. A espera pelo coordenador é limitada
-// (EventosLockOptions) e o lock é liberado no commit/rollback; nenhuma linha de outro cadastro é tocada só para
-// coordenar (a rowversion dos demais cadastros não muda).
-// Quem altera o status de um lançamento de evento também toca a linha do evento ANTES, então a verificação
-// "há lançamento Pago/Atrasado?" feita aqui, com o evento travado, não pode ser invalidada até o commit.
-
-// Espera máxima pelo lock de coordenação do passeio (sp_getapplock); depois disso a requisição desiste com 409.
 public sealed record EventosLockOptions(int TimeoutMs = 10_000);
 
 public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, ILogger<EventosService> logger, EventosLockOptions lockOptions)
 {
     public static string RecursoDoGrupo(Guid grupoId) => $"evento-grupo:{grupoId:D}";
 
-    // Resposta original do POST: JSON camelCase (mesmo contrato da API) com enums por nome.
     private static readonly JsonSerializerOptions RespostaJsonOptions = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() },
@@ -44,8 +25,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
     private const int SqlUnicidadeIndice = 2601;
     private const int SqlUnicidadeConstraint = 2627;
-
-    // ---------------------------------------------------------------- consultas
 
     public async Task<EventosResponse> ListAsync(DateOnly? dataInicial, DateOnly? dataFinal, CancellationToken ct)
     {
@@ -74,7 +53,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         return evento is null ? null : (await MontarDtosAsync([evento], ct))[0];
     }
 
-    // Duas consultas em lote para a página inteira (participantes e lançamentos), nunca uma por evento.
     private async Task<IReadOnlyList<EventoDto>> MontarDtosAsync(IReadOnlyList<Evento> eventos, CancellationToken ct)
     {
         if (eventos.Count == 0)
@@ -99,19 +77,13 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             lancamentosPorEvento[e.Id].Select(l => new EventoLancamentoDto(l.Id, l.MembroId, l.Valor, l.Status)))).ToList();
     }
 
-    // ---------------------------------------------------------------- POST
-
     public async Task<RegistrarEventoResult> RegistrarAsync(RegistrarEventoRequest request, CancellationToken ct)
     {
-        // Validação e normalização já ocorreram (ValidationBehavior); "membros" é uma lista, seja qual for o JSON.
         var conteudo = EventoRegras.Normalizar(request);
         var chave = EventoRegras.NormalizarIdempotencyKey(request.IdempotencyKey)!;
         var hash = EventoRegras.Hash(conteudo, request.EventoReferenciaId);
         var usuarioId = request.UsuarioSolicitanteId;
 
-        // Replay ANTES das regras exclusivas de criação que dependem do relógio: um reenvio legítimo não pode falhar
-        // só porque o mês virou. O hash cobre o conteúdo normalizado inteiro, então uma chave existente não autoriza
-        // nada (a autenticação, a autorização e a leitura do corpo já aconteceram antes, no pipeline).
         var jaRegistrada = await LerOperacaoAsync(usuarioId, chave, ct);
         if (jaRegistrada is not null)
         {
@@ -128,9 +100,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 var eventoId = grupoId;
                 if (request.EventoReferenciaId is { } referenciaId)
                 {
-                    // O EventoGrupoId da referência é imutável (existe mesmo que ela esteja inativa), então pode ser lido
-                    // antes do lock. Depois de adquirir o coordenador do passeio, a referência é relida e validada:
-                    // um PUT concorrente que mudou data/local já confirmou (ou ainda vai esperar por este POST).
                     var grupoDaReferencia = await db.Eventos.AsNoTracking().Where(e => e.Id == referenciaId)
                         .Select(e => (Guid?)e.EventoGrupoId).SingleOrDefaultAsync(ct)
                         ?? throw ApiProblemException.NotFound("Evento de referência não encontrado.",
@@ -187,16 +156,12 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 };
                 db.EventosOperacoes.Add(operacao);
 
-                // Gravação 1: evento, participantes, lançamentos e a operação (a chave única já barra o duplicado aqui).
-                // A rowversion do cadastro só existe depois do INSERT (o banco a gera).
                 await SalvarAsync(ct);
 
                 var dto = EventoMapping.ToDto(evento,
                     participantes.Select(p => p.MembroId),
                     lancamentos.Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)));
 
-                // Gravação 2, MESMA transação: a resposta original (com a versão original) fica imutável junto do
-                // evento. Uma falha aqui reverte tudo; o commit só acontece depois, em ExecutarAsync.
                 operacao.RespostaJson = JsonSerializer.Serialize(dto, RespostaJsonOptions);
                 await SalvarAsync(ct);
 
@@ -207,8 +172,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
         catch (ViolacaoUnicidadeException)
         {
-            // Concorrência: outra requisição gravou primeiro a mesma chave (replay) ou o mesmo participante
-            // no mesmo grupo (409). O estado já foi revertido; resolve lendo o que venceu.
             db.ChangeTracker.Clear();
             var existente = await LerOperacaoAsync(usuarioId, chave, ct);
             if (existente is not null)
@@ -224,14 +187,9 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
     }
 
-    // A chave pertence ao par (usuário autenticado, Idempotency-Key): nunca lê a operação de outro usuário.
     private Task<EventoOperacao?> LerOperacaoAsync(Guid usuarioId, string chave, CancellationToken ct) =>
         db.EventosOperacoes.AsNoTracking().SingleOrDefaultAsync(o => o.UsuarioId == usuarioId && o.IdempotencyKey == chave, ct);
 
-    // Mesma chave + mesma operação lógica: devolve o resultado ORIGINAL do POST (200), com a versão original — o GET é
-    // que mostra o estado atual, e o PUT com a versão original continua recebendo 409 depois de qualquer alteração.
-    // Hash diferente: 409. Cadastro excluído depois: 409 sem recriar, reativar nem duplicar histórico. Operação anterior
-    // à coluna RespostaJson (sem fonte confiável do resultado original): 409 estável para consultar o evento existente.
     private async Task<RegistrarEventoResult> ReplayAsync(EventoOperacao operacao, string hash, CancellationToken ct)
     {
         if (!string.Equals(operacao.RequestHash, hash, StringComparison.Ordinal))
@@ -259,8 +217,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         return new RegistrarEventoResult(dto, false);
     }
 
-    // Regra exclusiva de CRIAÇÃO (depende do relógio): a partir do primeiro dia do mês atual (UTC), não de "hoje".
-    // Fica fora do validador para não impedir o replay de uma operação já registrada depois da virada do mês.
     private void ValidarDataDeCadastro(DateOnly dataEvento)
     {
         var agora = clock.GetUtcNow();
@@ -289,8 +245,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
     }
 
-    // ---------------------------------------------------------------- PUT
-
     public async Task<EventoDto> UpdateAsync(UpdateEventoRequest request, CancellationToken ct)
     {
         var conteudo = EventoRegras.Normalizar(request);
@@ -303,12 +257,10 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             {
                 var agora = clock.GetUtcNow().UtcDateTime;
 
-                // (1) coordenador do passeio (serializa com POST de outro cadastro do grupo e com outros PUT/DELETE),
-                // (2) valida a versão e trava o cadastro; a partir daqui pagamentos/versão não mudam até o commit.
                 await TravarGrupoDoEventoAsync(id, ct);
                 await TravarCadastroAsync(id, versao, request.UsuarioResponsavelId, agora, ct);
                 var evento = await db.Eventos.Include(e => e.Membros.Where(m => m.Ativo)).SingleAsync(e => e.Id == id, ct);
-                var participantes = evento.Membros.ToList(); // o Include já traz só os ativos
+                var participantes = evento.Membros.ToList();
                 var lancamentos = await db.Lancamentos.Where(l => l.EventoId == id && l.Ativo).ToListAsync(ct);
 
                 var atuais = participantes.Select(p => p.MembroId).ToHashSet();
@@ -318,9 +270,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
                 var dataMudou = conteudo.DataEvento != evento.DataEvento;
                 var localMudou = !string.Equals(conteudo.Local, evento.Local, StringComparison.Ordinal);
-                // Compara a COMPOSIÇÃO (valores efetivos já normalizados e os booleanos), não só o total: redistribuir
-                // 10+8+2 para 5+13+2 mantém 20, mas muda o que foi cobrado. Um número ignorado por um booleano
-                // inalterado já chegou como zero, então não vira alteração financeira fictícia.
                 var custoMudou = conteudo.TransporteEhGratis != evento.TransporteEhGratis
                     || conteudo.TransporteValor != evento.TransporteValor
                     || conteudo.AlimentacaoIndividual != evento.AlimentacaoIndividual
@@ -329,7 +278,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     || conteudo.ValorPorMembro != evento.ValorPorMembro;
                 var financeiroMudou = custoMudou || dataMudou || removidos.Count > 0 || adicionados.Count > 0;
 
-                // Pago/Atrasado protege valores, participantes e vencimento: nunca reverte pagamento nem estorna.
                 if (financeiroMudou && lancamentos.Any(l => l.Status != StatusLancamento.Pendente))
                 {
                     throw ApiProblemException.Conflict("Evento com lançamento Pago ou Atrasado.",
@@ -371,14 +319,12 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 {
                     if (lancamento.MembroId is { } m && removidosIds.Contains(m))
                     {
-                        lancamento.Ativo = false; // auditado pelo trigger de Lancamentos (contexto abaixo)
+                        lancamento.Ativo = false;
                         lancamento.DataAtualizacao = agora;
                         lancamento.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
                         continue;
                     }
 
-                    // Pago/Atrasado: só chega aqui quando a alteração é apenas do local. Valor, vencimento e status
-                    // não são tocados, mas a descrição acompanha o local corrigido, como nos lançamentos pendentes.
                     var pendente = lancamento.Status == StatusLancamento.Pendente;
                     if (lancamento.Descricao != descricao ||
                         (pendente && (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento)))
@@ -435,8 +381,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
     }
 
-    // ---------------------------------------------------------------- DELETE
-
     public async Task DeleteAsync(DeleteEventoRequest request, CancellationToken ct)
     {
         EventoRegras.TentarLerVersao(request.Versao, out var versao);
@@ -457,9 +401,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, motivo, ct);
 
-            // Ordem obrigatória: o trigger de eventos tira o snapshot dos participantes/lançamentos ATIVOS
-            // (historico_eventos), então o evento é desativado primeiro; participantes e lançamentos depois.
-            // Os triggers (eventos e Lancamentos) leem o mesmo SESSION_CONTEXT: responsável, IP e motivo.
             var eventos = await db.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE dbo.eventos SET Ativo = 0 WHERE Id = {id} AND Ativo = 1", ct);
             if (eventos != 1)
@@ -477,10 +418,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }, ct);
     }
 
-    // ---------------------------------------------------------------- infraestrutura
-
-    // Coordenador do passeio: lock de aplicação no SQL Server (vale entre instâncias da API), exclusivo, preso à transação
-    // atual (liberado no commit/rollback), com espera limitada. Deve ser o PRIMEIRO lock do fluxo (ver ordem no topo).
     private async Task TravarGrupoAsync(Guid grupoId, CancellationToken ct)
     {
         var codigo = new SqlParameter("@codigo", SqlDbType.Int) { Direction = ParameterDirection.Output };
@@ -491,7 +428,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         var resultado = (int)codigo.Value;
         if (resultado >= 0)
         {
-            return; // 0: concedido; 1: concedido depois de esperar
+            return;
         }
 
         if (resultado == -999)
@@ -499,13 +436,11 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             throw new InvalidOperationException("sp_getapplock recusou os parâmetros do lock do passeio.");
         }
 
-        // -1 tempo esgotado, -2 cancelado, -3 vítima de deadlock: desiste com 409, sem gravar nada (a transação reverte).
         logger.LogWarning("Lock do passeio {EventoGrupoId} não adquirido (sp_getapplock {Resultado}).", grupoId, resultado);
         throw ApiProblemException.Conflict("Passeio em uso por outra operação.",
             "Outra operação está alterando este passeio agora. Nada foi alterado; tente novamente em instantes.");
     }
 
-    // O EventoGrupoId é imutável: pode ser lido antes do lock. Inexistente: 404 (mesmo resultado de TravarCadastroAsync).
     private async Task TravarGrupoDoEventoAsync(Guid eventoId, CancellationToken ct)
     {
         var grupoId = await db.Eventos.AsNoTracking().Where(e => e.Id == eventoId).Select(e => (Guid?)e.EventoGrupoId).SingleOrDefaultAsync(ct)
@@ -513,8 +448,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         await TravarGrupoAsync(grupoId, ct);
     }
 
-    // UPDATE que valida a rowversion e adquire o lock do cadastro. 0 linhas: inexistente/inativo (404) ou
-    // versão desatualizada (409) — nunca sobrescreve silenciosamente a alteração de outra operação.
     private async Task TravarCadastroAsync(Guid id, byte[] versao, Guid usuarioId, DateTime agora, CancellationToken ct)
     {
         var linhas = await db.Database.ExecuteSqlInterpolatedAsync(
@@ -536,10 +469,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
     private async Task ExigirMembrosExistentesAsync(IReadOnlyCollection<Guid> membros, CancellationToken ct)
     {
-        // Usuário excluído logicamente (inativo) não entra como NOVO participante; participações já existentes seguem válidas.
-        // REPEATABLEREAD mantém o lock compartilhado nas linhas dos membros até o commit: uma exclusão concorrente
-        // (UsuariosService.DeleteAsync, que trava o usuário com XLOCK antes de procurar eventos futuros) espera este
-        // cadastro e passa a enxergá-lo, ou termina antes e o membro aparece aqui como inativo.
         var existentes = await db.Usuarios.FromSqlRaw("SELECT * FROM dbo.Usuarios WITH (REPEATABLEREAD)").AsNoTracking()
             .Where(u => u.Ativo && membros.Contains(u.Id)).Select(u => u.Id).ToListAsync(ct);
         var faltantes = membros.Except(existentes).OrderBy(m => m).ToList();
@@ -551,8 +480,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
     }
 
-    // Um membro só pode estar em UM grupo ativo por eventoGrupoId. O índice único filtrado do banco é a
-    // proteção definitiva contra corrida; esta consulta produz a mensagem com os IDs em conflito.
     private async Task ExigirSemConflitoNoGrupoAsync(Guid grupoId, IReadOnlyCollection<Guid> membros, Guid? ignorarEventoId, CancellationToken ct)
     {
         if (grupoId == Guid.Empty)
@@ -585,7 +512,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         evento.ValorPorMembro = conteudo.ValorPorMembro;
     }
 
-    // Tudo o que a cobrança tem de fixo vem do servidor; o cliente nunca escolhe status, categoria etc.
     private static Lancamento NovoLancamento(Evento evento, Guid membroId, DateTime agora) => new()
     {
         Id = Guid.NewGuid(),
@@ -630,7 +556,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         }
     }
 
-    // Unidade de trabalho transacional com SESSION_CONTEXT (ver SessaoAuditoria.ExecutarEmTransacaoAsync).
     private Task<T> ExecutarAsync<T>(Func<SessaoAuditoria, Task<T>> trabalho, CancellationToken ct)
     {
         if (!db.Database.IsRelational())

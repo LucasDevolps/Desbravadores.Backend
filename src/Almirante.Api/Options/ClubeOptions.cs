@@ -2,13 +2,10 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Options;
 
-// Dados do clube usados por regras de calendário (ex.: maioridade do responsável, ver DataCivil).
 public sealed class ClubeOptions
 {
     public const string SectionName = "Clube";
 
-    // Identificador IANA (Windows resolve via ICU, Linux via tzdata). Validado no startup: um fuso inexistente
-    // derrubaria a primeira requisição de cadastro em vez do deploy.
     public string FusoHorario { get; set; } = "America/Sao_Paulo";
 }
 

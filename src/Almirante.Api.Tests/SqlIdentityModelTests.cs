@@ -11,9 +11,6 @@ using static Almirante.Api.Tests.SqlIdentityEnvironment;
 
 namespace Almirante.Api.Tests;
 
-// Modelo de duas identidades SQL da API (administrativa dedicada + runtime), sem "sa", provado contra SQL
-// Server REAL: cada teste cria um banco novo, o prepara com o MESMO script que o operador executa
-// (docs/sql/criar-usuario-admin-app.sql) e remove tudo ao final. Ver SqlIdentityEnvironment.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class SqlIdentityModelTests
 {
@@ -39,15 +36,12 @@ public sealed class SqlIdentityModelTests
         return ex;
     }
 
-    // ---- bootstrap ----
-
     [Fact]
     public async Task Bootstrap_CriaSoUsuariosContidos_SemLoginDeServidor_ESemTrustworthy_EEhIdempotente()
     {
         await using var env = await PreparedAsync(initialize: false);
         var senhaAntiga = env.AdminPassword;
 
-        // Reexecutar é a rotação operacional da credencial administrativa: só a senha muda.
         await env.BootstrapAsync(NewPassword());
 
         await using var harness = await OpenHarnessAsync(env.Database);
@@ -56,7 +50,6 @@ public sealed class SqlIdentityModelTests
         Assert.Equal(1, await ScalarAsync(harness, "SELECT containment FROM sys.databases WHERE name = DB_NAME()"));
         Assert.Equal(0, await ScalarAsync(harness, "SELECT CAST(is_trustworthy_on AS int) FROM sys.databases WHERE name = DB_NAME()"));
 
-        // A senha administrativa antiga deixou de valer; a nova vale.
         SqlConnection.ClearAllPools();
         var antiga = new SqlConnection(WithAdmin(new SqlConnectionStringBuilder(env.AppCs), env.AdminUser, senhaAntiga));
         Assert.Equal(18456, (await Assert.ThrowsAsync<SqlException>(() => antiga.OpenAsync())).Number);
@@ -79,8 +72,6 @@ public sealed class SqlIdentityModelTests
         Assert.Equal(erro, ex.Number);
     }
 
-    // Ambiente vindo das versões anteriores: logins de servidor (o administrativo ainda por cima sysadmin) e
-    // usuários mapeados a login com db_owner. O bootstrap converte tudo; a API sobe depois.
     [Fact]
     public async Task Bootstrap_ConverteIdentidadesLegadasBaseadasEmLogin()
     {
@@ -119,8 +110,6 @@ public sealed class SqlIdentityModelTests
 
     private const string MembroDaRole = DbCredentialManager.AppRoleName;
 
-    // ---- identidade administrativa (#4 a #8) ----
-
     [Fact]
     public async Task Administrador_NaoEhSaNemSysadminNemTemControlServerOuPapelOuPermissaoDeServidor()
     {
@@ -136,14 +125,11 @@ public sealed class SqlIdentityModelTests
         foreach (var permission in DbPrivilegeAuditor.ServerPermissions)
             Assert.Equal(0, await ScalarAsync(admin, $"SELECT ISNULL(HAS_PERMS_BY_NAME(NULL, NULL, N'{permission}'), 0)"));
 
-        // Nem é db_owner, nem tem CONTROL no banco, nem pertence a papel fixo: as permissões são explícitas.
         Assert.Equal(0, await ScalarAsync(admin, "SELECT ISNULL(IS_MEMBER(N'db_owner'), 0)"));
         Assert.Equal(0, await ScalarAsync(admin, "SELECT ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CONTROL'), 0)"));
         Assert.Empty(await DbPrivilegeAuditor.FindAdminExcessPrivilegesAsync(admin));
 
-        // Não vira db_owner nem ganha CONTROL no banco por conta própria.
         Assert.IsType<SqlException>(await DeniedAsync(admin, "ALTER ROLE [db_owner] ADD MEMBER [" + env.AdminUser + "]"));
-        // "GRANT ... a si mesmo" só emite um aviso (sem exceção) e não concede nada: o efeito é o que conta.
         try { await ExecAsync(admin, $"GRANT CONTROL ON DATABASE::[{env.Database}] TO [{env.AdminUser}]"); } catch (SqlException) { }
         Assert.Equal(0, await ScalarAsync(admin, "SELECT ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'CONTROL'), 0)"));
         await DeniedAsync(admin, "CREATE PROCEDURE dbo.p_escalada WITH EXECUTE AS OWNER AS SELECT 1");
@@ -167,14 +153,12 @@ public sealed class SqlIdentityModelTests
         }
 
         await using var admin = await env.OpenAdminAsync();
-        // Ler, escrever, criar objeto ou mudar o outro banco.
         await DeniedAsync(admin, $"USE [{outro}]; SELECT * FROM dbo.Segredo");
         await DeniedAsync(admin, $"SELECT * FROM [{outro}].dbo.Segredo");
         await DeniedAsync(admin, $"CREATE TABLE [{outro}].dbo.Invasor (Id int)");
         await DeniedAsync(admin, $"INSERT [{outro}].dbo.Segredo VALUES (2)");
         await DeniedAsync(admin, $"ALTER DATABASE [{outro}] SET READ_ONLY");
         await DeniedAsync(admin, $"DROP DATABASE [{outro}]");
-        // Nem criar bancos, nem criar/alterar logins (o que permitiria assumir a identidade de outra aplicação).
         await DeniedAsync(admin, $"CREATE DATABASE [almirante_invasor_{env.Suffix}]");
         await DeniedAsync(admin, $"CREATE LOGIN [invasor_{env.Suffix}] WITH PASSWORD = N'{NewPassword()}'");
         await DeniedAsync(admin, $"ALTER LOGIN [{outroLogin}] WITH PASSWORD = N'{NewPassword()}'");
@@ -182,7 +166,6 @@ public sealed class SqlIdentityModelTests
         await DeniedAsync(admin, "EXEC sys.sp_configure N'show advanced options', 1");
         await DeniedAsync(admin, "EXEC master..xp_cmdshell 'echo x'");
 
-        // Nada mudou: a outra aplicação segue autenticando com a senha dela e o dado dela está intacto.
         await using var outraApp = new SqlConnection(new SqlConnectionStringBuilder(env.AppCs) { InitialCatalog = outro, UserID = outroLogin, Password = outraSenha }.ConnectionString);
         await outraApp.OpenAsync();
         Assert.Equal(1, await ScalarAsync(outraApp, "SELECT COUNT(*) FROM dbo.Segredo"));
@@ -201,14 +184,10 @@ public sealed class SqlIdentityModelTests
         Assert.NotEmpty(aplicadas);
         Assert.Equal(db.Database.GetMigrations().ToList(), aplicadas);
 
-        // As tabelas foram criadas pela identidade administrativa e continuam sob o schema dbo (a cadeia de
-        // propriedade do trigger de auditoria depende disso).
         await using var harness = await OpenHarnessAsync(env.Database);
         Assert.Equal(0, await ScalarAsync(harness, "SELECT COUNT(*) FROM sys.objects WHERE type IN ('U','TR') AND principal_id IS NOT NULL"));
         Assert.True(await ScalarAsync(harness, "SELECT COUNT(*) FROM sys.triggers WHERE name = N'TR_Lancamentos_AuditoriaExclusaoLogica'") > 0);
     }
-
-    // ---- identidade de runtime (#9 a #14) ----
 
     [Fact]
     public async Task Runtime_NaoEhDbOwnerNemTemDdlNemAlterAnyLogin_NaoApagaDadosNemEscreveNaAuditoria()
@@ -232,18 +211,15 @@ public sealed class SqlIdentityModelTests
         await DeniedAsync(app, "CREATE USER [invasor] WITHOUT LOGIN");
         await DeniedAsync(app, "EXECUTE AS USER = 'dbo'");
 
-        // Exclusão física de dados de negócio: negada (as exclusões são lógicas). Só AuthSessions aceita DELETE.
         foreach (var tabela in new[] { "Cargos", "Usuarios", "Lancamentos", "RefreshTokens" })
             Assert.Equal(229, (await DeniedAsync(app, $"DELETE FROM dbo.[{tabela}]")).Number);
         await ExecAsync(app, "DELETE FROM dbo.AuthSessions WHERE 1 = 0");
 
-        // Escrita direta na tabela protegida de auditoria: negada; leitura permitida.
         Assert.Equal(229, (await DeniedAsync(app, "INSERT INTO dbo.lancamentos_deletados (Id) VALUES (NEWID())")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "UPDATE dbo.lancamentos_deletados SET Motivo = N'x'")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo.lancamentos_deletados")).Number);
         await ScalarAsync(app, "SELECT COUNT(*) FROM dbo.lancamentos_deletados");
 
-        // historico_eventos (issue #56) tem o mesmo tratamento: só o trigger grava.
         Assert.Equal(229, (await DeniedAsync(app, "INSERT INTO dbo.historico_eventos (Id) VALUES (NEWID())")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "UPDATE dbo.historico_eventos SET Motivo = N'x'")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo.historico_eventos")).Number);
@@ -251,7 +227,6 @@ public sealed class SqlIdentityModelTests
         Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo.evento_membros")).Number);
         await ScalarAsync(app, "SELECT COUNT(*) FROM dbo.historico_eventos");
 
-        // _usuarios_hist: idem, só o trigger TR_Usuarios_Historico grava.
         Assert.Equal(229, (await DeniedAsync(app, "INSERT INTO dbo._usuarios_hist (Id) VALUES (NEWID())")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "UPDATE dbo._usuarios_hist SET Nome = N'x'")).Number);
         Assert.Equal(229, (await DeniedAsync(app, "DELETE FROM dbo._usuarios_hist")).Number);
@@ -292,7 +267,6 @@ public sealed class SqlIdentityModelTests
             .AddInterceptors(new AppDbCredentialInterceptor(env.Provider)).Options;
         await using var db = new AlmiranteDbContext(options);
 
-        // Seed (cargos, admin, lançamento) e "migrate" (só lê o histórico) como na API.
         await DbSeeder.SeedAsync(db, new PasswordHasher<Usuario>(),
             Microsoft.Extensions.Options.Options.Create(new SeedOptions { Nome = "Admin", Email = "admin@local.dev", Senha = "Tst-Senha-Longa-2026-ok-Xz9" }));
 
@@ -301,12 +275,9 @@ public sealed class SqlIdentityModelTests
         await db.SaveChangesAsync();
         Assert.Equal("atualizado pelo runtime", await db.Lancamentos.Where(l => l.Id == lancamento.Id).Select(l => l.Descricao).SingleAsync());
 
-        // Limpeza de sessões expiradas (AuthSessionCleanupService): o único DELETE permitido.
         Assert.Equal(0, await db.AuthSessions.Where(s => s.AbsoluteExpiresAtUtc < DateTime.UtcNow.AddYears(-1)).ExecuteDeleteAsync());
         Assert.NotEmpty(await db.Cargos.ToListAsync());
     }
-
-    // ---- rotação da senha de runtime (#15 a #19) ----
 
     [Fact]
     public async Task Rotacao_TrocaASenha_InvalidaAAnteriorParaNovasConexoesMesmoComPoolAquecido_ESegundaRotacaoTambemFunciona()
@@ -316,7 +287,6 @@ public sealed class SqlIdentityModelTests
         var primeira = env.Provider.Current!;
         var senhaPrimeira = env.CurrentAppPassword();
 
-        // Aquece o pool da credencial antiga: uma conexão devolvida ao pool, já autenticada com a senha antiga.
         await using (var aquecida = new SqlConnection(env.AppCs, primeira))
         {
             await aquecida.OpenAsync();
@@ -328,14 +298,10 @@ public sealed class SqlIdentityModelTests
         Assert.NotEqual(senhaPrimeira, senhaSegunda);
         Assert.NotSame(primeira, segunda);
 
-        // A credencial nova funciona…
         await using (var nova = new SqlConnection(env.AppCs, segunda)) { await nova.OpenAsync(); }
-        // …e a antiga NÃO abre — nem física (senha trocada no banco) nem reaproveitada do pool (esvaziado na
-        // rotação). Sem ClearAllPools aqui, de propósito: é o que o teste prova.
         var velha = new SqlConnection(env.AppCs, primeira);
         Assert.Equal(18456, (await Assert.ThrowsAsync<SqlException>(() => velha.OpenAsync())).Number);
 
-        // Segunda rotação: a senha da rotação anterior também deixa de valer e a nova funciona.
         await manager.RotateAsync();
         var terceira = env.Provider.Current!;
         Assert.NotEqual(senhaSegunda, env.CurrentAppPassword());
@@ -343,7 +309,6 @@ public sealed class SqlIdentityModelTests
         var anterior = new SqlConnection(env.AppCs, segunda);
         Assert.Equal(18456, (await Assert.ThrowsAsync<SqlException>(() => anterior.OpenAsync())).Number);
 
-        // Depois da rotação o DbContext da aplicação já usa a credencial nova (via interceptor), sem reiniciar.
         var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(env.AppCs).AddInterceptors(new AppDbCredentialInterceptor(env.Provider)).Options;
         await using var db = new AlmiranteDbContext(options);
         Assert.True(await db.Database.CanConnectAsync());
@@ -371,8 +336,6 @@ public sealed class SqlIdentityModelTests
         NoSecret.Assert(tudo, senhaRuntime);
         Assert.DoesNotMatch(new Regex("[A-Za-z0-9]{40,}"), tudo);
 
-        // Falha na rotação (usuário de runtime removido do banco): a exceção não carrega senha alguma nem o
-        // texto do lote (que contém a senha nova).
         await using (var harness = await OpenHarnessAsync(env.Database))
         {
             await ExecAsync(harness, $"ALTER ROLE [{MembroDaRole}] DROP MEMBER [{env.AppUser}]; DROP USER [{env.AppUser}];");
@@ -383,11 +346,8 @@ public sealed class SqlIdentityModelTests
         Assert.DoesNotMatch(new Regex("[A-Za-z0-9]{40,}"), ex.ToString());
         Assert.Null(ex.InnerException);
         Assert.Contains("bootstrap", ex.Message, StringComparison.OrdinalIgnoreCase);
-        // A credencial anterior continua a vigente (nada foi publicado): a aplicação não perde a senha.
         Assert.Equal(senhaRuntime, env.CurrentAppPassword());
     }
-
-    // ---- fail closed (identidade administrativa e de runtime) ----
 
     [Theory]
     [InlineData("SERVER ROLE sysadmin", "papel de servidor sysadmin")]
@@ -423,7 +383,6 @@ public sealed class SqlIdentityModelTests
 
         Assert.Contains(achado, ex.Message);
         NoSecret.Assert(ex.ToString(), senha);
-        // Fail closed ANTES de alterar: nenhuma migration aplicada, nenhuma credencial de runtime publicada.
         await using var verificacao = await OpenHarnessAsync(env.Database);
         Assert.Equal(0, await ScalarAsync(verificacao, "SELECT COUNT(*) FROM sys.tables"));
         Assert.Null(env.Provider.Current);
@@ -470,7 +429,6 @@ public sealed class SqlIdentityModelTests
     {
         await using var env = await PreparedAsync();
 
-        // Concessões a mais que a API alcança auditar: a conferência (feita com a senha recém-rotacionada) recusa.
         await using (var harness = await OpenHarnessAsync(env.Database))
         {
             await ExecAsync(harness, $"GRANT IMPERSONATE ON USER::[dbo] TO [{env.AppUser}]; GRANT DELETE ON OBJECT::dbo.Lancamentos TO [{env.AppUser}];");
@@ -479,9 +437,6 @@ public sealed class SqlIdentityModelTests
         Assert.Contains("IMPERSONATE", auditado.Message);
         Assert.Contains("DELETE em Lancamentos", auditado.Message);
 
-        // Identidade de runtime promovida a db_owner: a identidade administrativa nem consegue mais alterá-la (um
-        // principal mais privilegiado não é alterável por quem tem menos) — a rotação falha, sem senha nova
-        // publicada, e o roteiro é o mesmo.
         await using (var harness = await OpenHarnessAsync(env.Database))
         {
             await ExecAsync(harness, $"ALTER ROLE [db_owner] ADD MEMBER [{env.AppUser}];");
@@ -489,15 +444,12 @@ public sealed class SqlIdentityModelTests
         var bloqueado = await Assert.ThrowsAsync<InvalidOperationException>(() => env.NewManager().InitializeAsync());
         Assert.Contains("bootstrap", bloqueado.Message);
 
-        // O bootstrap (sysadmin) normaliza a identidade de runtime; a API sobe de novo, sem usar "sa".
         await env.BootstrapAsync(env.AdminPassword);
         await env.NewManager().InitializeAsync();
         await using var app = await env.OpenAppAsync();
         Assert.Empty(await DbPrivilegeAuditor.FindExcessPrivilegesAsync(app));
     }
 
-    // O harness do CI é "sa" de um SQL Server descartável; localmente costuma ser a conta do Windows. Se for
-    // "sa", prova a recusa da própria identidade; senão, o sysadmin equivalente já é recusado acima.
     [Fact]
     public async Task Startup_RecusaSaComoIdentidadeAdministrativa_QuandoOHarnessEhSa()
     {
@@ -515,7 +467,6 @@ public sealed class SqlIdentityModelTests
         Assert.Contains("identidade sa", await DbPrivilegeAuditor.FindAdminExcessPrivilegesAsync(sa));
         Assert.Contains("identidade sa", await DbPrivilegeAuditor.FindExcessPrivilegesAsync(sa));
 
-        // Caminho sem DbCredentials (ex.: IIS): "sa" é recusado em QUALQUER modo, inclusive Off.
         var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(harness.ConnectionString).Options;
         await using var db = new AlmiranteDbContext(options);
         foreach (var modo in new[] { "Off", "Warn", "Enforce" })

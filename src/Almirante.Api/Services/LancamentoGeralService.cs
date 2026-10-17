@@ -48,8 +48,6 @@ public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider c
         }
         catch (DbUpdateException)
         {
-            // O índice único resolve a corrida: reutilize a operação que venceu a gravação.
-            // Sem uma operação persistida, propague a falha original.
             db.ChangeTracker.Clear();
             existing = await db.LancamentosOperacoes.AsNoTracking().SingleOrDefaultAsync(x => x.IdempotencyKey == key, ct);
             if (existing is null)
@@ -64,8 +62,6 @@ public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider c
 
     private static string CalcularHash(RegistrarLancamentoRequest request)
     {
-        // Preserve o formato histórico do hash: Saida era persistido como "Despesa".
-        // Mudar esse texto invalidaria o replay das chaves criadas antes da migração.
         var canonical = string.Join('|',
             request.Finalidade,
             request.Descricao?.Trim() ?? "",

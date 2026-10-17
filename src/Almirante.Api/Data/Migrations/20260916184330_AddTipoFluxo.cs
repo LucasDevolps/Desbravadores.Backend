@@ -10,9 +10,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // Backfill "Entrada": todos os tipos existentes até aqui (Mensalidade, Campori,
-            // Acampamento, Uniflash, Doação, Evento, Outros) representam dinheiro entrando no
-            // clube — mesmo valor usado no seed demonstrativo (DbSeeder.SeedLancamentosAsync).
             migrationBuilder.AddColumn<string>(
                 name: "TipoFluxo",
                 table: "LancamentosOperacoes",
@@ -37,9 +34,6 @@ namespace Almirante.Api.Data.Migrations
                 nullable: false,
                 defaultValue: "Entrada");
 
-            // Defesa extra em nível de banco (mesma convenção da CHECK constraint de Motivo em
-            // AddLancamentoGeral): garante que só "Entrada"/"Despesa" cheguem à coluna mesmo que
-            // uma futura alteração de código pule a validação da API.
             migrationBuilder.Sql(
                 "ALTER TABLE [LancamentosOperacoes] ADD CONSTRAINT [CK_LancamentosOperacoes_TipoFluxo] CHECK ([TipoFluxo] IN (N'Entrada', N'Despesa'));");
             migrationBuilder.Sql(
@@ -47,14 +41,6 @@ namespace Almirante.Api.Data.Migrations
             migrationBuilder.Sql(
                 "ALTER TABLE [Lancamentos] ADD CONSTRAINT [CK_Lancamentos_TipoFluxo] CHECK ([TipoFluxo] IN (N'Entrada', N'Despesa'));");
 
-            // O trigger de auditoria (TR_Lancamentos_AuditoriaExclusaoLogica, migration
-            // AddLancamentoGeral) precisa ser recriado para incluir a nova coluna no snapshot:
-            // sem isso, lancamentos_deletados.TipoFluxo sempre receberia o valor padrão da coluna
-            // ("Entrada"), nunca o TipoFluxo real do lançamento excluído (ex.: uma "Despesa"
-            // seria auditada incorretamente como "Entrada"). DROP + CREATE porque SQL Server não
-            // tem "ALTER TRIGGER ... ADD coluna" — é a definição inteira de novo. Mesmo motivo do
-            // EXEC(N'...') em AddLancamentoGeral: CREATE TRIGGER precisa ser a única instrução do
-            // lote em que roda, e o EF Core agrupa comandos adjacentes no mesmo lote.
             migrationBuilder.Sql("DROP TRIGGER [TR_Lancamentos_AuditoriaExclusaoLogica];");
             migrationBuilder.Sql(
                 """
@@ -120,8 +106,6 @@ namespace Almirante.Api.Data.Migrations
                 name: "TipoFluxo",
                 table: "Lancamentos");
 
-            // Restaura o trigger na forma exata em que a migration AddLancamentoGeral o criou
-            // (sem TipoFluxo, que acabou de ser removido acima).
             migrationBuilder.Sql(
                 """
                 EXEC(N'

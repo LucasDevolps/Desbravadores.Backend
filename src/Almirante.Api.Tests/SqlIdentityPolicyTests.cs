@@ -7,8 +7,6 @@ using Microsoft.Extensions.Configuration;
 
 namespace Almirante.Api.Tests;
 
-// Política de identidades SQL da API, sem SQL Server: "sa" e o segredo dele nunca chegam ao processo, não
-// existe fallback para "sa" e a identidade administrativa é dedicada e obrigatória.
 public class SqlIdentityPolicyTests
 {
     private const string Runtime = "Server=sqlserver,1433;Database=almirante;Encrypt=True;TrustServerCertificate=False";
@@ -143,7 +141,6 @@ public class SqlIdentityPolicyTests
         Assert.DoesNotContain("sqlserver,1433", ex.Message);
     }
 
-    // O portão de rotação: enquanto o ALTER USER não terminou, nenhuma abertura NOVA parte da credencial antiga.
     [Fact]
     public async Task Interceptor_EsperaATrocaDeCredencialEmAndamento_EUsaANovaCredencial()
     {
@@ -190,8 +187,6 @@ public class SqlIdentityPolicyTests
     }
 }
 
-// Regressão de repositório: nenhum arquivo versionado pode reintroduzir "sa" ou o segredo dele no que a API
-// recebe (Compose, configuração, código) nem uma senha real em .env.example.
 public class SqlIdentityRepositoryPolicyTests
 {
     private static string RepositoryRoot()
@@ -204,7 +199,6 @@ public class SqlIdentityRepositoryPolicyTests
 
     private static readonly string[] ComposeFiles = ["compose.yaml", "compose.tls.yaml", "compose.https.yaml"];
 
-    // Bloco de um serviço do Compose: da linha "  nome:" até o próximo serviço (indentação de 2 espaços) ou seção.
     private static string ServiceBlock(string compose, string service)
     {
         var lines = compose.Replace("\r\n", "\n").Split('\n');
@@ -260,7 +254,6 @@ public class SqlIdentityRepositoryPolicyTests
         Assert.Contains("SQLCMDPASSWORD", bootstrap);
         Assert.Contains("restart: \"no\"", bootstrap);
 
-        // A API exige o bootstrap concluído, e a conexão administrativa usa SQL_ADMIN_* obrigatórios.
         var api = ServiceBlock(compose, "api");
         Assert.Contains("sql-bootstrap:", api);
         Assert.Contains("service_completed_successfully", api);
@@ -288,7 +281,6 @@ public class SqlIdentityRepositoryPolicyTests
                      .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
                      .Where(f => f.EndsWith(".cs") || f.EndsWith(".json") || f.EndsWith(".http") || f.EndsWith("Dockerfile")))
         {
-            // Comentários explicam a política e podem citar os nomes; só o código conta.
             var text = string.Join('\n', File.ReadAllLines(file).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
             Assert.False(Regex.IsMatch(text, @"User Id=sa\b|User ID=sa\b|-U sa\b", RegexOptions.IgnoreCase), $"{Path.GetFileName(file)} usa o login sa.");
             if (Path.GetFileName(file) != "SqlIdentityPolicy.cs")
@@ -296,7 +288,6 @@ public class SqlIdentityRepositoryPolicyTests
         }
     }
 
-    // O AppHost (Aspire) também alimenta a API: WithReference(banco) injetaria uma connection string com "sa".
     [Fact]
     public void AppHost_NaoRepassaOSaParaAApi_ERodaOBootstrapAntesDela()
     {

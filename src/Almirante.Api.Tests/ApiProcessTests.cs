@@ -4,9 +4,6 @@ using static Almirante.Api.Tests.SqlIdentityEnvironment;
 
 namespace Almirante.Api.Tests;
 
-// Startup REAL da API (processo dotnet Almirante.Api.dll, como no container). Os testes sem SQL Server provam a
-// recusa técnica de "sa" e do segredo dele, e a ausência de fallback; os com SQL Server provam a subida com a
-// identidade administrativa dedicada, as operações normais pela identidade de runtime e o restart sem "sa".
 public class ApiProcessRefusalTests
 {
     private const string NaoExiste = "Server=127.0.0.1,1;Database=almirante;Encrypt=True;TrustServerCertificate=True";
@@ -78,7 +75,6 @@ public class ApiProcessRefusalTests
     {
         var saida = await RefusedAsync(Config(Admin("almirante_user_bd")));
 
-        // Só ASCII: o console do processo filho no Windows do CI usa a code page do sistema, não UTF-8.
         Assert.Contains("use credenciais distintas", saida);
     }
 
@@ -106,7 +102,6 @@ public class ApiProcessSqlServerTests
         return config;
     }
 
-    // Sessões que o SQL Server viu vindas do processo da API: só podem ser das duas identidades da aplicação.
     private static async Task<List<string>> LoginsDoProcessoAsync(int pid)
     {
         await using var harness = await OpenHarnessAsync();
@@ -128,8 +123,6 @@ public class ApiProcessSqlServerTests
             using var client = api.CreateClient(await api.Listening);
             await ApiProcess.ExercitarOperacoesNormaisAsync(client);
 
-            // O SQL Server só viu esta API autenticar como a identidade administrativa (migrations/provisionamento/
-            // rotação) e como a de runtime — nunca como "sa" — e nenhum segredo apareceu na saída do processo.
             var logins = await LoginsDoProcessoAsync(api.ProcessId);
             Assert.Contains(env.AppUser.ToLowerInvariant(), logins);
             Assert.All(logins, login => Assert.Contains(login, new[] { env.AppUser.ToLowerInvariant(), env.AdminUser.ToLowerInvariant() }));
@@ -164,9 +157,6 @@ public class ApiProcessSqlServerTests
     }
 }
 
-// /api/Eventos (issue #56) no binário REAL da API: Kestrel de verdade (RemoteIpAddress real, sem o cabeçalho
-// de teste), execution strategy/retry do Aspire, identidade de runtime SEM DELETE e SEM escrita direta em
-// historico_eventos. Prova que a exclusão auditada funciona só pela cadeia de propriedade do trigger.
 [Trait("Category", "RequiresSqlServer")]
 public class ApiProcessEventosTests
 {
@@ -199,7 +189,6 @@ public class ApiProcessEventosTests
         var token = (await login.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("token").GetProperty("accessToken").GetString()!;
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
-        // membros criados pela conexão do harness (a API só conhece o seed)
         var membros = new List<Guid>();
         await using (var harness = await SqlIdentityEnvironment.OpenHarnessAsync(env.Database))
         {
@@ -224,21 +213,18 @@ public class ApiProcessEventosTests
             return await client.SendAsync(request);
         }
 
-        // POST com GUID único e replay com array de um elemento (mesma operação): 201 e depois 200
         var chave = Guid.NewGuid().ToString();
         var criado = await Post(membros[0], chave);
         Assert.Equal(System.Net.HttpStatusCode.Created, criado.StatusCode);
         var evento = await EventosTestKit.LerAsync(criado);
         Assert.Equal(System.Net.HttpStatusCode.OK, (await Post(new[] { membros[0] }, chave)).StatusCode);
 
-        // POST com vários membros (outro passeio) e GET
         var chaveVarios = Guid.NewGuid().ToString();
         var varios = await EventosTestKit.LerAsync(await Post(new[] { membros[1], membros[2] }, chaveVarios));
         Assert.Equal((20m, 40m), (varios.ValorPorMembro, varios.Total));
         var lista = await client.GetFromJsonAsync<Almirante.Api.Dtos.EventosResponse>("/api/Eventos");
         Assert.Contains(evento.Id, lista!.Items.Select(i => i.Id));
 
-        // PUT removendo um participante (motivo) e conflito de versão desatualizada
         var put = await client.PutAsJsonAsync($"/api/Eventos/{varios.Id}",
             EventosTestKit.Corpo(membros[1], varios.DataEvento, varios.Local, 12m, versao: varios.Versao, motivo: "removido no teste real"));
         Assert.Equal(System.Net.HttpStatusCode.OK, put.StatusCode);
@@ -247,13 +233,11 @@ public class ApiProcessEventosTests
         Assert.Equal(System.Net.HttpStatusCode.Conflict,
             (await client.PutAsJsonAsync($"/api/Eventos/{varios.Id}", EventosTestKit.Corpo(membros[1], versao: varios.Versao))).StatusCode);
 
-        // replay depois da edição: resultado ORIGINAL (2 participantes, valor 20, versão original), gravado na mesma transação do POST
         var replay = await Post(new[] { membros[2], membros[1] }, chaveVarios);
         Assert.Equal(System.Net.HttpStatusCode.OK, replay.StatusCode);
         var replayDto = await EventosTestKit.LerAsync(replay);
         Assert.Equal((varios.Versao, 20m, 2), (replayDto.Versao, replayDto.ValorPorMembro, replayDto.QuantidadeMembros));
 
-        // POST com eventoReferenciaId: o lock de coordenação do passeio (sp_getapplock) funciona com a identidade de menor privilégio
         var referenciando = new HttpRequestMessage(HttpMethod.Post, "/api/Eventos")
         {
             Content = JsonContent.Create(EventosTestKit.Corpo(membros[2], referencia: varios.Id)),
@@ -263,7 +247,6 @@ public class ApiProcessEventosTests
         Assert.Equal(System.Net.HttpStatusCode.Created, segundoGrupo.StatusCode);
         Assert.Equal(varios.EventoGrupoId, (await EventosTestKit.LerAsync(segundoGrupo)).EventoGrupoId);
 
-        // DELETE: exclusão lógica + histórico gravado pelo trigger com o IP real da conexão
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{evento.Id}")
         {
             Content = JsonContent.Create(new { motivo = "exclusao no processo real", versao = evento.Versao }),
@@ -274,8 +257,6 @@ public class ApiProcessEventosTests
             Content = JsonContent.Create(new { motivo = "de novo", versao = evento.Versao }),
         })).StatusCode);
 
-        // /api/Usuarios: PUT e DELETE lógico auditados pelo trigger TR_Usuarios_Historico com a mesma identidade de runtime
-        // (sem escrita direta em _usuarios_hist). membros[0] só estava no evento excluído; membros[1] segue em evento futuro.
         var cargoDs = (await client.GetFromJsonAsync<List<Almirante.Api.Dtos.UsuarioListItemDto>>("/api/Usuarios"))!.First(u => u.Id == membros[0]).Cargo.Id;
         Assert.Equal(System.Net.HttpStatusCode.OK, (await client.PutAsJsonAsync($"/api/Usuarios/{membros[0]}",
             new { nome = "Membro real alterado", email = $"alterado-{membros[0]:N}@local.dev", cargoId = cargoDs })).StatusCode);
@@ -291,7 +272,6 @@ public class ApiProcessEventosTests
         Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.lancamentos_deletados WHERE EventoId = '{evento.Id}' AND Finalidade IS NULL"));
         Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao, $"SELECT COUNT(*) FROM dbo.lancamentos_deletados WHERE EventoId = '{varios.Id}' AND Motivo = N'removido no teste real'"));
 
-        // a identidade de runtime só enxerga as duas identidades da aplicação e nada de "sa"
         var logins = await SqlIdentityEnvironment.ColumnAsync(verificacao, $"SELECT DISTINCT LOWER(login_name) FROM sys.dm_exec_sessions WHERE host_process_id = {api.ProcessId} AND is_user_process = 1");
         Assert.DoesNotContain("sa", logins);
         NoSecret.Assert(api.Output, env.AdminPassword);

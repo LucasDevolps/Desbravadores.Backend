@@ -9,8 +9,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// RG, tipo sanguíneo e doenças/alergias contra SQL Server REAL: tipos das colunas (varchar), CHECK do tipo sanguíneo,
-// cadastro -> consulta -> alteração -> exclusão lógica com o histórico (trigger) guardando o estado anterior completo.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixture fx) : IClassFixture<EventosSqlFixture>
 {
@@ -85,7 +83,7 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
 
     [Theory]
     [InlineData("X+")]
-    [InlineData("ab+")]   // BIN2: só maiúsculas, como a API grava
+    [InlineData("ab+")]
     public async Task Banco_CheckRecusaTipoSanguineoInvalido_MesmoSemPassarPelaAplicacao(string tipo)
     {
         var alvo = await CriarAsync(null, null, null);
@@ -113,7 +111,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
     [Fact]
     public async Task Crud_CriaSemRg_ConsultaAlteraLimpaEExclui_ComHistoricoCompleto()
     {
-        // 1. Cadastro sem RG (opcional), com tipo sanguíneo e doenças/alergias.
         const string doencas1 = "Alergia fictícia de teste;\nobservação fictícia de saúde.";
         var alvo = await CriarAsync(null, "o+", doencas1);
         Assert.Null(alvo.Rg);
@@ -122,13 +119,11 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal((null, "O+", doencas1), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
 
-        // 2. PUT sem os campos novos (contrato anterior): preserva tudo e não gera histórico.
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(alvo.Id, CorpoPut(alvo))).StatusCode);
         salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal((null, "O+", doencas1), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
         Assert.Empty(await HistoricoAsync(alvo.Id));
 
-        // 3. PUT altera nome, RG, tipo e texto (o próprio CPF reenviado com máscara não é duplicidade).
         const string doencas2 = "Alergia fictícia alterada: dipirona.\r\nDiabetes fictícia tipo 1.";
         var put = await PutAsync(alvo.Id, CorpoPut(alvo, c =>
         {
@@ -143,31 +138,26 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
         Assert.Equal(("Participante Teste CRUD Editado", "12.345.678-9", "AB-", doencas2), (dto.Nome, dto.Rg, dto.TipoSanguineo, dto.DoencasAlergias));
         salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal(("12.345.678-9", "AB-", doencas2, alvo.Cpf), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias, salvo.Cpf));
-        Assert.Equal(1, await Db(db => db.Usuarios.CountAsync(u => u.Cpf == alvo.Cpf)));   // nenhum registro novo
+        Assert.Equal(1, await Db(db => db.Usuarios.CountAsync(u => u.Cpf == alvo.Cpf)));
 
-        // 4. Consulta posterior (nova requisição, dados do banco).
         var lista = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!;
         var item = lista.Single(u => u.Id == alvo.Id);
         Assert.Equal(("12.345.678-9", "AB-", doencas2), (item.Rg, item.TipoSanguineo, item.DoencasAlergias));
 
-        // 5. null/"" limpa RG, tipo e texto.
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(alvo.Id, CorpoPut(item, c => { c["rg"] = ""; c["tipoSanguineo"] = null; c["doencasAlergias"] = ""; }))).StatusCode);
         salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal((null, null, null), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
 
-        // 6. Valor inválido no PUT: 400 sem alterar nada.
         var invalido = await PutAsync(alvo.Id, CorpoPut(item, c => c["tipoSanguineo"] = "Z+"));
         Assert.Equal(HttpStatusCode.BadRequest, invalido.StatusCode);
         Assert.Null((await UsuarioAsync(alvo.Id)).TipoSanguineo);
 
-        // 7. Exclusão lógica: o registro some da listagem padrão, continua no banco inativo.
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Usuarios/{alvo.Id}");
         delete.Headers.Add(AlmiranteApiFactory.TestRemoteIpHeader, IpTeste);
         Assert.Equal(HttpStatusCode.NoContent, (await Client.SendAsync(delete)).StatusCode);
         Assert.DoesNotContain((await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!, u => u.Id == alvo.Id);
         Assert.False((await UsuarioAsync(alvo.Id)).Ativo);
 
-        // Histórico: estado ANTERIOR de cada alteração (3 PUTs com mudança + DELETE).
         var historico = await HistoricoAsync(alvo.Id);
         Assert.Equal(3, historico.Count);
         Assert.Equal((null, "O+", doencas1, UsuarioHistorico.OperacaoUpdate), (historico[0].Rg, historico[0].TipoSanguineo, historico[0].DoencasAlergias, historico[0].TipoOperacao));
@@ -184,6 +174,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
 
         Assert.Equal(texto, (await UsuarioAsync(alvo.Id)).DoencasAlergias);
         Assert.Equal(2000, await EventosSqlSupport.EscalarAsync<int>(Factory,
-            $"SELECT DATALENGTH(DoencasAlergias) FROM dbo.Usuarios WHERE Id = '{alvo.Id}'"));   // 1 byte por caractere (varchar, página 1252)
+            $"SELECT DATALENGTH(DoencasAlergias) FROM dbo.Usuarios WHERE Id = '{alvo.Id}'"));
     }
 }

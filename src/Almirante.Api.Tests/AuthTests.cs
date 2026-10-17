@@ -87,7 +87,6 @@ public class AuthTests
     [Fact]
     public async Task Login_CredencialExistenteForaDaPoliticaAtual_ContinuaAutenticando()
     {
-        // "senha123" não cumpre a política atual, mas foi definida antes dela: o login só verifica o hash.
         using var factory = new AlmiranteApiFactory();
         var (client, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DS");
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Auth/Me")).StatusCode);
@@ -290,8 +289,6 @@ public class AuthTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/Auth/Me")).StatusCode);
     }
 
-    // ---- Validação do JWT: cada token forjado difere de um token válido em um único aspecto. ----
-
     public static TheoryData<string> TokensInvalidos => new()
     {
         "assinatura-adulterada", "emissor-incorreto", "audiencia-incorreta", "algoritmo-hs512",
@@ -326,7 +323,6 @@ public class AuthTests
     [Fact]
     public async Task Me_AceitaTokenReassinadoValido_EExpiradoDentroDaTolerancia()
     {
-        // Controle dos cenários acima: a forja em si produz tokens aceitos quando nada é alterado.
         using var factory = new AlmiranteApiFactory();
         using var client = factory.CreateClient();
         var real = await TestHelpers.LoginAsAdminAsync(client);

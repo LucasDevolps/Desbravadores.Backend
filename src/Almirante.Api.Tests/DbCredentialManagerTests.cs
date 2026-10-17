@@ -4,8 +4,6 @@ using Microsoft.Data.SqlClient;
 
 namespace Almirante.Api.Tests;
 
-// Testes sem SQL Server do gerador/SQL de rotação. O comportamento contra SQL Server real (rotação, pools,
-// identidades, privilégios) está em SqlIdentityModelTests.
 public class DbCredentialManagerUnitTests
 {
     [Fact]
@@ -22,7 +20,6 @@ public class DbCredentialManagerUnitTests
         Assert.All(a, c => Assert.True(char.IsAsciiLetterOrDigit(c)));
     }
 
-    // 48 símbolos de um alfabeto de 62 ≈ 285 bits de entropia: mil senhas nunca repetem, e o alfabeto é usado por inteiro.
     [Fact]
     public void GeneratePassword_NaoRepeteEUsaOAlfabetoTodo()
     {
@@ -79,8 +76,6 @@ public class DbCredentialManagerUnitTests
         Assert.DoesNotContain("db_datawriter", sql);
     }
 
-    // A identidade administrativa não tem ALTER ANY LOGIN/ROLE nem CONTROL no banco: o provisionamento da API
-    // não pode depender de nada disso (criar login/usuário/role, mexer em papéis) — isso é do bootstrap.
     [Fact]
     public void BuildProvisionSql_NaoCriaNemAlteraLoginUsuarioOuRole_SoConcedeNaRoleDeRuntime()
     {
@@ -93,7 +88,6 @@ public class DbCredentialManagerUnitTests
         Assert.Contains("execute o bootstrap", sql);
     }
 
-    // Rotação nunca mexe em permissões (não abre janela sem GRANT com a API em tráfego).
     [Fact]
     public void BuildRotateSql_NaoContemPermissoes() =>
         Assert.DoesNotMatch(new Regex(@"\b(GRANT|DENY|REVOKE)\b", RegexOptions.IgnoreCase), DbCredentialManager.BuildRotateSql("almirante_user_bd", "Abc123def"));

@@ -18,16 +18,12 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
 {
     private readonly JwtOptions _options = options.Value;
 
-    // Hash de uma senha aleatória, verificado quando o e-mail não existe, para que esse caminho custe
-    // o mesmo PBKDF2 de uma senha errada e o tempo de resposta não revele contas existentes.
     private static readonly Usuario DummyUser = new() { Nome = "", Email = "", EmailNormalizado = "", SenhaHash = "" };
     private static string? _dummyHash;
 
     public async Task<AuthResult?> LoginAsync(string email, string senha, CancellationToken ct)
     {
         var normalized = email.Trim().ToUpperInvariant();
-        // EmailNormalizado é varchar(100) ASCII: um e-mail fora disso não existe no banco, e enviá-lo como parâmetro
-        // varchar poderia trocar caracteres na conversão e casar outro cadastro. Segue pelo caminho de "não existe".
         var user = UsuariosService.EmailArmazenavel(normalized)
             ? await db.Usuarios.Include(x => x.Cargo).SingleOrDefaultAsync(x => x.EmailNormalizado == normalized, ct)
             : null;
@@ -39,8 +35,6 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
             return null;
         }
 
-        // A senha é sempre verificada (mesmo bloqueada ou com cargo inativo) para manter o custo
-        // constante; a resposta ao chamador é a mesma em todos os casos de falha.
         var verified = passwordHasher.VerifyHashedPassword(user, user.SenhaHash, senha);
         if (LoginLockout.EstaBloqueado(user, now)) return null;
         if (verified == PasswordVerificationResult.Failed)
@@ -48,17 +42,11 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
             await lockout.RegistrarFalhaAsync(user, now, ct);
             return null;
         }
-        // Usuário excluído logicamente não autentica; as sessões dele já foram invalidadas pelo incremento de
-        // SecurityVersion na exclusão (ver UsuariosService.DeleteAsync).
         if (!user.Ativo || user.Cargo is null || !user.Cargo.Ativo) return null;
         LoginLockout.RegistrarSucesso(user);
         if (verified == PasswordVerificationResult.SuccessRehashNeeded)
             user.SenhaHash = passwordHasher.HashPassword(user, senha);
 
-        // O UPDATE de Usuarios é sempre emitido e filtrado por SecurityVersion (token de concorrência).
-        // Se um reset de senha concluiu depois de lermos o usuário, o UPDATE não casa nenhuma linha, o
-        // SaveChanges inteiro (sessão + refresh + rehash) é revertido e o login falha: nenhuma sessão
-        // baseada na senha anterior é persistida, nem o hash antigo é restaurado por um rehash.
         db.Entry(user).Property(x => x.SecurityVersion).IsModified = true;
 
         var session = new AuthSession { Id = Guid.NewGuid(), UsuarioId = user.Id, CreatedAtUtc = now,
@@ -69,7 +57,6 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateConcurrencyException)
         {
-            // Credenciais invalidadas por um reset concorrente: não repete a autenticação.
             db.ChangeTracker.Clear();
             return null;
         }
