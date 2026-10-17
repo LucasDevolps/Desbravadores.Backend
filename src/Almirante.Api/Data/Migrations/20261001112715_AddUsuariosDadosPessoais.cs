@@ -16,9 +16,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // 1) Antes de qualquer alteração: e-mails que não cabem em varchar(100) ASCII. O ALTER COLUMN recusaria os
-            //    longos, mas converteria em silêncio os caracteres fora da página de código; e a aplicação passa a só
-            //    aceitar (e só encontrar no login) e-mail em ASCII imprimível. Só os Ids saem na mensagem (sem e-mails).
             migrationBuilder.Sql(VerificarEmails);
 
             migrationBuilder.AlterColumn<string>(
@@ -65,8 +62,6 @@ namespace Almirante.Api.Data.Migrations
                 maxLength: 20,
                 nullable: true);
 
-            // Histórico: mesmos tipos de Usuarios, NULL nas linhas antigas (o valor da época não existia). _usuarios_hist.Email
-            // permanece nvarchar(256), que comporta qualquer varchar(100) e não arrisca as linhas já gravadas.
             migrationBuilder.AddColumn<string>(
                 name: "Cpf",
                 table: "_usuarios_hist",
@@ -89,9 +84,6 @@ namespace Almirante.Api.Data.Migrations
                 maxLength: 20,
                 nullable: true);
 
-            // 2) Antes do índice único: CPF fora da forma normalizada ou repetido DEPOIS da normalização. Pelo fluxo normal a
-            //    coluna acabou de ser criada (toda NULL) e a verificação passa; ela existe para nunca criar o índice sobre
-            //    dados que a aplicação consideraria duplicados ou que ela própria não produziria.
             migrationBuilder.Sql(VerificarCpfs);
 
             migrationBuilder.CreateIndex(
@@ -101,7 +93,6 @@ namespace Almirante.Api.Data.Migrations
                 unique: true,
                 filter: "[Cpf] IS NOT NULL");
 
-            // 3) Trigger com os novos campos (CREATE OR ALTER: mantém o objeto e permissões, troca só a definição).
             migrationBuilder.Sql(TriggerComDadosPessoais);
         }
 
@@ -166,7 +157,6 @@ namespace Almirante.Api.Data.Migrations
                 oldMaxLength: 100);
         }
 
-        // DATALENGTH/2 conta também espaços finais (LEN os ignora). [^ -~] em BIN2 = qualquer caractere fora de 0x20-0x7E.
         private const string VerificarEmails = """
             DECLARE @Qtd int, @Ids nvarchar(max);
             SELECT @Qtd = COUNT(*) FROM [Usuarios]
@@ -188,7 +178,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Mesma normalização de UsuariosService.NormalizarCpf: sem '.', '-' e espaços externos; vazio = NULL.
         private const string VerificarCpfs = """
             DECLARE @Msg nvarchar(2048);
             IF EXISTS (SELECT 1 FROM [Usuarios] WHERE [Cpf] IS NOT NULL
@@ -206,10 +195,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Igual à anterior, com Cpf, DataNascimento e Telefone: copiados do estado ANTERIOR (deleted) e considerados mudança
-        // cadastral. EXCEPT compara NULL com NULL como iguais (o "<>" não detectaria NULL -> valor); BIN2 detecta mudança só
-        // de caixa. Continua set-based (UPDATE de várias linhas gera uma linha de histórico por usuário alterado) e roda na
-        // mesma instrução/transação do UPDATE: falha no INSERT do histórico desfaz a alteração.
         private const string TriggerComDadosPessoais = """
             CREATE OR ALTER TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN
@@ -240,7 +225,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Definição de AddUsuariosAtivoEHistorico, restaurada no Down (cópia literal; aquela migration não é alterada).
         private const string TriggerAnterior = """
             CREATE OR ALTER TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN

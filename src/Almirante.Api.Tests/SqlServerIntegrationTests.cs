@@ -9,26 +9,14 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-// Exige um SQL Server real. Defina ALMIRANTE_TEST_SQLSERVER com uma connection string SEM Database
-// (ex.: "Server=localhost;Trusted_Connection=True;TrustServerCertificate=True"); cada fábrica cria um
-// banco descartável almirante_test_<guid>, aplica TODAS as migrations pelo startup real e o remove
-// no Dispose. Executados no job sqlserver-integration do CI, contra um SQL Server descartável.
 public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides = null, Action<DbContextOptionsBuilder>? configureDb = null,
     Action<SqlServerDbContextOptionsBuilder>? configureSql = null, Action<IServiceCollection>? configureServices = null) : AlmiranteApiFactory
 {
     public const string EnvironmentVariable = "ALMIRANTE_TEST_SQLSERVER";
     private readonly string _connectionString = BuildConnectionString();
 
-    // Exposta para testes que precisam de um AlmiranteDbContext cru, antes de subir a
-    // WebApplicationFactory (que aplica todas as migrations no boot) — ver LancamentosAuditMigrationTests.
-    // internal (não protected): a classe é sealed, então não há subclasse para herdar o acesso.
     internal string ConnectionString => _connectionString;
 
-    // A conexão de ALMIRANTE_TEST_SQLSERVER (no CI, o "sa" de um SQL Server descartável; localmente, a conta do
-    // Windows) é do HARNESS: só cria e remove o ambiente, como faria o bootstrap. O DbContext da API sob teste
-    // usa um usuário contido descartável, dono só deste banco — nunca "sa" (a API recusaria: SqlIdentityPolicy).
-    // As identidades de produção (admin dedicado + runtime de menor privilégio) são provadas em
-    // SqlIdentityModelTests e ApiProcessTests; aqui o foco é o comportamento funcional da aplicação.
     private static string BuildConnectionString()
     {
         var server = Environment.GetEnvironmentVariable(EnvironmentVariable);
@@ -104,7 +92,6 @@ public class SqlServerIntegrationTests
         Assert.Equal(conhecidas, aplicadas);
         Assert.Contains("20260917120000_UnifyLancamentosFlow", aplicadas);
 
-        // Consulta que usa as colunas renomeadas (Finalidade) e o JOIN com Usuarios.
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Lancamentos?search=Mensalidade")).StatusCode);
     }
 

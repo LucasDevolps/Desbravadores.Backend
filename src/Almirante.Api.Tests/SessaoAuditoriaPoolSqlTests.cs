@@ -10,8 +10,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Almirante.Api.Tests;
 
-// Outros fixtures chamam ClearAllPools ao terminar. Isolar a coleção impede que esse descarte
-// externo esconda uma regressão na ordem ClearPool/Close ou invalide o controle de reutilização.
 [CollectionDefinition("SessaoAuditoriaPool", DisableParallelization = true)]
 public sealed class SessaoAuditoriaPoolCollection;
 
@@ -51,8 +49,6 @@ public sealed class SessaoAuditoriaPoolSqlTests
             lancamentoId = evento.Lancamentos.Single(l => l.MembroId == membros[1]).Id;
         }
 
-        // Pool exclusivo, com uma única conexão física possível. Sem atrasos nem probabilidade
-        // de selecionar outra conexão ociosa quando sondamos a janela entre Close e ClearPool.
         var cs = new SqlConnectionStringBuilder(factory.ConnectionString)
         {
             ApplicationName = $"audit-pool-{Guid.NewGuid():N}", MaxPoolSize = 1, Pooling = true,
@@ -104,7 +100,6 @@ public sealed class SessaoAuditoriaPoolSqlTests
             Assert.Equal(limpeza.ConexaoFisica, fechamento.ConexaoFisica);
         Assert.Equal("|||", fechamento.Contexto);
 
-        // O commit anterior à limpeza continua válido, com a identidade correta e sem duplicação.
         await TestHelpers.WithDbAsync(factory, async verificacao =>
         {
             Assert.False((await verificacao.Lancamentos.SingleAsync(l => l.Id == lancamentoId)).Ativo);
@@ -137,8 +132,6 @@ public sealed class SessaoAuditoriaPoolSqlTests
             ConexaoFisica = ((SqlConnection)Conexao).ClientConnectionId;
             if (falhar)
             {
-                // Falha REAL do SQL Server: a última chave não poderá ser apagada. As duas
-                // primeiras já terão sido limpas quando o batch falhar (limpeza parcial).
                 await using var bloquear = Conexao.CreateCommand();
                 bloquear.CommandText = """
                     DECLARE @motivo sql_variant = SESSION_CONTEXT(N'MotivoExclusao');
@@ -167,8 +160,6 @@ public sealed class SessaoAuditoriaPoolSqlTests
         {
             if (Sondou || !ReferenceEquals(connection, limpeza.Conexao)) return;
             Sondou = true;
-            // Executa ANTES de CloseConnectionAsync retornar ao serviço: o código antigo
-            // ainda não chamou ClearPool e obrigatoriamente reutiliza a conexão contaminada.
             await using var sonda = new SqlConnection(cs);
             await sonda.OpenAsync();
             ConexaoFisica = sonda.ClientConnectionId;

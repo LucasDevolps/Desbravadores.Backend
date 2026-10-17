@@ -5,8 +5,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Matriz RBAC (Security/Roles.cs): diretoria (ADM, DIR, DIRA, SEC, TES) administra lançamentos e
-// usuários e lista cargos; demais cargos só consultam o próprio perfil.
 public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
 {
     private readonly AlmiranteApiFactory factory;
@@ -81,7 +79,6 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
         Assert.Equal("ACESSO NEGADO!", problem!.Title);
-        // O próprio perfil continua disponível para qualquer autenticado.
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Auth/Me")).StatusCode);
     }
 
@@ -104,7 +101,6 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{dto.Id}") { Content = JsonContent.Create(new { motivo = "rbac" }) };
         Assert.Equal(HttpStatusCode.NoContent, (await client.SendAsync(delete)).StatusCode);
 
-        // Responsável pela operação geral = usuário autenticado (sub -> NameIdentifier), não o cliente.
         var geral = new HttpRequestMessage(HttpMethod.Post, "/api/Lancamentos/Registrar") { Content = JsonContent.Create(NovoLancamento(null, todos: true)) };
         geral.Headers.Add("Idempotency-Key", $"rbac-{Guid.NewGuid():N}");
         var resposta = await client.SendAsync(geral);
@@ -129,7 +125,6 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
             return usuario.Email;
         });
 
-        // A role do token antigo não confere mais com o cargo atual: sessão rejeitada.
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/Lancamentos")).StatusCode);
 
         using var novo = factory.CreateClient();

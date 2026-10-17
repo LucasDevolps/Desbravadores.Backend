@@ -6,7 +6,6 @@ namespace Almirante.Api.Services;
 
 internal static class LancamentoMapping
 {
-    // Uma única projeção para consultas SQL e respostas após alterações.
     public static readonly Expression<Func<Lancamento, LancamentoDto>> Projection = lancamento => new LancamentoDto
     {
         Id = lancamento.Id,

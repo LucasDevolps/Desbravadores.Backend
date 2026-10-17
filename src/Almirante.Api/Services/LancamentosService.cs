@@ -74,8 +74,6 @@ public sealed class LancamentosService(
             return null;
         }
 
-        // Lançamento gerado por evento: valor, vencimento, finalidade, categoria e fluxo só mudam via /api/Eventos.
-        // O status continua neste fluxo financeiro.
         if (entity.EventoId is not null)
         {
             ExigirSemAlteracaoDeEvento(entity, request);
@@ -94,16 +92,6 @@ public sealed class LancamentosService(
         return LancamentoMapping.ToDto(entity);
     }
 
-    // A mudança de status de um lançamento de evento altera a versão (rowversion) do cadastro: um PUT/DELETE do
-    // evento feito com a versão anterior ao pagamento recebe 409 em vez de sobrescrever a situação financeira.
-    // O evento é tocado ANTES do lançamento, a mesma ordem de locks de EventosService (evita deadlock; ver a ordem
-    // completa no topo daquela classe — o pagamento usa apenas os níveis 2 e 3).
-    //
-    // Cada tentativa da execution strategy (retry do Aspire) parte de um ChangeTracker LIMPO e recarrega, sob o lock do
-    // evento, tudo o que decide a gravação; nada lido antes do lock é reaproveitado. Assim, se a transação for revertida
-    // e a operação repetida, o status volta a ser aplicado e gravado (o SaveChanges de uma tentativa revertida não deixa
-    // a entidade "aceita" para a seguinte). Se o commit falhar de forma ambígua (a confirmação não chegou), a tentativa
-    // seguinte primeiro verifica no banco se a operação foi efetivada e, só então, devolve sucesso com o estado real.
     private async Task<LancamentoDto> AtualizarStatusDeEventoAsync(Guid lancamentoId, Guid eventoId, UpdateLancamentoRequest request, CancellationToken ct)
     {
         var agora = clock.GetUtcNow().UtcDateTime;
@@ -122,7 +110,7 @@ public sealed class LancamentosService(
                     return efetivado;
                 }
 
-                commitIncerto = false; // o commit não chegou a valer: refaz a operação inteira
+                commitIncerto = false;
             }
 
             await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -130,13 +118,9 @@ public sealed class LancamentosService(
                 $"UPDATE dbo.eventos SET AtualizadoEmUtc = {agora} WHERE Id = {eventoId} AND Ativo = 1", ct);
             if (tocados == 0)
             {
-                // O evento foi excluído (ou desativado) entre a leitura do lançamento e o lock: nada de gravar status
-                // numa cobrança que já foi desativada junto com o cadastro. O rollback desfaz qualquer coisa pendente.
                 throw ApiProblemException.NotFound("Lançamento não encontrado.");
             }
 
-            // Com o evento travado, tudo é relido: um PUT concorrente que removeu este participante ou mudou custos já
-            // foi confirmado, e a entidade lida antes do lock pode estar obsoleta.
             var entity = await db.Lancamentos.Include(l => l.Membro)
                 .SingleOrDefaultAsync(l => l.Id == lancamentoId && l.Ativo && l.EventoId == eventoId, ct);
             if (entity is null ||
@@ -152,15 +136,13 @@ public sealed class LancamentosService(
             await db.SaveChangesAsync(ct);
 
             var dto = LancamentoMapping.ToDto(entity);
-            commitIncerto = true;   // a partir daqui, uma falha no commit pode ter ocorrido antes OU depois de efetivar
+            commitIncerto = true;
             await tx.CommitAsync(ct);
             commitIncerto = false;
             return dto;
         });
     }
 
-    // Marca da operação efetivada: status pedido, instante desta operação e o responsável. Nada disso existe se a
-    // transação foi revertida. A resposta é montada do que está no banco, nunca de dados presumidos.
     private async Task<LancamentoDto?> LerSeEfetivadoAsync(Guid lancamentoId, Guid eventoId, UpdateLancamentoRequest request, DateTime agora, CancellationToken ct)
     {
         var status = request.Status!.Value;

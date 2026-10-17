@@ -6,8 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Executa o arquivo SQL entregue ao operador, com banco/login exclusivos por teste.
-// Nenhum teste cria, altera ou apaga o adm-ti de um ambiente existente.
 [Trait("Category", "RequiresSqlServer")]
 [Collection("AdmTiPrivilege")]
 public sealed class AdmTiPrivilegeTests : IAsyncLifetime
@@ -48,7 +46,6 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
     private async Task RunScriptAsync()
     {
         var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", "criar-usuario-adm-ti.sql"));
-        // Substituições limitadas a identificadores gerados (hex) e senha sem aspas, como no sqlcmd.
         sql = sql.Replace("adm-ti", Login).Replace("$(DB_NAME)", Database).Replace("$(ADM_TI_PASSWORD)", Password);
         sql = Regex.Replace(sql, @"^:on error exit\s*$", "", RegexOptions.Multiline | RegexOptions.IgnoreCase);
         await using var connection = await OpenAdminAsync();
@@ -59,8 +56,6 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
         }
         catch
         {
-            // Equivalente ao :on error exit do sqlcmd: nenhum batch seguinte é executado;
-            // a conexão do operador é encerrada e sua transação pendente é desfeita.
             await ExecAsync(connection, "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;");
             throw;
         }
@@ -122,7 +117,6 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
         Assert.DoesNotContain(Password, ex.Message);
         Password = previousPassword;
 
-        // A falha não publica a senha nova nem retorna sucesso parcial.
         await using var connection = await OpenTiAsync();
         Assert.Equal(1, await ScalarAsync(connection, "SELECT 1"));
     }
@@ -162,7 +156,6 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
         })
             await Assert.ThrowsAsync<SqlException>(() => ExecAsync(connection, sql));
 
-        // A view não expõe os campos secretos, independentemente de haver registros nas tabelas.
         Assert.Equal(0, await ScalarAsync(connection, """
             SELECT COUNT(*) FROM sys.columns
             WHERE object_id IN (OBJECT_ID(N'ti.Usuarios'), OBJECT_ID(N'ti.AuthSessions'))
@@ -198,7 +191,5 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
     }
 }
 
-// O script examina os outros bancos do servidor. Evita que outra fixture descarte um banco
-// entre a enumeração do catálogo e a consulta, mantendo os demais testes livres para paralelizar.
 [CollectionDefinition("AdmTiPrivilege", DisableParallelization = true)]
 public sealed class AdmTiPrivilegeCollection { }

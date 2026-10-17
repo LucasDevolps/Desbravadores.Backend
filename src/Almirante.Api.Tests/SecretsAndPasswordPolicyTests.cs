@@ -11,8 +11,6 @@ namespace Almirante.Api.Tests;
 
 public class SecretsAndPasswordPolicyTests
 {
-    // ---- Chave JWT ----
-
     private static JwtOptions Jwt(string? key, string kid = "v1", string activeKid = "v1") => new()
     {
         Issuer = "iss", Audience = "aud", ActiveKeyId = activeKid,
@@ -25,7 +23,6 @@ public class SecretsAndPasswordPolicyTests
         { "", "ausente", "string vazia" },
         { "DEFINA_BASE64_DE_32_BYTES_ALEATORIOS", "placeholder", "placeholder do .env.example" },
         { "não-é-base64!!", "Base64", "formato inválido" },
-        // 32 CARACTERES Base64 = só 24 bytes: comprimento textual não é tamanho de chave.
         { Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)), "24 bytes", "32 caracteres porém 24 bytes" },
         { Convert.ToBase64String(RandomNumberGenerator.GetBytes(31)), "31 bytes", "31 bytes" },
         { Convert.ToBase64String(new byte[32]), "trivial", "32 bytes zerados" },
@@ -70,10 +67,6 @@ public class SecretsAndPasswordPolicyTests
         Assert.IsType<OptionsValidationException>(Unwrap(Assert.ThrowsAny<Exception>(() => factory.CreateClient())));
     }
 
-    // Issue #50 (rotação de chave): compose.yaml passa a mapear Jwt__Keys__v1/v2 como opcionais
-    // (${JWT_KEY_V1:-}), então uma chave "não configurada" chega como string vazia, não ausente. Uma
-    // entrada vazia deve se comportar como se não existisse (mesmo resultado de Startup_FalhaSemChavesJwt
-    // acima), não como "chave presente porém inválida" — ver PostConfigure<JwtOptions> em Program.cs.
     [Fact]
     public void Startup_TrataChaveVazia_ComoNaoConfigurada_NaoComoInvalida()
     {
@@ -92,7 +85,7 @@ public class SecretsAndPasswordPolicyTests
         {
             ["Jwt:Keys:v1"] = v1, ["Jwt:Keys:v2"] = v2, ["Jwt:ActiveKeyId"] = "v2",
         });
-        using var client = factory.CreateClient(); // não lança: as duas chaves e a ativa são válidas.
+        using var client = factory.CreateClient();
     }
 
     [Fact]
@@ -101,13 +94,10 @@ public class SecretsAndPasswordPolicyTests
         var v2 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         using var factory = new ConfiguredApiFactory(overrides: new Dictionary<string, string?>
         {
-            // "" simula compose.yaml com JWT_KEY_V1 vazio/ausente no .env (rotação concluída).
             ["Jwt:Keys:v1"] = "", ["Jwt:Keys:v2"] = v2, ["Jwt:ActiveKeyId"] = "v2",
         });
         using var client = factory.CreateClient();
     }
-
-    // ---- Política de senha ----
 
     [Theory]
     [InlineData("senha")]
@@ -129,7 +119,7 @@ public class SecretsAndPasswordPolicyTests
     [Fact]
     public void PasswordPolicy_RejeitaLimites_EEmailNaSenha()
     {
-        Assert.NotEmpty(PasswordPolicy.Validate("Correta-Cavalo-" + new string('x', 114) + "9")); // 130 caracteres
+        Assert.NotEmpty(PasswordPolicy.Validate("Correta-Cavalo-" + new string('x', 114) + "9"));
         Assert.NotEmpty(PasswordPolicy.Validate("tesoureiro-Forte-2026", "tesoureiro@clube.org"));
         Assert.NotEmpty(PasswordPolicy.Validate(null));
     }
@@ -145,7 +135,7 @@ public class SecretsAndPasswordPolicyTests
     {
         var hasher = new PasswordHasher<Usuario>();
         var usuario = new Usuario { Nome = "", Email = "", EmailNormalizado = "", SenhaHash = "" };
-        var baseSenha = "Kx7-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(62));  // 128 caracteres
+        var baseSenha = "Kx7-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(62));
         Assert.Equal(PasswordPolicy.MaxLength, baseSenha.Length);
         Assert.Empty(PasswordPolicy.Validate(baseSenha));
 
@@ -155,8 +145,6 @@ public class SecretsAndPasswordPolicyTests
         Assert.Equal(PasswordVerificationResult.Success, hasher.VerifyHashedPassword(usuario, hash, baseSenha));
         Assert.Equal(PasswordVerificationResult.Failed, hasher.VerifyHashedPassword(usuario, hash, ultimoDiferente));
     }
-
-    // ---- Seed do administrador ----
 
     private static AlmiranteDbContext NovoContexto() =>
         new(new DbContextOptionsBuilder<AlmiranteDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
@@ -190,7 +178,6 @@ public class SecretsAndPasswordPolicyTests
         await DbSeeder.SeedAsync(db, hasher, Seed(senhaOriginal));
         var hashOriginal = (await db.Usuarios.SingleAsync()).SenhaHash;
 
-        // Execução posterior com senha diferente (até inválida) não falha nem altera o admin existente.
         await DbSeeder.SeedAsync(db, hasher, Seed("senha"));
         await DbSeeder.SeedAsync(db, hasher, Seed("Outra-Senha-Forte-Valida-99"));
 

@@ -10,8 +10,6 @@ public sealed class RegistrarLancamentoRequestValidator : AbstractValidator<Regi
         RuleFor(x => x.TipoFluxo).IsInEnum();
         RuleFor(x => x.Valor).LancamentoValorValido();
         RuleFor(x => x.Vencimento).NotEmpty().WithMessage("Vencimento é obrigatório.")
-            // A API persiste/audita em UTC. Usar a mesma referência aqui evita que "hoje"
-            // oscile conforme o fuso horário da máquina que hospeda a aplicação ou executa CI.
             .GreaterThanOrEqualTo(_ => DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime))
             .WithMessage("Vencimento não pode ser uma data no passado.");
         RuleFor(x => x.MembroId).Null().When(x => x.AplicarATodosOsMembros)

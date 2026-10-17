@@ -3,19 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace Almirante.Api.Dtos;
 
-// Contrato do campo "membros" (POST e PUT /api/Eventos): aceita um GUID único OU um array de GUIDs.
-//   "membros": "11111111-1111-4111-8111-111111111111"
-//   "membros": ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]
-// Os dois formatos são normalizados AQUI, na desserialização, para IReadOnlyList<Guid>; a partir daí toda a
-// aplicação (validação, hash de idempotência, serviço) enxerga uma única representação. O conversor NÃO
-// remove duplicidades nem descarta GUIDs vazios: quem valida é o FluentValidator (erro por campo).
-// Rejeita null, números, objetos, booleanos e strings que não sejam GUID (JsonException -> 400).
 public sealed class MembrosJsonConverter : JsonConverter<IReadOnlyList<Guid>>
 {
-    // Limite defensivo: o array é lido inteiro na memória e depois vira parâmetro de consulta ao banco.
     public const int MaximoMembros = 1000;
 
-    // null chega ao Read (em vez de virar null silenciosamente) para poder ser recusado explicitamente.
     public override bool HandleNull => true;
 
     public override IReadOnlyList<Guid> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -51,7 +42,6 @@ public sealed class MembrosJsonConverter : JsonConverter<IReadOnlyList<Guid>>
 
     public override void Write(Utf8JsonWriter writer, IReadOnlyList<Guid> value, JsonSerializerOptions options)
     {
-        // Saída previsível: sempre array, mesmo que a entrada tenha sido um GUID único.
         writer.WriteStartArray();
         foreach (var id in value)
         {

@@ -4,20 +4,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Infrastructure;
 
-// SESSION_CONTEXT lido pelos triggers TR_eventos_AuditoriaExclusaoLogica, TR_Lancamentos_AuditoriaExclusaoLogica e
-// TR_Usuarios_Historico (este último usa só o responsável e o IP).
-// O responsável vem das claims validadas e o IP de HttpContext.Connection.RemoteIpAddress (controller); nunca do
-// corpo da requisição. Deve ser usada com a conexão FIXADA (OpenConnectionAsync) para que a definição e a limpeza
-// aconteçam na mesma conexão física; se a limpeza falhar, quem chama descarta o pool (SqlConnection.ClearPool).
 public sealed class SessaoAuditoria(AlmiranteDbContext db)
 {
     private bool _definido;
 
-    // Executa o trabalho em uma transação, sobre uma conexão FIXADA (OpenConnection): o SESSION_CONTEXT
-    // definido para os triggers e a limpeza no finally acontecem na MESMA conexão física. Se a limpeza falhar,
-    // o pool da conexão é descartado para não reaproveitar identidade/IP de outra operação.
-    // A execution strategy (retry do Aspire) exige que a unidade de trabalho inteira esteja no delegate.
-    // Exige provedor relacional (SQL Server): quem chama recusa o InMemory com a própria mensagem.
     public static async Task<T> ExecutarEmTransacaoAsync<T>(AlmiranteDbContext db, ILogger logger,
         Func<SessaoAuditoria, Task<T>> trabalho, CancellationToken ct)
     {
@@ -42,7 +32,6 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
                     var limpo = await sessao.LimparAsync(logger);
                     if (!limpo && conexao is not null)
                     {
-                        // Marcar a conexão ainda emprestada para descarte ANTES de devolvê-la ao pool.
                         SqlConnection.ClearPool(conexao);
                     }
                 }
@@ -64,7 +53,6 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
             """, ct);
     }
 
-    // true = nada a limpar ou limpo com sucesso.
     public async Task<bool> LimparAsync(ILogger logger)
     {
         if (!_definido)

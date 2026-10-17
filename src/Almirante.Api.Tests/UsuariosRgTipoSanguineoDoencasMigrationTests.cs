@@ -7,8 +7,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Almirante.Api.Tests;
 
-// Migration AddUsuariosRgTipoSanguineoDoencas sobre um banco já populado pela versão anterior: nada do legado muda (campos
-// novos NULL), trigger auditando os campos novos, CHECK do tipo sanguíneo e rollback estrutural (trigger anterior restaurada).
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosRgTipoSanguineoDoencasMigrationTests
 {
@@ -71,7 +69,7 @@ public sealed class UsuariosRgTipoSanguineoDoencasMigrationTests
                     """, ("@id", id), ("@nome", nome), ("@email", $"{id:N}@local.dev"), ("@cargo", cargo.Id), ("@cpf", (object?)cpf ?? DBNull.Value));
             }
 
-            await AtualizarAuditadoAsync(cs, responsavel, "Telefone = '1134567891'", legado);   // histórico no formato anterior
+            await AtualizarAuditadoAsync(cs, responsavel, "Telefone = '1134567891'", legado);
             await db.GetService<IMigrator>().MigrateAsync();
         }
 
@@ -79,13 +77,12 @@ public sealed class UsuariosRgTipoSanguineoDoencasMigrationTests
         {
             Assert.Contains(MigrationEmTeste, await db.Database.GetAppliedMigrationsAsync());
             var salvo = await db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == legado);
-            Assert.Equal(("52998224725", "1134567891"), (salvo.Cpf, salvo.Telefone));   // legado intacto
+            Assert.Equal(("52998224725", "1134567891"), (salvo.Cpf, salvo.Telefone));
             Assert.Equal((null, null, null), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
             var antigo = await db.UsuariosHistorico.AsNoTracking().SingleAsync(h => h.UsuarioId == legado);
             Assert.Equal(("1134567890", null, null), (antigo.Telefone, antigo.Rg, antigo.DoencasAlergias));
         }
 
-        // Trigger novo: mudança SÓ nos campos novos é auditada, com o estado anterior.
         await AtualizarAuditadoAsync(cs, responsavel, "Rg = '1234567', TipoSanguineo = 'A+', DoencasAlergias = 'Alergia fictícia'", legado);
         await AtualizarAuditadoAsync(cs, responsavel, "DoencasAlergias = 'Alergia fictícia (revisada)'", legado);
         await using (var db = Contexto(cs))
@@ -96,11 +93,9 @@ public sealed class UsuariosRgTipoSanguineoDoencasMigrationTests
             Assert.Equal(("1234567", "A+", "Alergia fictícia"), (historico[2].Rg, historico[2].TipoSanguineo, historico[2].DoencasAlergias));
         }
 
-        // CHECK do tipo sanguíneo já vale no banco migrado.
         var erro = await Assert.ThrowsAsync<SqlException>(() => AtualizarAuditadoAsync(cs, responsavel, "TipoSanguineo = 'Z+'", legado));
         Assert.Equal(547, erro.Number);
 
-        // Down: colunas, CHECK e trigger nova saem; a trigger anterior volta e continua auditando.
         await using (var db = Contexto(cs))
         {
             await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
@@ -111,7 +106,6 @@ public sealed class UsuariosRgTipoSanguineoDoencasMigrationTests
         await AtualizarAuditadoAsync(cs, responsavel, "Telefone = '2134567890'", legado);
         Assert.Equal(4, await ContarAsync(cs, $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{legado}'"));
 
-        // E sobe de novo.
         await using (var db = Contexto(cs))
         {
             await db.GetService<IMigrator>().MigrateAsync();

@@ -1,8 +1,5 @@
 namespace Almirante.Api.Validation.Usuarios;
 
-// Telefone brasileiro com DDD (issue #112), gravado só com dígitos: a máscara "(11) 98765-4321" é apresentação.
-// Fixo: 10 dígitos, número começando de 2 a 5. Celular: 11 dígitos, começando com 9. DDD da lista de códigos de área
-// da Anatel (ex.: 23, 25, 26 e 29 não existem).
 public static class TelefoneBrasileiro
 {
     public const int MaximoDigitos = 11;
@@ -14,8 +11,6 @@ public static class TelefoneBrasileiro
         71, 73, 74, 75, 77, 79, 81, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 99,
     ];
 
-    // Remove espaços externos e a máscara convencional (parênteses, hífen e espaços); vazio vira NULL. Qualquer outro
-    // caractere (letra, "+", hífen Unicode) continua no valor e reprova EhValido.
     public static string? Normalizar(string? telefone)
     {
         if (telefone is null)

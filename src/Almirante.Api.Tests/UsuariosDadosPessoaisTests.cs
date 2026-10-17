@@ -8,8 +8,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Contrato e validação de CPF, data de nascimento, telefone e e-mail em /api/Usuarios sem SQL Server. Unicidade no
-// banco, histórico e PUT: ver UsuariosDadosPessoaisSqlServerTests.
 public sealed class UsuariosDadosPessoaisTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private Task<Guid> CargoIdAsync() =>
@@ -70,7 +68,6 @@ public sealed class UsuariosDadosPessoaisTests(AlmiranteApiFactory factory) : IC
     public async Task Post_LimitesValidos_SaoAceitos_ComCpfETelefoneNormalizadosParaDigitos()
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-        // Maior de idade: sem responsável. Máscara e espaços externos são removidos antes de validar e gravar.
         var nascimento = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-30).ToString("yyyy-MM-dd");
         var cpf = TestHelpers.NovoCpf();
         var email = new string('c', 100 - "@local.dev".Length - 8) + Guid.NewGuid().ToString("N")[..8] + "@local.dev";
@@ -91,7 +88,7 @@ public sealed class UsuariosDadosPessoaisTests(AlmiranteApiFactory factory) : IC
     [InlineData("123.456.789-01", "12345678901")]
     [InlineData("  012.345.678-90  ", "01234567890")]
     [InlineData("01234567890", "01234567890")]
-    [InlineData("AB-12.3", "AB123")]      // a normalização não valida: Cpf.EhValido recusa depois
+    [InlineData("AB-12.3", "AB123")]
     [InlineData(" . - ", null)]
     [InlineData("", null)]
     [InlineData(null, null)]

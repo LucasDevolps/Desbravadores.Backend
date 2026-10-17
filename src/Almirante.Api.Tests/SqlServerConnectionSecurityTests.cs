@@ -5,8 +5,6 @@ namespace Almirante.Api.Tests;
 
 public class SqlServerConnectionSecurityTests
 {
-    // ---- Núcleo (sem IHostEnvironment/DI) ----
-
     [Fact]
     public void Validate_ForaDeProduction_NuncaFalha_MesmoComTrustServerCertificate()
     {
@@ -31,7 +29,6 @@ public class SqlServerConnectionSecurityTests
     [Fact]
     public void Validate_Production_AceitaConnectionStringSemEncryptOuTrustServerCertificate_PoisPadraoDoDriverEhSeguro()
     {
-        // Sem essas opções, o driver assume Encrypt=Mandatory e TrustServerCertificate=False.
         Assert.Empty(SqlServerConnectionSecurityValidator.Validate(
             "Server=host;Database=almirante;User Id=x;Password=y", isProduction: true));
     }
@@ -74,8 +71,6 @@ public class SqlServerConnectionSecurityTests
     {
         Assert.Empty(SqlServerConnectionSecurityValidator.Validate("isto não é uma connection string ; ; ;=", isProduction: true));
     }
-
-    // ---- Startup real (WebApplicationFactory) ----
 
     [Fact]
     public void Startup_Development_AceitaTrustServerCertificateTrue()

@@ -99,8 +99,6 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
         var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
 
-        // "usuarioResponsavelId" não existe no DTO público (é [JsonIgnore]); mesmo enviado no body,
-        // não pode substituir a identidade autenticada.
         var forjado = Guid.NewGuid();
         var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago", usuarioResponsavelId = forjado });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -125,7 +123,6 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
         var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
 
-        // Simula um lançamento anterior a esta coluna existir (nunca atualizado, ou migrado sem o valor).
         await TestHelpers.WithDbAsync(factory, async db =>
         {
             var entity = await db.Lancamentos.SingleAsync(l => l.Id == created!.Id);

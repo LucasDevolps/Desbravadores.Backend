@@ -9,10 +9,6 @@ using System.Text.RegularExpressions;
 
 namespace Almirante.Api.Tests;
 
-// Sobe o binário REAL da API (dotnet Almirante.Api.dll, Program.cs completo, Kestrel em HTTPS com um
-// certificado autoassinado descartável) — o mesmo caminho de startup do container. Toda a configuração vai por
-// variável de ambiente do processo, como no Compose. Serve para provar o que só o startup real prova: a API
-// sobe com a identidade administrativa dedicada, recusa "sa"/SQL_SA_PASSWORD e reinicia sem "sa".
 public sealed class ApiProcess : IAsyncDisposable
 {
     public const string AdminEmail = "admin@local.dev";
@@ -28,7 +24,6 @@ public sealed class ApiProcess : IAsyncDisposable
     public Task<Uri> Listening => _listening.Task;
     public Task<int> Exited { get; }
 
-    // Pasta de fotos do processo (Media__Storage__Path), apagada no DisposeAsync.
     public string? FotosPath { get; }
 
     private ApiProcess(Process process, string certificatePath, string? fotosPath)
@@ -42,7 +37,6 @@ public sealed class ApiProcess : IAsyncDisposable
         Exited = exit.Task;
     }
 
-    // Variáveis mínimas para a API subir; o teste acrescenta/sobrescreve as de SQL.
     public static Dictionary<string, string> BaseEnvironment() => new()
     {
         ["ASPNETCORE_ENVIRONMENT"] = "Development",
@@ -82,7 +76,6 @@ public sealed class ApiProcess : IAsyncDisposable
             UseShellExecute = false,
             WorkingDirectory = AppContext.BaseDirectory,
         };
-        // Nada herdado do ambiente do desenvolvedor pode mudar o teste (nem trazer SQL_SA_PASSWORD).
         foreach (var key in psi.Environment.Keys.Where(k => k.StartsWith("ConnectionStrings__", StringComparison.OrdinalIgnoreCase)
                      || k.StartsWith("DbCredentials__", StringComparison.OrdinalIgnoreCase)
                      || k.StartsWith("Jwt__", StringComparison.OrdinalIgnoreCase)
@@ -112,15 +105,12 @@ public sealed class ApiProcess : IAsyncDisposable
         return api;
     }
 
-    // Espera a API aceitar conexões ou o processo terminar (o que, num startup recusado, é o resultado esperado).
     public async Task<(bool Started, int? ExitCode)> WaitAsync(TimeSpan timeout)
     {
         var finished = await Task.WhenAny(Listening, Exited, Task.Delay(timeout));
         if (finished == Listening) return (true, null);
         if (finished == Exited)
         {
-            // Exited pode completar antes de as últimas linhas da saída redirecionada chegarem (visto sob carga, na suíte
-            // inteira): WaitForExitAsync também espera o fim dos fluxos de saída e de erro.
             await _process.WaitForExitAsync();
             return (false, await Exited);
         }
@@ -133,8 +123,6 @@ public sealed class ApiProcess : IAsyncDisposable
         return new HttpClient(handler) { BaseAddress = baseAddress, Timeout = TimeSpan.FromSeconds(60) };
     }
 
-    // Operações normais da aplicação, todas pela identidade de runtime (e a auditoria pelo trigger): CSRF,
-    // login, perfil, listagens, registrar/alterar/excluir logicamente um lançamento, refresh e logout.
     public static async Task ExercitarOperacoesNormaisAsync(HttpClient client)
     {
         async Task CsrfAsync()

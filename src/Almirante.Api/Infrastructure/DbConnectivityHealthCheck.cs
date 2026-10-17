@@ -4,8 +4,6 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Almirante.Api.Infrastructure;
 
-// Substitui o health check do Aspire (que abre conexão só com a connection string, sem a credencial
-// injetada em tempo de execução pelo AppDbCredentialInterceptor).
 public sealed class DbConnectivityHealthCheck(IServiceScopeFactory scopes) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)

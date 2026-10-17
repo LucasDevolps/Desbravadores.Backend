@@ -1,9 +1,5 @@
 namespace Almirante.Api.Validation.Usuarios;
 
-// Dados do responsável (issues #112 e #131): nome e e-mail são exigidos só quando o usuário é menor de 18 anos na data
-// civil de hoje; para maior de idade, ou sem data de nascimento, tudo é opcional. Recebe os valores EFETIVOS e já
-// normalizados: no POST, os do corpo; no PUT, os do corpo ou, quando omitidos, os do banco lidos sob o lock da
-// alteração ("informada ou recuperada do banco", #131). O formato de cada campo é validado à parte (validators).
 public static class RegraResponsavel
 {
     public static Dictionary<string, string[]> Validar(DateOnly? nascimento, string? nome, string? email,

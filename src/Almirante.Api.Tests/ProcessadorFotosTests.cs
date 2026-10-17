@@ -8,7 +8,6 @@ using SkiaSharp;
 
 namespace Almirante.Api.Tests;
 
-// Pipeline de segurança da foto (issue #116) direto na classe, sem HTTP: o que entra, o que é recusado e o que sai.
 public sealed class ProcessadorFotosTests
 {
     private static ProcessadorFotos Processador(Action<MediaOptions.ImageSettings>? ajustar = null)
@@ -20,27 +19,25 @@ public sealed class ProcessadorFotosTests
 
     private static ApiProblemException Recusa(Func<FotoProcessada> processar) => Assert.Throws<ApiProblemException>(processar);
 
-    // ------------------------------------------------------------------ assinatura
-
     public static TheoryData<byte[], FormatoFoto?> Assinaturas => new()
     {
         { [0xFF, 0xD8, 0xFF, 0xE0], FormatoFoto.Jpeg },
         { [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00], FormatoFoto.Png },
         { [.. "RIFF"u8, 0, 0, 0, 0, .. "WEBP"u8], FormatoFoto.Webp },
-        { [0xFF, 0xD8], null },                                       // curto demais para JPEG
+        { [0xFF, 0xD8], null },
         { [0x00, 0xD8, 0xFF], null },
         { [0xFF, 0x00, 0xFF], null },
         { [0xFF, 0xD8, 0x00], null },
-        { [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A], null },          // PNG incompleto
-        { [.. "RIFF"u8, 0, 0, 0, 0, .. "WEB"u8], null },               // curto demais para WebP
+        { [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A], null },
+        { [.. "RIFF"u8, 0, 0, 0, 0, .. "WEB"u8], null },
         { [.. "RIFX"u8, 0, 0, 0, 0, .. "WEBP"u8], null },
         { [.. "RIFF"u8, 0, 0, 0, 0, .. "AVI "u8], null },
         { [.. "GIF89a"u8], null },
-        { [.. "MZ"u8, 0x90, 0x00], null },                             // executável Windows
+        { [.. "MZ"u8, 0x90, 0x00], null },
         { [.. "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>"u8], null },
         { [.. "%PDF-1.7"u8], null },
-        { [.. "PK"u8, 0x03, 0x04], null },                             // ZIP
-        { [0, 0, 0, 0x18, .. "ftypheic"u8], null },                    // HEIC
+        { [.. "PK"u8, 0x03, 0x04], null },
+        { [0, 0, 0, 0x18, .. "ftypheic"u8], null },
     };
 
     [Theory]
@@ -71,16 +68,14 @@ public sealed class ProcessadorFotosTests
         Assert.Contains("não corresponde", recusa.Detail);
     }
 
-    // ------------------------------------------------------------------ válidos, dimensões e reencode
-
     public static TheoryData<string, int, int, int, int> Redimensionamentos => new()
     {
-        { "jpeg", 3000, 2000, 1024, 683 },   // JPEG grande: decodifica reduzido (DCT, 3/8 >= alvo) e encaixa em 1024
-        { "jpeg", 1600, 1200, 1024, 768 },   // oitavo mais próximo (5/8) ficaria abaixo do alvo: sobe para 6/8
-        { "jpeg", 1100, 800, 1024, 745 },    // 7/8 abaixo do alvo: sobe até a escala 1 (sem ampliar)
-        { "png", 1000, 3000, 341, 1024 },     // alto
-        { "webp", 2000, 1024, 1024, 524 },    // um lado já igual ao alvo (o TargetSize da decodificação não reduziria)
-        { "png", 200, 100, 200, 100 },        // menor que o alvo: não amplia
+        { "jpeg", 3000, 2000, 1024, 683 },
+        { "jpeg", 1600, 1200, 1024, 768 },
+        { "jpeg", 1100, 800, 1024, 745 },
+        { "png", 1000, 3000, 341, 1024 },
+        { "webp", 2000, 1024, 1024, 524 },
+        { "png", 200, 100, 200, 100 },
         { "jpeg", 1024, 1024, 1024, 1024 },
     };
 
@@ -129,7 +124,7 @@ public sealed class ProcessadorFotosTests
     [Fact]
     public void Processar_PngBomba_EhRecusadoSoPeloCabecalho_SemDecodificar()
     {
-        var bomba = FotosTestKit.PngBomba(50_000, 50_000); // 10 GB se fosse decodificado em RGBA
+        var bomba = FotosTestKit.PngBomba(50_000, 50_000);
         Assert.True(bomba.Length < 100);
 
         var inicio = System.Diagnostics.Stopwatch.StartNew();
@@ -162,8 +157,6 @@ public sealed class ProcessadorFotosTests
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, recusa.Status);
         Assert.Contains("corrompida ou incompleta", recusa.Detail);
     }
-
-    // ------------------------------------------------------------------ metadados e orientação
 
     [Fact]
     public void Processar_RemoveExifComGpsEOTextoEscondido()
@@ -202,8 +195,6 @@ public sealed class ProcessadorFotosTests
         Assert.False(FotosTestKit.Contem(foto.Conteudo, "conteudo-escondido"));
     }
 
-    // Cores esperadas nos cantos (sup. esq., sup. dir., inf. esq., inf. dir.) depois de aplicar a orientação EXIF a uma imagem
-    // 160x100 com vermelho/verde em cima e azul/amarelo embaixo. 5 a 8 giram: a saída fica 100x160.
     public static TheoryData<ushort, string> Orientacoes => new()
     {
         { 1, "VmVdAzAm" }, { 2, "VdVmAmAz" }, { 3, "AmAzVdVm" }, { 4, "AzAmVmVd" },
@@ -233,8 +224,6 @@ public sealed class ProcessadorFotosTests
             Assert.True(FotosTestKit.Parecida(real, esperada), $"orientação {orientacao}, canto {i}: {real} em vez de {esperada}");
         }
     }
-
-    // ------------------------------------------------------------------ compressão progressiva e prazo
 
     [Fact]
     public void Processar_SaidaAcimaDoLimite_BaixaAQualidadeAteCaber()
@@ -283,8 +272,6 @@ public sealed class ProcessadorFotosTests
         Assert.ThrowsAny<OperationCanceledException>(() =>
             Processador().Processar(FotosTestKit.Jpeg(300, 300), FormatoFoto.Jpeg, cancelado.Token));
     }
-
-    // ------------------------------------------------------------------ conferência da saída
 
     [Fact]
     public void ExigirSaidaValida_AceitaSoWebpSemMetadadoEDentroDasDimensoes()

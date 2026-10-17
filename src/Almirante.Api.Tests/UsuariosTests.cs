@@ -6,8 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// /api/Usuarios sem SQL Server: listagem, validação de entrada e regras que não dependem de trigger/transação.
-// Escrita auditada (PUT/DELETE), e-mail único no banco e histórico: ver UsuariosSqlServerTests.
 public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private async Task<(Guid Ativo, Guid Inativo)> SemearAtivoEInativoAsync()
@@ -63,7 +61,6 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
         var item = json.Single(u => (string)u!["id"]! == diretor.Id.ToString())!;
 
         Assert.Equal("Diretor", (string)item["funcao"]!);
-        // Compatibilidade: o objeto cargo continua presente para os consumidores atuais.
         Assert.Equal("Diretor", (string)item["cargo"]!["nome"]!);
         Assert.Equal("DIR", (string)item["cargo"]!["role"]!);
     }

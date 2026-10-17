@@ -12,15 +12,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-// Apoio dos testes SQL Server de /api/Eventos que controlam intercalamentos e falhas de forma determinística
-// (sem Task.Delay como prova): estratégia de retry equivalente à do Aspire, falha injetada no commit e pausas
-// em comandos SQL específicos. Nada disto existe no código de produção.
-
-// Falha "transitória" só de teste; a estratégia abaixo a trata como retentável.
 public sealed class FalhaTransitoriaDeTeste(string mensagem) : Exception(mensagem);
 
-// Mesma estratégia do Aspire (SqlServerRetryingExecutionStrategy: AddSqlServerDbContext liga EnableRetryOnFailure),
-// com atraso curto e a falha de teste também considerada retentável. UseSqlServer(...) sem isso NÃO retenta nada.
 public sealed class EstrategiaComRetryDeTeste(ExecutionStrategyDependencies dependencies)
     : SqlServerRetryingExecutionStrategy(dependencies, 3, TimeSpan.FromMilliseconds(20), null)
 {
@@ -29,8 +22,6 @@ public sealed class EstrategiaComRetryDeTeste(ExecutionStrategyDependencies depe
 
 public enum MomentoDaFalha { AntesDoCommit, DepoisDoCommit }
 
-// Lança uma falha transitória no commit: antes (a transação é revertida) ou depois (o commit foi efetivado no
-// banco, mas a confirmação "não chegou" à aplicação).
 public sealed class FalhaDeCommitInterceptor : DbTransactionInterceptor
 {
     private int _restantes;
@@ -82,8 +73,6 @@ public sealed class FalhaDeCommitInterceptor : DbTransactionInterceptor
     }
 }
 
-// Segura o PRIMEIRO comando SQL que satisfaça o predicado até o teste liberar (com teto de tempo), para forçar
-// um intercalamento exato entre duas requisições.
 public sealed class PausaDeComandoInterceptor : DbCommandInterceptor
 {
     private volatile Pausa? _ativa;
@@ -120,7 +109,6 @@ public sealed class PausaDeComandoInterceptor : DbCommandInterceptor
     }
 }
 
-// Helpers comuns às classes de teste (cada uma tem a própria fábrica/banco).
 public static class EventosSqlSupport
 {
     public static async Task<List<Guid>> MembrosAsync(SqlServerApiFactory factory, int quantidade)
@@ -156,8 +144,6 @@ public static class EventosSqlSupport
         return resultado is null or DBNull ? default : (T)resultado;
     }
 
-    // Quantas sessões estão ESPERANDO um lock de aplicação (sp_getapplock) neste banco. Lê pela identidade do
-    // harness (VIEW SERVER STATE); é a prova de que uma requisição está mesmo bloqueada pela coordenação.
     public static Task<int> EsperasDeApplockAsync(SqlServerApiFactory factory) => ContarApplocksAsync(factory, apenasEsperando: true);
 
     public static async Task<int> ContarApplocksAsync(SqlServerApiFactory factory, bool apenasEsperando)
@@ -172,8 +158,6 @@ public static class EventosSqlSupport
         return (int)(await comando.ExecuteScalarAsync())!;
     }
 
-    // Espera (com teto) até que a tarefa termine OU exista alguém esperando um applock: em qualquer dos casos o
-    // intercalamento já se definiu e o teste pode liberar a operação pausada.
     public static async Task AguardarConclusaoOuBloqueioAsync(SqlServerApiFactory factory, Task tarefa, TimeSpan? limite = null)
     {
         var fim = DateTime.UtcNow + (limite ?? TimeSpan.FromSeconds(20));

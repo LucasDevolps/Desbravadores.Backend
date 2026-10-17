@@ -9,8 +9,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// CPF, data de nascimento e telefone em /api/Usuarios contra SQL Server REAL: índice único filtrado UX_Usuarios_Cpf,
-// tipos das colunas, trigger TR_Usuarios_Historico com o estado anterior completo e atomicidade alteração + histórico.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : IClassFixture<EventosSqlFixture>
 {
@@ -19,15 +17,12 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     private HttpClient Client => fx.Client;
     private SqlServerApiFactory Factory => fx.Factory;
 
-    // ------------------------------------------------------------------ apoio
-
     private Task<T> Db<T>(Func<AlmiranteDbContext, Task<T>> consulta) => TestHelpers.WithDbAsync(Factory, consulta);
 
     private Task<Guid> CargoIdAsync(string role) => Db(db => db.Cargos.Where(c => c.Role == role).Select(c => c.Id).SingleAsync());
 
     private static string NovoEmail(string prefixo = "pessoal") => $"{prefixo}-{Guid.NewGuid():N}@local.dev";
 
-    // CPF válido começando por zero: prova que o CPF é texto (zero à esquerda preservado).
     private static string NovoCpf() => TestHelpers.NovoCpf();
 
     private static string Mascarar(string cpf) => $"{cpf[..3]}.{cpf[3..6]}.{cpf[6..9]}-{cpf[9..]}";
@@ -59,8 +54,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
     }
 
-    // Usuário cadastrado antes de o CPF ser obrigatório (o POST não cria mais sem CPF): inserido direto no banco, como os
-    // registros legados. INSERT não passa pelo trigger (AFTER UPDATE), então não gera histórico.
     private async Task<UsuarioListItemDto> CriarLegadoSemCpfAsync(DateOnly? nascimento = null, string? telefone = null)
     {
         var id = Guid.NewGuid();
@@ -73,7 +66,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         return (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == id);
     }
 
-    // Corpo de PUT com os campos obrigatórios do usuário atual mais os campos extras informados (omitidos ficam fora do JSON).
     private static JsonObject CorpoPut(UsuarioListItemDto u, Action<JsonObject>? extras = null)
     {
         var corpo = new JsonObject { ["nome"] = u.Nome, ["email"] = u.Email, ["cargoId"] = u.Cargo.Id.ToString() };
@@ -106,8 +98,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.DoesNotContain("duplicate key", corpo, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ------------------------------------------------------------------ 1. cadastro e consulta
-
     [Fact]
     public async Task Post_ComOsQuatroCampos_PersisteNormalizado_ERetornaNoCadastroENaConsulta()
     {
@@ -122,8 +112,8 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
         Assert.Equal(cpf, (string)json["cpf"]!);
-        Assert.Equal("2001-05-17", (string)json["dataNascimento"]!);   // só a data, sem horário nem fuso
-        Assert.Equal("11987654321", (string)json["telefone"]!);         // só dígitos: a máscara é apresentação
+        Assert.Equal("2001-05-17", (string)json["dataNascimento"]!);
+        Assert.Equal("11987654321", (string)json["telefone"]!);
         Assert.Equal(email, (string)json["email"]!);
         var id = Guid.Parse((string)json["id"]!);
 
@@ -133,7 +123,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(new DateOnly(2001, 5, 17), salvo.DataNascimento);
         Assert.Equal("11987654321", salvo.Telefone);
 
-        // GET /api/Usuarios (fonte da tela de edição) devolve os mesmos valores.
         var lista = JsonNode.Parse(await Client.GetStringAsync("/api/Usuarios"))!.AsArray();
         var item = lista.Single(u => (string)u!["id"]! == id.ToString())!;
         Assert.Equal(cpf, (string)item["cpf"]!);
@@ -156,7 +145,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
             Assert.Null(salvo.Telefone);
         }
 
-        // Registros antigos sem CPF continuam válidos: o índice filtrado não faz dois NULL colidirem.
         var legado1 = await CriarLegadoSemCpfAsync();
         var legado2 = await CriarLegadoSemCpfAsync();
         Assert.Null(legado1.Cpf);
@@ -175,7 +163,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         {
             ["nome"] = "Sem CPF", ["email"] = email, ["senha"] = $"Forte-{Guid.NewGuid():N}", ["cargoId"] = (await CargoIdAsync("DS")).ToString(),
         };
-        if (cpf is not null) corpo["cpf"] = cpf;   // null = campo ausente do JSON
+        if (cpf is not null) corpo["cpf"] = cpf;
 
         var response = await PostAsync(corpo);
 
@@ -221,12 +209,9 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
             """);
         Assert.Equal("1|1|([Cpf] IS NOT NULL)", indice);
 
-        // Nenhum índice único na tabela histórica (o mesmo CPF/e-mail se repete entre versões).
         Assert.Equal(0, await EventosSqlSupport.EscalarAsync<int>(Factory,
             "SELECT COUNT(*) FROM sys.indexes WHERE object_id = OBJECT_ID('dbo._usuarios_hist') AND is_unique = 1 AND is_primary_key = 0"));
     }
-
-    // ------------------------------------------------------------------ 2. atualização e omissão x limpeza
 
     [Fact]
     public async Task Put_AtualizaOsQuatroCampos_EPersiste()
@@ -261,7 +246,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var cpf = NovoCpf();
         var alvo = await CriarAsync(cpf, new DateOnly(2000, 2, 29), "(31) 3333-3333");
 
-        // Contrato anterior (só nome/email/cargoId): não apaga nada.
         var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -278,7 +262,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var cpf = NovoCpf();
         var alvo = await CriarAsync(cpf, new DateOnly(1999, 9, 9), "(41) 4444-4444");
 
-        // CPF é obrigatório: remover o gravado é recusado (null ou ""), sem alterar nada nem gerar histórico.
         foreach (var vazio in new JsonNode?[] { "", null })
         {
             var recusado = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = vazio; c["telefone"] = null; }));
@@ -307,7 +290,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(new DateOnly(1999, 9, 9), linha.DataNascimento);
         Assert.Equal("4144444444", linha.Telefone);
 
-        // O CPF substituído fica livre para outro usuário.
         var outro = await CriarAsync(cpf);
         Assert.Equal(cpf, outro.Cpf);
     }
@@ -317,7 +299,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     {
         var legado = await CriarLegadoSemCpfAsync(telefone: "1134567890");
 
-        // Omitido ou vazio: o legado continua sem CPF e a alteração vale.
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, legado.Id, CorpoPut(legado, c => c["telefone"] = "(21) 2345-6789"))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, legado.Id, CorpoPut(legado, c => c["cpf"] = ""))).StatusCode);
         Assert.Null((await UsuarioAsync(legado.Id)).Cpf);
@@ -326,8 +307,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, legado.Id, CorpoPut(legado, c => c["cpf"] = Mascarar(cpf)))).StatusCode);
         Assert.Equal(cpf, (await UsuarioAsync(legado.Id)).Cpf);
     }
-
-    // ------------------------------------------------------------------ 3-6. CPF único
 
     [Fact]
     public async Task Post_CpfDuplicado_ComESemMascara_Retorna409_ENaoCria()
@@ -397,8 +376,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(alvo.Cpf, (await UsuarioAsync(alvo.Id)).Cpf);
     }
 
-    // ------------------------------------------------------------------ 7. índice no banco e concorrência
-
     [Fact]
     public async Task Banco_IndiceUnicoRecusaCpfDuplicado_MesmoSemPassarPelaAplicacao_InclusiveDeInativo()
     {
@@ -423,7 +400,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var cpf = NovoCpf();
         var cargoId = await CargoIdAsync("DS");
 
-        // E-mails distintos: só o CPF (com e sem máscara) disputa o índice.
         var respostas = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => PostAsync(new
         {
             nome = $"Corrida CPF {i}", email = NovoEmail($"corrida{i}"), senha = $"Forte-{Guid.NewGuid():N}", cargoId,
@@ -472,8 +448,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     [Fact]
     public async Task Put_ViolacaoDoIndiceNoUpdate_ViraConflito_MesmoQuandoAConsultaPreviaNaoEncontra()
     {
-        // Intercalamento exato da corrida: a consulta prévia do PUT não vê o CPF (ainda livre); entre ela e o UPDATE, outra
-        // conexão o grava. Só o índice protege, e a violação precisa virar o mesmo 409 de negócio.
         var cpf = NovoCpf();
         var pausa = new PausaDeComandoInterceptor();
         using var fabrica = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(pausa));
@@ -493,7 +467,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
                 EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='127.0.0.1';
                 UPDATE dbo.Usuarios SET Cpf = @cpf WHERE Id = @id;
                 """;
-            comando.Parameters.AddWithValue("@resp", outroLocal.Id); // não o alvo: a linha dele está sob XLOCK do PUT pausado
+            comando.Parameters.AddWithValue("@resp", outroLocal.Id);
             comando.Parameters.AddWithValue("@cpf", cpf);
             comando.Parameters.AddWithValue("@id", outroLocal.Id);
             Assert.Equal(1, await comando.ExecuteNonQueryAsync());
@@ -517,8 +491,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
     }
 
-    // ------------------------------------------------------------------ 8-9. histórico completo
-
     [Fact]
     public async Task Put_HistoricoGuardaOEstadoAnteriorCompleto_ACadaAlteracao()
     {
@@ -532,7 +504,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         {
             nome = "Versão 2", email = email2, cargoId = await CargoIdAsync("DIR"), cpf = cpf2, dataNascimento = "1981-04-05", telefone = "(21) 2000-0002",
         })).StatusCode);
-        // Segunda alteração muda SÓ o telefone (os demais omitidos/iguais): ainda assim é mudança cadastral auditada.
         var v2 = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == alvo.Id);
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(v2, c => c["telefone"] = "(31) 3000-0003"))).StatusCode);
 
@@ -583,7 +554,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(fx.AdminId, linha.UsuarioResponsavelId);
         Assert.Equal(IpTeste, linha.IpResponsavel);
 
-        // Exclusão lógica preserva os dados pessoais no próprio registro.
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.False(salvo.Ativo);
         Assert.Equal(cpf, salvo.Cpf);
@@ -624,8 +594,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Null((await UsuarioAsync(alvo.Id)).DataNascimento);
     }
 
-    // ------------------------------------------------------------------ 10. atomicidade: falha no histórico desfaz a alteração
-
     [Fact]
     public async Task FalhaAoGravarHistorico_DesfazAAlteracao_NoPutENaExclusaoLogica()
     {
@@ -633,7 +601,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var alvo = await CriarAsync(cpf, new DateOnly(1970, 1, 1), "(81) 3888-8888");
         var versaoAntes = (await UsuarioAsync(alvo.Id)).SecurityVersion;
 
-        // Falha injetada só para ESTE usuário: o INSERT do trigger em _usuarios_hist viola a constraint.
         var constraint = $"CK_teste_falha_{Guid.NewGuid():N}";
         await ExecSqlAsync($"ALTER TABLE dbo._usuarios_hist WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK (UsuarioId <> '{alvo.Id}')");
         try
@@ -658,12 +625,9 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(versaoAntes, salvo.SecurityVersion);
         Assert.Empty(await HistoricoAsync(alvo.Id));
 
-        // Sem a falha, a mesma operação passa normalmente.
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["telefone"] = "(11) 3000-0000"))).StatusCode);
         Assert.Single(await HistoricoAsync(alvo.Id));
     }
-
-    // ------------------------------------------------------------------ 12. login por e-mail preservado
 
     [Fact]
     public async Task Login_PorEmail_ContinuaFuncionandoAposAlterarDadosPessoais()

@@ -3,13 +3,11 @@ using Almirante.Api.Dtos;
 
 namespace Almirante.Api.Tests;
 
-// Utilidades compartilhadas pelos testes de /api/Eventos.
 public static class EventosTestKit
 {
     public static DateOnly Hoje => DateOnly.FromDateTime(DateTime.UtcNow);
     public static DateOnly PrimeiroDiaDoMes => new(Hoje.Year, Hoje.Month, 1);
 
-    // "membros" recebe QUALQUER objeto (Guid, Guid[], string, null...) para exercitar os dois formatos e os inválidos.
     public static Dictionary<string, object?> Corpo(object? membros, DateOnly? data = null, string local = "Parque Ibirapuera",
         decimal transporte = 10m, bool gratis = false, decimal alimentacao = 8m, bool individual = false, decimal seguro = 2m,
         Guid? referencia = null, string? versao = null, string? motivo = null)

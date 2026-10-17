@@ -8,8 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-// Ferramenta local de rotação de senha do admin (issue #50, Cli/AdminPasswordResetCli.cs). Testa só a
-// lógica extraída (ResetPasswordAsync), não o parsing de argv/prompt de console.
 public sealed class AdminPasswordResetCliTests : IClassFixture<AlmiranteApiFactory>
 {
     private readonly AlmiranteApiFactory factory;
@@ -44,8 +42,6 @@ public sealed class AdminPasswordResetCliTests : IClassFixture<AlmiranteApiFacto
         Assert.Equal(AdminPasswordResetCli.ResetResult.Sucesso, resultado.Resultado);
         Assert.Empty(resultado.Erros);
 
-        // A sessão criada pelo login ANTES do reset foi revogada: o cookie de refresh dela não
-        // funciona mais — só apagar/trocar a senha não bastaria (RefreshAsync nunca revalida a senha).
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync("/api/Auth/refresh", null)).StatusCode);
 
         var novoClient = factory.CreateClient();

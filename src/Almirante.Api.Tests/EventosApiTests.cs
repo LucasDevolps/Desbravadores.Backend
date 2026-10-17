@@ -6,9 +6,6 @@ using Almirante.Api.Dtos;
 
 namespace Almirante.Api.Tests;
 
-// Contrato HTTP de /api/Eventos que não depende de banco relacional: autenticação, autorização, validação de
-// entrada (formatos de "membros"), GET com período vazio e Swagger. Fluxos com persistência, triggers,
-// rowversion e concorrência estão em EventosSqlServerTests (SQL Server real).
 public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private static readonly Guid A = Guid.Parse("11111111-1111-4111-8111-111111111111");
@@ -18,8 +15,6 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
 
     private static async Task<JsonObject> ProblemaAsync(HttpResponseMessage response) =>
         JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsObject();
-
-    // ------------------------------------------------------------------ POST: formatos de membros
 
     [Theory]
     [InlineData("null")]
@@ -64,8 +59,6 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Contains(A.ToString(), await response.Content.ReadAsStringAsync());
     }
-
-    // ------------------------------------------------------------------ POST: idempotency-key e campos
 
     [Fact]
     public async Task Post_SemIdempotencyKey_Retorna400()
@@ -115,20 +108,16 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
     [Fact]
     public async Task Post_ClienteNaoDefineCamposDoServidor()
     {
-        // status, categoria, finalidade, ativo, total, eventoId, responsável e IP enviados no JSON são ignorados;
-        // aqui só a validação é exercitada (sem banco): o corpo com esses campos continua sendo aceito pelo binder.
         using var client = await ClienteAsync();
         var corpo = EventosTestKit.Corpo(A, data: EventosTestKit.PrimeiroDiaDoMes.AddDays(-1));
         corpo["status"] = "Pago";
         corpo["total"] = 1m;
         corpo["ativo"] = false;
         var response = await EventosTestKit.PostAsync(client, corpo);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode); // só pela data
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var erros = (await ProblemaAsync(response))["errors"]!.AsObject().Select(p => p.Key).ToList();
         Assert.Equal(["DataEvento"], erros);
     }
-
-    // ------------------------------------------------------------------ PUT / DELETE: validação
 
     [Fact]
     public async Task Put_SemVersaoOuComMembrosInvalidos_Retorna400()
@@ -161,8 +150,6 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
         Assert.Equal(HttpStatusCode.BadRequest,
             (await EventosTestKit.DeleteAsync(client, Guid.NewGuid(), new string('m', 256), "AAAAAAAAB9E=")).StatusCode);
     }
-
-    // ------------------------------------------------------------------ GET
 
     [Fact]
     public async Task Get_SemParametros_UsaPeriodoPadraoEDevolveListaVazia_Nunca404()
@@ -207,7 +194,6 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
     public async Task Get_PeriodoNoLimiteDe366Dias_Retorna200_EAcimaDele400()
     {
         using var client = await ClienteAsync();
-        // 2026-01-01 até 2027-01-01 = 366 dias de diferença (ano com 365 dias + 1): limite aceito
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Eventos?dataInicial=2026-01-01&dataFinal=2027-01-01")).StatusCode);
 
         var acima = await client.GetAsync("/api/Eventos?dataInicial=2026-01-01&dataFinal=2027-01-02");
@@ -222,8 +208,6 @@ public sealed class EventosApiTests(AlmiranteApiFactory factory) : IClassFixture
         using var client = await ClienteAsync();
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/Eventos/{Guid.NewGuid()}")).StatusCode);
     }
-
-    // ------------------------------------------------------------------ Swagger
 
     [Fact]
     public async Task Swagger_DocumentaMembrosComoGuidOuArray_ExemplosEIdempotencyKey()

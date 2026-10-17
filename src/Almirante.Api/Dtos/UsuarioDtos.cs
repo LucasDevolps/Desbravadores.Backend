@@ -3,7 +3,6 @@ using MediatR;
 
 namespace Almirante.Api.Dtos;
 
-// Campos editáveis de um usuário, comuns a POST e PUT /api/Usuarios.
 public abstract class UsuarioConteudoRequest
 {
     /// <summary>Obrigatório, até 200 caracteres.</summary>
@@ -15,8 +14,6 @@ public abstract class UsuarioConteudoRequest
     /// <summary>Id de um cargo ativo (ver GET /api/Cargos).</summary>
     public Guid? CargoId { get; set; }
 
-    // Dados pessoais. Os setters só rodam quando a propriedade está no JSON (inclusive com null), o que distingue
-    // OMISSÃO (PUT preserva o valor atual) de LIMPEZA explícita (null ou "" -> NULL no banco).
     private string? _cpf;
     private DateOnly? _dataNascimento;
     private string? _telefone;
@@ -38,8 +35,6 @@ public abstract class UsuarioConteudoRequest
     /// </summary>
     public string? Telefone { get => _telefone; set { _telefone = value; TelefoneInformado = true; } }
 
-    // Dados do responsável, com as mesmas regras de formato dos campos do usuário. Nome e e-mail são obrigatórios só para
-    // menor de 18 anos (data de nascimento informada ou, no PUT, a já gravada); CPF e telefone são sempre opcionais.
     private string? _responsavelNome;
     private string? _responsavelEmail;
     private string? _responsavelCpf;
@@ -57,7 +52,6 @@ public abstract class UsuarioConteudoRequest
     /// <summary>Mesmas regras de telefone. No PUT: omitido mantém; null ou "" remove.</summary>
     public string? ResponsavelTelefone { get => _responsavelTelefone; set { _responsavelTelefone = value; ResponsavelTelefoneInformado = true; } }
 
-    // Identificação e saúde, todos opcionais e com a mesma semântica de omissão/limpeza no PUT.
     private string? _rg;
     private string? _tipoSanguineo;
     private string? _doencasAlergias;
@@ -89,7 +83,6 @@ public abstract class UsuarioConteudoRequest
     [JsonIgnore] public bool ResponsavelCpfInformado { get; private set; }
     [JsonIgnore] public bool ResponsavelTelefoneInformado { get; private set; }
 
-    // Preenchidos pelo controller a partir das claims validadas; nunca lidos do corpo.
     [JsonIgnore] public bool SolicitanteEhAdmin { get; set; }
 }
 

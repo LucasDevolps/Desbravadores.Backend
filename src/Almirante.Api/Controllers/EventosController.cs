@@ -7,9 +7,6 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Controllers;
 
-// Controller fino: autenticação/autorização (mesma política financeira dos lançamentos), coleta de dados
-// que só o servidor pode fornecer (responsável das claims, IP após o middleware de proxies confiáveis,
-// Idempotency-Key) e envio ao MediatR. Nenhuma regra de negócio aqui.
 [ApiController]
 [Route("api/Eventos")]
 [Authorize(Policy = Policies.GestaoFinanceira)]
@@ -121,7 +118,6 @@ public sealed class EventosController(ISender mediator) : ControllerBase
 
     private string IpDeOrigem() => HttpContext.IpDeOrigem();
 
-    // Inalcançável com o pipeline atual (OnTokenValidated exige sub GUID), mantido como defesa.
     private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails
     {
         Title = "Identidade autenticada inválida.",

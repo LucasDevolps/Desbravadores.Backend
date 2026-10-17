@@ -9,11 +9,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Almirante.Api.Tests;
 
-// Ambiente descartável para provar o modelo de identidades SQL contra um SQL Server REAL: um banco novo,
-// preparado pelo MESMO script que o operador executa (docs/sql/criar-usuario-admin-app.sql), com a
-// identidade administrativa e a de runtime da API. A conexão do "harness" (ALMIRANTE_TEST_SQLSERVER,
-// normalmente sysadmin/sa de um SQL Server descartável) só cria e remove o ambiente — é o papel do
-// operador/bootstrap. NENHUM código da API sob teste a recebe.
 public sealed class SqlIdentityEnvironment : IAsyncDisposable
 {
     private readonly List<string> _extraDatabases = [];
@@ -39,7 +34,6 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
         TrustServerCertificate = new SqlConnectionStringBuilder(HarnessConnectionString).TrustServerCertificate,
     };
 
-    // Connection strings exatamente como o compose as monta: admin com credencial, runtime SEM credencial.
     public string AdminCs => WithAdmin(Target(Database), AdminUser, AdminPassword);
     public string AppCs => Target(Database).ConnectionString;
 
@@ -68,8 +62,6 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
         Provider,
         (loggers ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateLogger<DbCredentialManager>());
 
-    // ---- harness (sysadmin do SQL Server descartável) ----
-
     public static async Task<SqlConnection> OpenHarnessAsync(string database = "master")
     {
         var builder = new SqlConnectionStringBuilder(HarnessConnectionString) { InitialCatalog = database };
@@ -87,7 +79,6 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
         });
     }
 
-    // Executa o arquivo SQL entregue ao operador, com a substituição $(VAR) do sqlcmd e a divisão em GO.
     public static async Task RunScriptAsync(IDictionary<string, string> variables)
     {
         var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", "criar-usuario-admin-app.sql"));
@@ -118,8 +109,6 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
         foreach (var login in _extraLogins.Append(AdminUser).Append(AppUser))
             await ExecAsync(connection, $"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}];");
     }
-
-    // ---- utilidades ----
 
     public async Task<SqlConnection> OpenAdminAsync()
     {
@@ -159,7 +148,6 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
         return values;
     }
 
-    // A senha vigente da identidade de runtime, só para os testes provarem que ela nunca vaza (não é logada).
     public string CurrentAppPassword()
     {
         var secure = Provider.Current!.Password;
@@ -169,7 +157,6 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
     }
 }
 
-// Captura tudo o que a aplicação loga, para provar que nenhuma senha aparece.
 public sealed class CapturingLoggerFactory : ILoggerFactory
 {
     public List<string> Entries { get; } = [];
@@ -190,8 +177,6 @@ public sealed class CapturingLoggerFactory : ILoggerFactory
     }
 }
 
-// Falha SEM ecoar o segredo: Assert.DoesNotContain imprime a string procurada e o texto inteiro ao falhar, e o que
-// se procura aqui é justamente uma senha (descartável, mas nunca deve ir a log de teste/CI).
 public static class NoSecret
 {
     public static void Assert(string? text, string secret, string where = "saída")
