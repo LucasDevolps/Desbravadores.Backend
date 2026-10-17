@@ -120,6 +120,11 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
             .NotNull().WithMessage("cpf é obrigatório.")
             .OverridePropertyName(nameof(UsuarioConteudoRequest.Cpf));
 
+        RuleFor(x => Rg.Normalizar(x.Rg))
+            .NotNull().WithMessage(Rg.ObrigatorioSemCin)
+            .OverridePropertyName(nameof(UsuarioConteudoRequest.Rg))
+            .When(x => x.EhCin != true);
+
         RuleFor(x => Cep.Normalizar(x.Endereco!.Cep))
             .NotNull().WithMessage("endereco.cep é obrigatório quando endereco é informado.")
             .OverridePropertyName(Cep.CampoErro)

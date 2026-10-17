@@ -37,7 +37,7 @@ public sealed class UsuariosCinEnderecoSqlServerTests : IClassFixture<EventosSql
         var corpo = new JsonObject
         {
             ["nome"] = $"Participante Teste {Guid.NewGuid():N}", ["email"] = $"cin-{Guid.NewGuid():N}@local.dev",
-            ["senha"] = $"Forte-{Guid.NewGuid():N}", ["cargoId"] = cargoId.ToString(), ["cpf"] = TestHelpers.NovoCpf(),
+            ["senha"] = $"Forte-{Guid.NewGuid():N}", ["cargoId"] = cargoId.ToString(), ["cpf"] = TestHelpers.NovoCpf(), ["rg"] = TestHelpers.RgFicticio,
         };
         extras?.Invoke(corpo);
         var response = await Client.PostAsJsonAsync("/api/Usuarios", corpo);
@@ -303,6 +303,66 @@ public sealed class UsuariosCinEnderecoSqlServerTests : IClassFixture<EventosSql
         Assert.Null(dto.Endereco);
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal((null, null, null, null), (salvo.EnderecoCep, salvo.EnderecoNumero, salvo.EnderecoComplemento, salvo.EnderecoSiafi));
+    }
+
+    private const string RgObrigatorio = "rg é obrigatório quando ehCin é false; com ehCin true (documento é a CIN, que usa o CPF) o rg é opcional.";
+
+    private async Task AssertRgObrigatorioAsync(HttpResponseMessage response)
+    {
+        Assert.True(response.StatusCode == HttpStatusCode.BadRequest, await response.Content.ReadAsStringAsync());
+        Assert.Equal(RgObrigatorio, (string)JsonNode.Parse(await response.Content.ReadAsStringAsync())!["errors"]!["Rg"]![0]!);
+    }
+
+    [Fact]
+    public async Task Put_SemCin_NaoRemoveORg_ComCinPassaASerOpcional()
+    {
+        var alvo = await CriarAsync(c => c["rg"] = "12.345.678-9");
+        Assert.False(alvo.EhCin);
+
+        await AssertRgObrigatorioAsync(await PutAsync(alvo.Id, CorpoPut(alvo, c => c["rg"] = "")));
+        await AssertRgObrigatorioAsync(await PutAsync(alvo.Id, CorpoPut(alvo, c => { c["rg"] = null; c["ehCin"] = false; })));
+        Assert.Equal(("12.345.678-9", false), ((await UsuarioAsync(alvo.Id)).Rg, (await UsuarioAsync(alvo.Id)).EhCin));
+        Assert.Empty(await HistoricoAsync(alvo.Id));
+
+        var comCin = await PutOkAsync(alvo, c => { c["ehCin"] = true; c["rg"] = ""; });
+        Assert.Equal((true, null), (comCin.EhCin, comCin.Rg));
+        var salvo = await UsuarioAsync(alvo.Id);
+        Assert.Equal((true, null), (salvo.EhCin, salvo.Rg));
+        var historico = Assert.Single(await HistoricoAsync(alvo.Id));
+        Assert.Equal((false, "12.345.678-9"), (historico.EhCin, historico.Rg));
+    }
+
+    [Fact]
+    public async Task Put_SaindoDaCinSemRg_Retorna400_EComRgGrava()
+    {
+        var alvo = await CriarAsync(c => { c["ehCin"] = true; c.Remove("rg"); });
+        Assert.Null(alvo.Rg);
+
+        await AssertRgObrigatorioAsync(await PutAsync(alvo.Id, CorpoPut(alvo, c => c["ehCin"] = false)));
+        Assert.True((await UsuarioAsync(alvo.Id)).EhCin);
+
+        // Com CIN, mexer em outros campos sem RG continua permitido.
+        Assert.Equal("Nome Editado Com CIN", (await PutOkAsync(alvo, c => c["nome"] = "Nome Editado Com CIN")).Nome);
+
+        var semCin = await PutOkAsync(alvo, c => { c["ehCin"] = false; c["rg"] = "MG-98.765.432"; });
+        Assert.Equal((false, "MG-98.765.432"), (semCin.EhCin, semCin.Rg));
+        Assert.Equal((false, "MG-98.765.432"), ((await UsuarioAsync(alvo.Id)).EhCin, (await UsuarioAsync(alvo.Id)).Rg));
+    }
+
+    [Fact]
+    public async Task Put_CadastroAntigoSemRgESemCin_ContinuaEditavel_MasAoMexerNoDocumentoExigeRg()
+    {
+        var legado = await TestHelpers.AddUsuarioAsync(Factory, "Legado Sem Documento", "DS");
+        var dto = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == legado.Id);
+        Assert.Equal((false, null), (dto.EhCin, dto.Rg));
+
+        var editado = await PutOkAsync(dto, c => { c["nome"] = "Legado Editado"; c["telefone"] = "(11) 3456-7890"; });
+        Assert.Equal(("Legado Editado", false, null), (editado.Nome, editado.EhCin, editado.Rg));
+
+        await AssertRgObrigatorioAsync(await PutAsync(dto.Id, CorpoPut(editado, c => c["ehCin"] = false)));
+        await AssertRgObrigatorioAsync(await PutAsync(dto.Id, CorpoPut(editado, c => c["rg"] = "")));
+
+        Assert.Equal("1234567", (await PutOkAsync(editado, c => c["rg"] = "1234567")).Rg);
     }
 
     [Fact]

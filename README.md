@@ -380,8 +380,9 @@ mantém o valor atual, e `null` (ou `""` em `cpf`/`telefone`) o remove (exceto o
 exclusão lógica gravam o estado anterior completo, incluindo esses campos, em `_usuarios_hist`, pela trigger
 `TR_Usuarios_Historico`, na mesma transação.
 
-**RG, tipo sanguíneo e doenças/alergias.** Os três são opcionais (`null` quando não informados ou em cadastros antigos;
-nenhum valor padrão é inventado) e seguem a mesma regra de omissão/limpeza no `PUT`. `rg`: até 20 caracteres (letras sem
+**RG, tipo sanguíneo e doenças/alergias.** Tipo sanguíneo e doenças/alergias são opcionais, e o RG depende de `ehCin` (abaixo)
+(`null` quando não informados ou em cadastros antigos; nenhum valor padrão é inventado); seguem a mesma regra de omissão/limpeza
+no `PUT`. `rg`: até 20 caracteres (letras sem
 acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito), gravado como informado e não único.
 `tipoSanguineo`: `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+` ou `O-` (aceita minúsculas, grava em maiúsculas; o banco
 também recusa outro valor pela CHECK `CK_Usuarios_TipoSanguineo`). `doencasAlergias`: **um único texto livre** (um
@@ -391,10 +392,15 @@ também recusa outro valor pela CHECK `CK_Usuarios_TipoSanguineo`). `doencasAler
 
 **Documento: CIN e validade (issue #131).** `ehCin` é `true` quando o documento de identidade do usuário é a Carteira de
 Identidade Nacional; omitido no `POST` grava `false`, e cadastros antigos ficam `false`. `dataExpiracao` é a data de
-validade desse documento (`yyyy-MM-dd`, opcional, `null` em cadastros antigos, pode estar no passado). Os dois são
-independentes: nenhuma regra liga um ao outro, ao RG ou ao CPF, e nada bloqueia login por validade. No `PUT`, omitidos
-mantêm o valor gravado; `ehCin: false` é gravado (não é omissão) e `ehCin: null` é recusado com `400`; `dataExpiracao:
-null` remove a data.
+validade desse documento (`yyyy-MM-dd`, opcional, `null` em cadastros antigos, pode estar no passado); nada bloqueia login
+por validade nem a liga a `ehCin`. No `PUT`, omitidos mantêm o valor gravado; `ehCin: false` é gravado (não é omissão) e
+`ehCin: null` é recusado com `400`; `dataExpiracao: null` remove a data.
+
+`ehCin` decide se o **RG é obrigatório**: a CIN usa o CPF como número, então com `ehCin: true` só o CPF é exigido e o `rg` é
+opcional (pode ser informado e continua gravado); com `ehCin: false` (ou omitido no `POST`) o `rg` é obrigatório (`400` em
+`errors["Rg"]`). No `PUT` a regra usa os valores efetivos (corpo ou gravados) e segue o padrão do CPF: com `ehCin` false, um RG
+gravado não pode ser removido, sair da CIN exige RG e quem informa `rg` ou `ehCin` no corpo precisa ter RG; um cadastro antigo
+sem RG e sem CIN que não envia esses campos continua editável.
 
 **Endereço (issue #131).** O cliente envia `endereco: { cep, numero, complemento }` e a API consulta o
 [ViaCEP](https://viacep.com.br) e grava cada campo em sua coluna (`Usuarios.Endereco*`, `varchar`): `cep` (8 dígitos, sem

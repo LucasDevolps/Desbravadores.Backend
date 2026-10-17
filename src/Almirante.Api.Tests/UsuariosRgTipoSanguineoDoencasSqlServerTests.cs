@@ -30,7 +30,7 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
         var response = await Client.PostAsJsonAsync("/api/Usuarios", new
         {
             nome = $"Participante Teste {Guid.NewGuid():N}", email = $"saude-{Guid.NewGuid():N}@local.dev", senha = $"Forte-{Guid.NewGuid():N}",
-            cargoId, cpf = TestHelpers.MascararCpf(TestHelpers.NovoCpf()), rg, tipoSanguineo, doencasAlergias,
+            cargoId, cpf = TestHelpers.MascararCpf(TestHelpers.NovoCpf()), ehCin = rg is null, rg, tipoSanguineo, doencasAlergias,
         });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;

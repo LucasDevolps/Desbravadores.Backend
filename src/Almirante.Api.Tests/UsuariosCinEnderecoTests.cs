@@ -29,6 +29,7 @@ public sealed class UsuariosCinEnderecoTests : IClassFixture<AlmiranteApiFactory
             ["senha"] = "Forte-Senha-9x2k",
             ["cargoId"] = (await CargoIdAsync()).ToString(),
             ["cpf"] = TestHelpers.NovoCpf(),
+            ["rg"] = TestHelpers.RgFicticio,
         };
         extras?.Invoke(corpo);
         return (await client.PostAsJsonAsync("/api/Usuarios", corpo), email);
@@ -116,6 +117,60 @@ public sealed class UsuariosCinEnderecoTests : IClassFixture<AlmiranteApiFactory
         Assert.Equal(("01001000", null, null, null, null, null, null), (e.Cep, e.Logradouro, e.Numero, e.Complemento, e.ComplementoCep, e.Unidade, e.Bairro));
         Assert.Equal(("Cidade Teste", "AC", "Acre", "Norte", "0012345", null, "09", "0001"),
             (e.Localidade, e.Uf, e.Estado, e.Regiao, e.Ibge, e.Gia, e.Ddd, e.Siafi));
+    }
+
+    [Theory]
+    [InlineData("omitido", null)]
+    [InlineData("omitido", "")]
+    [InlineData("omitido", "   ")]
+    [InlineData("false", null)]
+    [InlineData("false", "")]
+    public async Task Post_SemCin_RgEhObrigatorio_Retorna400_ENaoCria(string ehCin, string? rg)
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var (response, email) = await PostAsync(client, c =>
+        {
+            if (ehCin == "false") c["ehCin"] = false;
+            if (rg is null) c.Remove("rg");
+            else c["rg"] = rg;
+        });
+        Assert.Equal("rg é obrigatório quando ehCin é false; com ehCin true (documento é a CIN, que usa o CPF) o rg é opcional.",
+            (string)(await ErrosAsync(response))["Rg"]![0]!);
+        Assert.False(await ExisteAsync(email));
+    }
+
+    [Theory]
+    [InlineData(true, null, null)]
+    [InlineData(true, "", null)]
+    [InlineData(true, " MG-12.345.678 ", "MG-12.345.678")]
+    [InlineData(false, "12.345.678-9", "12.345.678-9")]
+    public async Task Post_ComCinRgOpcional_SemCinComRg_Cria(bool ehCin, string? rg, string? rgGravado)
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var (response, _) = await PostAsync(client, c =>
+        {
+            c["ehCin"] = ehCin;
+            if (rg is null) c.Remove("rg");
+            else c["rg"] = rg;
+        });
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
+        var dto = (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
+        Assert.Equal((ehCin, rgGravado), (dto.EhCin, dto.Rg));
+        var salvo = await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == dto.Id));
+        Assert.Equal((ehCin, rgGravado, dto.Cpf), (salvo.EhCin, salvo.Rg, salvo.Cpf));
+        Assert.NotNull(salvo.Cpf);
+    }
+
+    [Fact]
+    public async Task Post_ComCin_CpfContinuaObrigatorio()
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var (response, email) = await PostAsync(client, c => { c["ehCin"] = true; c.Remove("rg"); c.Remove("cpf"); });
+        var erros = await ErrosAsync(response);
+        Assert.Equal("cpf é obrigatório.", (string)erros["Cpf"]![0]!);
+        Assert.False(erros.ContainsKey("Rg"));
+        Assert.False(await ExisteAsync(email));
     }
 
     [Fact]

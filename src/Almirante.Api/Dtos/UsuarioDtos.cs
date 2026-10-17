@@ -57,8 +57,9 @@ public abstract class UsuarioConteudoRequest
     private string? _doencasAlergias;
 
     /// <summary>
-    /// Opcional, até 20 caracteres: letras sem acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito; gravado como
-    /// informado (sem espaços externos), não é único. No PUT: omitido mantém; null ou "" remove.
+    /// Obrigatório quando ehCin é false ou omitido; opcional com ehCin true (a CIN usa só o CPF). Até 20 caracteres: letras sem acento,
+    /// dígitos, ponto, hífen, barra e espaço, com ao menos um dígito; gravado como informado (sem espaços externos), não é único. No PUT:
+    /// omitido mantém; null ou "" remove, mas não sem CIN (ver ehCin).
     /// </summary>
     public string? Rg { get => _rg; set { _rg = value; RgInformado = true; } }
 
@@ -78,7 +79,8 @@ public abstract class UsuarioConteudoRequest
 
     /// <summary>
     /// true quando o documento de identidade do usuário é a Carteira de Identidade Nacional (CIN). No POST: omitido grava false. No PUT:
-    /// omitido mantém o valor atual (false é um valor informado, não uma omissão). null é recusado (400).
+    /// omitido mantém o valor atual (false é um valor informado, não uma omissão). null é recusado (400). Decide se o rg é obrigatório:
+    /// false exige rg; true dispensa (só o CPF é exigido). Cadastro antigo sem RG e sem CIN continua editável enquanto não enviar rg/ehCin.
     /// </summary>
     public bool? EhCin { get => _ehCin; set { _ehCin = value; EhCinInformado = true; } }
 

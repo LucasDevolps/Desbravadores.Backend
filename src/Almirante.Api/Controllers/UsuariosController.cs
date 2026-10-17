@@ -41,13 +41,14 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [EndpointSummary("Cadastra um usuário.")]
     [EndpointDescription("E-mail único sem diferenciar maiúsculas/minúsculas (409 se já existir, inclusive entre inativos). " +
         "cpf é obrigatório: um CPF válido (11 dígitos, com ou sem pontos e hífen), único entre todos os usuários (409 se já existir). " +
-        "dataNascimento (yyyy-MM-dd, não futura), telefone, rg, tipoSanguineo e doencasAlergias são opcionais; telefone é fixo ou celular " +
+        "rg é obrigatório quando ehCin é false ou omitido (400) e opcional com ehCin true (a CIN usa só o CPF). " +
+        "dataNascimento (yyyy-MM-dd, não futura), telefone, tipoSanguineo e doencasAlergias são opcionais; telefone é fixo ou celular " +
         "brasileiro com DDD, gravado só com dígitos; rg tem até 20 caracteres (letras, dígitos, ponto, hífen, barra, espaço) e não é único; " +
         "tipoSanguineo é A+, A-, B+, B-, AB+, AB-, O+ ou O-; doencasAlergias é um texto livre de até 2000 caracteres (recusado acima disso, nunca truncado). " +
         "responsavelNome e responsavelEmail são obrigatórios quando dataNascimento indica menos de 18 anos na data de hoje; " +
         "responsavelCpf e responsavelTelefone seguem as mesmas regras de cpf e telefone (sem unicidade). " +
         "ehCin (true quando o documento é a Carteira de Identidade Nacional; omitido = false) e dataExpiracao (validade do documento, yyyy-MM-dd, " +
-        "pode ser passada) são opcionais e independentes. endereco é opcional: { cep (8 dígitos, com ou sem hífen, obrigatório no objeto), numero " +
+        "pode ser passada) são opcionais. endereco é opcional: { cep (8 dígitos, com ou sem hífen, obrigatório no objeto), numero " +
         "(até 20), complemento (até 100) }; a API consulta o ViaCEP e grava os dados oficiais do CEP (400 CEP mal formado ou inexistente, " +
         "503 ViaCEP indisponível, lento ou com resposta inválida — nada é gravado). " +
         "cargoId deve ser um cargo ativo; somente um Administrador cadastra outro Administrador (403).")]
@@ -67,6 +68,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone, rg, tipoSanguineo, doencasAlergias, " +
         "ehCin, dataExpiracao, endereco e os campos do responsável omitidos mantêm o valor atual; null (ou \"\" nos textos) remove, exceto o cpf já " +
         "gravado, que não pode ser removido (400), e ehCin, que só aceita true ou false (false é gravado, não é omissão). " +
+        "Com ehCin efetivo false, o rg é exigido (400) de quem já tinha RG ou era CIN e de quem envia rg ou ehCin; com ehCin true o rg é opcional; " +
+        "um cadastro antigo sem RG e sem CIN que não envia esses campos continua editável. " +
         "endereco: omitido mantém; null ou cep null/\"\" remove o endereço inteiro; dentro do objeto, cep, numero e complemento omitidos mantêm o atual. " +
         "Só um CEP diferente do gravado é consultado no ViaCEP, e então todos os dados do CEP são substituídos e numero/complemento omitidos ficam vazios. " +
         "Se a consulta falhar (400 CEP inexistente, 503 ViaCEP indisponível/lento/resposta inválida), nada é alterado. " +

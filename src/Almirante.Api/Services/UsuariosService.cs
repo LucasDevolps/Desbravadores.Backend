@@ -245,6 +245,11 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw ApiProblemException.Invalid("Cpf", "cpf é obrigatório e não pode ser removido.");
             }
 
+            if (Rg.FaltaNoPut(ehCin, rg, atual.EhCin, atual.Rg, request.EhCinInformado || request.RgInformado))
+            {
+                throw ApiProblemException.Invalid("Rg", Rg.ObrigatorioSemCin);
+            }
+
             var erros = RegraResponsavel.Validar(dataNascimento, responsavelNome, responsavelEmail, responsavelCpf, cpf, dataCivil.Hoje());
             if (erros.Count > 0)
             {
