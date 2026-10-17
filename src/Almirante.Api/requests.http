@@ -39,6 +39,38 @@ X-CSRF-TOKEN: {{csrf}}
 GET {{baseUrl}}/api/Usuarios
 Authorization: Bearer {{token}}
 
+### 4.1 Consultar CEP no ViaCEP (preenche o formulário; nada é gravado; 400 mal formado, 404 inexistente, 503 ViaCEP fora)
+GET {{baseUrl}}/api/Cep/04382-160
+Authorization: Bearer {{token}}
+
+### 4.2 Cadastrar usuário com CIN, validade e endereço (dados fictícios; cargoId de GET /api/Cargos)
+POST {{baseUrl}}/api/Usuarios
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "nome": "Participante Fictício",
+  "email": "participante.ficticio@local.dev",
+  "senha": "Senha-Ficticia-2026",
+  "cargoId": "COLE_AQUI_O_CARGO_ID",
+  "cpf": "529.982.247-25",
+  "ehCin": true,
+  "dataExpiracao": "2036-10-17",
+  "endereco": { "cep": "04382-160", "numero": "123", "complemento": "Apto 12" }
+}
+
+### 4.3 Editar só o endereço (CEP novo é consultado no ViaCEP; ehCin e dataExpiracao omitidos são mantidos)
+PUT {{baseUrl}}/api/Usuarios/COLE_AQUI_O_ID
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "nome": "Participante Fictício",
+  "email": "participante.ficticio@local.dev",
+  "cargoId": "COLE_AQUI_O_CARGO_ID",
+  "endereco": { "cep": "01001-000", "numero": "S/N" }
+}
+
 ### 5. Listar cargos (ADM, DIR, DIRA, SEC, TES; demais cargos: 403)
 GET {{baseUrl}}/api/Cargos
 Authorization: Bearer {{token}}

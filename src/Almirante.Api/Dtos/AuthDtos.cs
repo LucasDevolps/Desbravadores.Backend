@@ -28,6 +28,9 @@ public class UsuarioListItemDto
     public string? Rg { get; set; }
     public string? TipoSanguineo { get; set; }
     public string? DoencasAlergias { get; set; }
+    public bool EhCin { get; set; }
+    public DateOnly? DataExpiracao { get; set; }
+    public EnderecoDto? Endereco { get; set; }
     public string? FotoUrl => PossuiFoto ? $"/api/Usuarios/{Id}/foto" : null;
     public DateTime DataCriacao { get; set; }
     public required string Funcao { get; set; }

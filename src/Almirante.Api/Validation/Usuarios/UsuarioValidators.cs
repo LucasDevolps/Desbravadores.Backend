@@ -75,7 +75,27 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .WithMessage("doencasAlergias contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
             .OverridePropertyName(nameof(UsuarioConteudoRequest.DoencasAlergias))
             .When(x => UsuariosService.NormalizarTexto(x.DoencasAlergias) is not null);
+
+        RuleFor(x => x.EhCin)
+            .NotNull().WithMessage("ehCin deve ser true ou false (omita o campo para manter o valor atual).")
+            .When(x => x.EhCinInformado);
+
+        RuleFor(x => Cep.Normalizar(x.Endereco!.Cep))
+            .Must(Cep.EhValido).WithMessage("endereco.cep inválido: informe 8 dígitos, com ou sem hífen (ex.: 04382-160).")
+            .OverridePropertyName(Cep.CampoErro)
+            .When(x => x.Endereco is not null && Cep.Normalizar(x.Endereco.Cep) is not null);
+
+        TextoEndereco(x => x.Endereco!.Numero, "Numero", "endereco.numero", Endereco.NumeroMaximo);
+        TextoEndereco(x => x.Endereco!.Complemento, "Complemento", "endereco.complemento", Endereco.ComplementoMaximo);
     }
+
+    private void TextoEndereco(Func<T, string?> campo, string propriedade, string nomeJson, int maximo) =>
+        RuleFor(x => UsuariosService.NormalizarTexto(campo(x)))
+            .Must(texto => texto!.Length <= maximo).WithMessage($"{nomeJson} deve ter no máximo {maximo} caracteres.")
+            .Must(texto => TextoVarchar.CabeNaPagina1252(texto!))
+            .WithMessage($"{nomeJson} contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
+            .OverridePropertyName($"{nameof(UsuarioConteudoRequest.Endereco)}.{propriedade}")
+            .When(x => x.Endereco is not null && UsuariosService.NormalizarTexto(campo(x)) is not null);
 
     private void CpfOpcional(Func<T, string?> campo, string propriedade, string nomeJson) =>
         RuleFor(x => UsuariosService.NormalizarCpf(campo(x)))
@@ -99,6 +119,11 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
         RuleFor(x => UsuariosService.NormalizarCpf(x.Cpf))
             .NotNull().WithMessage("cpf é obrigatório.")
             .OverridePropertyName(nameof(UsuarioConteudoRequest.Cpf));
+
+        RuleFor(x => Cep.Normalizar(x.Endereco!.Cep))
+            .NotNull().WithMessage("endereco.cep é obrigatório quando endereco é informado.")
+            .OverridePropertyName(Cep.CampoErro)
+            .When(x => x.Endereco is not null);
 
         RuleFor(x => x.Senha).Custom((senha, context) =>
         {

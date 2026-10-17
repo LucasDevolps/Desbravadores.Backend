@@ -642,6 +642,9 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateOnly?>("DataExpiracao")
+                        .HasColumnType("date");
+
                     b.Property<DateOnly?>("DataNascimento")
                         .HasColumnType("date");
 
@@ -649,6 +652,9 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(2000)
                         .IsUnicode(false)
                         .HasColumnType("varchar(2000)");
+
+                    b.Property<bool>("EhCin")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -661,6 +667,81 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(100)
                         .IsUnicode(false)
                         .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoBairro")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoCep")
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
+
+                    b.Property<string>("EnderecoComplemento")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoComplementoCep")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoDdd")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoEstado")
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("EnderecoGia")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoIbge")
+                        .HasMaxLength(7)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(7)");
+
+                    b.Property<string>("EnderecoLocalidade")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoLogradouro")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoNumero")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoRegiao")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoSiafi")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoUf")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoUnidade")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<int>("FalhasLoginConsecutivas")
                         .HasColumnType("int");
@@ -738,6 +819,8 @@ namespace Almirante.Api.Data.Migrations
 
                     b.ToTable("Usuarios", null, t =>
                         {
+                            t.HasCheckConstraint("CK_Usuarios_Endereco", "([EnderecoCep] IS NULL AND [EnderecoLogradouro] IS NULL AND [EnderecoNumero] IS NULL AND [EnderecoComplemento] IS NULL AND [EnderecoComplementoCep] IS NULL AND [EnderecoUnidade] IS NULL AND [EnderecoBairro] IS NULL AND [EnderecoLocalidade] IS NULL AND [EnderecoUf] IS NULL AND [EnderecoEstado] IS NULL AND [EnderecoRegiao] IS NULL AND [EnderecoIbge] IS NULL AND [EnderecoGia] IS NULL AND [EnderecoDdd] IS NULL AND [EnderecoSiafi] IS NULL) OR ([EnderecoCep] IS NOT NULL AND DATALENGTH([EnderecoCep]) = 8 AND [EnderecoCep] COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9]%' AND [EnderecoLocalidade] IS NOT NULL AND [EnderecoUf] IS NOT NULL AND [EnderecoUf] COLLATE Latin1_General_BIN2 LIKE '[A-Z][A-Z]')");
+
                             t.HasCheckConstraint("CK_Usuarios_FotoCaminho", "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79 AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp' AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')");
 
                             t.HasCheckConstraint("CK_Usuarios_TipoSanguineo", "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')");
@@ -774,6 +857,9 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateOnly?>("DataExpiracao")
+                        .HasColumnType("date");
+
                     b.Property<DateOnly?>("DataNascimento")
                         .HasColumnType("date");
 
@@ -782,10 +868,88 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(2000)");
 
+                    b.Property<bool?>("EhCin")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("EnderecoBairro")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoCep")
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
+
+                    b.Property<string>("EnderecoComplemento")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoComplementoCep")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoDdd")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoEstado")
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("EnderecoGia")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoIbge")
+                        .HasMaxLength(7)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(7)");
+
+                    b.Property<string>("EnderecoLocalidade")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoLogradouro")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoNumero")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoRegiao")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoSiafi")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoUf")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoUnidade")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("FotoCaminho")
                         .HasMaxLength(79)
