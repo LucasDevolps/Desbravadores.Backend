@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -103,6 +104,37 @@ builder.Services.AddLoginRateLimiting(builder.Configuration);
 builder.Services.AddOptions<ClubeOptions>().Bind(builder.Configuration.GetSection(ClubeOptions.SectionName)).ValidateOnStart();
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ClubeOptions>, ClubeOptionsValidator>();
 builder.Services.AddSingleton<DataCivil>();
+
+builder.Services.AddOptions<ViaCepOptions>().Bind(builder.Configuration.GetSection(ViaCepOptions.SectionName)).ValidateOnStart();
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ViaCepOptions>, ViaCepOptionsValidator>();
+// O pipeline padrão de resiliência do AddServiceDefaults (30 s, três novas tentativas) usa as mesmas opções para todo HttpClient.
+// O ViaCEP troca esse pipeline pelo próprio: prazo total ViaCep:TimeoutMs e uma única nova tentativa rápida. RemoveAllResilienceHandlers
+// é a forma documentada de fazer isso para um cliente só, mas ainda é marcada como experimental (EXTEXP0001).
+#pragma warning disable EXTEXP0001
+builder.Services.AddHttpClient<IConsultaCep, ViaCepClient>(ViaCepClient.NomeHttpClient, (sp, http) =>
+    {
+        var viaCep = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ViaCepOptions>>().Value;
+        http.BaseAddress = new Uri(viaCep.BaseUrl);
+        http.Timeout = viaCep.Timeout + TimeSpan.FromSeconds(1);
+        http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Almirante.Api");
+    })
+    // O log padrão do HttpClientFactory grava a URL, que tem o CEP do endereço do usuário; o ViaCepClient registra as falhas sem ele.
+    .RemoveAllLoggers()
+    .RemoveAllResilienceHandlers()
+#pragma warning restore EXTEXP0001
+    .AddStandardResilienceHandler()
+    .Configure((resiliencia, sp) =>
+    {
+        var prazo = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ViaCepOptions>>().Value.Timeout;
+        resiliencia.TotalRequestTimeout.Timeout = prazo;
+        resiliencia.AttemptTimeout.Timeout = prazo / 2;
+        resiliencia.Retry.MaxRetryAttempts = 1;
+        resiliencia.Retry.Delay = TimeSpan.FromMilliseconds(100);
+        resiliencia.Retry.BackoffType = Polly.DelayBackoffType.Constant;
+        resiliencia.Retry.UseJitter = false;
+        resiliencia.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(Math.Max(30, prazo.TotalSeconds));
+    });
 
 builder.Services.AddOptions<MediaOptions>().Bind(builder.Configuration.GetSection(MediaOptions.SectionName))
     .PostConfigure(options =>

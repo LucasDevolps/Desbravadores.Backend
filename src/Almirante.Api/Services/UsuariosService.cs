@@ -14,7 +14,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Almirante.Api.Services;
 
 public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher, TimeProvider clock, DataCivil dataCivil,
-    ILogger<UsuariosService> logger)
+    IConsultaCep consultaCep, ILogger<UsuariosService> logger)
 {
     public const int NomeMaximo = 200;
     public const int EmailMaximo = 100;
@@ -40,6 +40,26 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         Rg = u.Rg,
         TipoSanguineo = u.TipoSanguineo,
         DoencasAlergias = u.DoencasAlergias,
+        EhCin = u.EhCin,
+        DataExpiracao = u.DataExpiracao,
+        Endereco = u.EnderecoCep == null ? null : new EnderecoDto
+        {
+            Cep = u.EnderecoCep,
+            Logradouro = u.EnderecoLogradouro,
+            Numero = u.EnderecoNumero,
+            Complemento = u.EnderecoComplemento,
+            ComplementoCep = u.EnderecoComplementoCep,
+            Unidade = u.EnderecoUnidade,
+            Bairro = u.EnderecoBairro,
+            Localidade = u.EnderecoLocalidade!,
+            Uf = u.EnderecoUf!,
+            Estado = u.EnderecoEstado,
+            Regiao = u.EnderecoRegiao,
+            Ibge = u.EnderecoIbge,
+            Gia = u.EnderecoGia,
+            Ddd = u.EnderecoDdd,
+            Siafi = u.EnderecoSiafi,
+        },
         PossuiFoto = u.FotoCaminho != null,
         DataCriacao = u.DataCriacao,
         Funcao = u.Cargo!.Nome,
@@ -115,6 +135,13 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             throw CpfJaCadastrado();
         }
 
+        var endereco = EnderecoGravado.Vazio;
+        if (request.Endereco is not null)
+        {
+            var dadosCep = await ConsultarCepAsync(Cep.Normalizar(request.Endereco.Cep)!, "Nenhum usuário foi cadastrado.", ct);
+            endereco = EnderecoGravado.DoCep(dadosCep, NormalizarTexto(request.Endereco.Numero), NormalizarTexto(request.Endereco.Complemento));
+        }
+
         var usuario = new Usuario
         {
             Id = Guid.NewGuid(),
@@ -131,6 +158,23 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             Rg = Rg.Normalizar(request.Rg),
             TipoSanguineo = TipoSanguineo.Normalizar(request.TipoSanguineo),
             DoencasAlergias = NormalizarTexto(request.DoencasAlergias),
+            EhCin = request.EhCin ?? false,
+            DataExpiracao = request.DataExpiracao,
+            EnderecoCep = endereco.Cep,
+            EnderecoLogradouro = endereco.Logradouro,
+            EnderecoNumero = endereco.Numero,
+            EnderecoComplemento = endereco.Complemento,
+            EnderecoComplementoCep = endereco.ComplementoCep,
+            EnderecoUnidade = endereco.Unidade,
+            EnderecoBairro = endereco.Bairro,
+            EnderecoLocalidade = endereco.Localidade,
+            EnderecoUf = endereco.Uf,
+            EnderecoEstado = endereco.Estado,
+            EnderecoRegiao = endereco.Regiao,
+            EnderecoIbge = endereco.Ibge,
+            EnderecoGia = endereco.Gia,
+            EnderecoDdd = endereco.Ddd,
+            EnderecoSiafi = endereco.Siafi,
             SenhaHash = string.Empty,
             CargoId = cargo.Id,
             DataCriacao = clock.GetUtcNow().UtcDateTime,
@@ -164,6 +208,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         var nome = request.Nome!.Trim();
         var email = request.Email!.Trim();
         var emailNormalizado = NormalizarEmail(email);
+        var cepPreConsultado = await PreConsultarCepAlteradoAsync(request, ct);
 
         await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
@@ -192,6 +237,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             var rg = request.RgInformado ? Rg.Normalizar(request.Rg) : atual.Rg;
             var tipoSanguineo = request.TipoSanguineoInformado ? TipoSanguineo.Normalizar(request.TipoSanguineo) : atual.TipoSanguineo;
             var doencasAlergias = request.DoencasAlergiasInformado ? NormalizarTexto(request.DoencasAlergias) : atual.DoencasAlergias;
+            var ehCin = request.EhCinInformado ? request.EhCin!.Value : atual.EhCin;
+            var dataExpiracao = request.DataExpiracaoInformada ? request.DataExpiracao : atual.DataExpiracao;
 
             if (cpf is null && atual.Cpf is not null)
             {
@@ -209,6 +256,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw CpfDeOutroUsuario();
             }
 
+            var endereco = await EnderecoEfetivoAsync(request, atual.Endereco, cepPreConsultado, ct);
+
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
             try
             {
@@ -222,7 +271,23 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                         ResponsavelCpf = {Varchar("@responsavelCpf", responsavelCpf, Cpf.Digitos)},
                         ResponsavelTelefone = {Varchar("@responsavelTelefone", responsavelTelefone, TelefoneBrasileiro.MaximoDigitos)},
                         Rg = {Varchar("@rg", rg, Rg.Maximo)}, TipoSanguineo = {Varchar("@tipoSanguineo", tipoSanguineo, TipoSanguineo.Maximo)},
-                        DoencasAlergias = {Varchar("@doencasAlergias", doencasAlergias, DoencasAlergiasMaximo)}
+                        DoencasAlergias = {Varchar("@doencasAlergias", doencasAlergias, DoencasAlergiasMaximo)},
+                        EhCin = {ehCin}, DataExpiracao = {dataExpiracao},
+                        EnderecoCep = {Varchar("@enderecoCep", endereco.Cep, Cep.Digitos)},
+                        EnderecoLogradouro = {Varchar("@enderecoLogradouro", endereco.Logradouro, Endereco.LogradouroMaximo)},
+                        EnderecoNumero = {Varchar("@enderecoNumero", endereco.Numero, Endereco.NumeroMaximo)},
+                        EnderecoComplemento = {Varchar("@enderecoComplemento", endereco.Complemento, Endereco.ComplementoMaximo)},
+                        EnderecoComplementoCep = {Varchar("@enderecoComplementoCep", endereco.ComplementoCep, Endereco.ComplementoCepMaximo)},
+                        EnderecoUnidade = {Varchar("@enderecoUnidade", endereco.Unidade, Endereco.UnidadeMaximo)},
+                        EnderecoBairro = {Varchar("@enderecoBairro", endereco.Bairro, Endereco.BairroMaximo)},
+                        EnderecoLocalidade = {Varchar("@enderecoLocalidade", endereco.Localidade, Endereco.LocalidadeMaximo)},
+                        EnderecoUf = {Varchar("@enderecoUf", endereco.Uf, Endereco.UfTamanho)},
+                        EnderecoEstado = {Varchar("@enderecoEstado", endereco.Estado, Endereco.EstadoMaximo)},
+                        EnderecoRegiao = {Varchar("@enderecoRegiao", endereco.Regiao, Endereco.RegiaoMaximo)},
+                        EnderecoIbge = {Varchar("@enderecoIbge", endereco.Ibge, Endereco.IbgeMaximo)},
+                        EnderecoGia = {Varchar("@enderecoGia", endereco.Gia, Endereco.GiaMaximo)},
+                        EnderecoDdd = {Varchar("@enderecoDdd", endereco.Ddd, Endereco.DddMaximo)},
+                        EnderecoSiafi = {Varchar("@enderecoSiafi", endereco.Siafi, Endereco.SiafiMaximo)}
                     WHERE Id = {request.Id} AND Ativo = 1
                     """, ct);
             }
@@ -284,17 +349,93 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
     private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone,
         string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone,
-        string? Rg, string? TipoSanguineo, string? DoencasAlergias);
+        string? Rg, string? TipoSanguineo, string? DoencasAlergias, bool EhCin, DateOnly? DataExpiracao, EnderecoGravado Endereco);
+
+    private sealed record EnderecoGravado(string? Cep, string? Logradouro, string? Numero, string? Complemento, string? ComplementoCep,
+        string? Unidade, string? Bairro, string? Localidade, string? Uf, string? Estado, string? Regiao, string? Ibge, string? Gia,
+        string? Ddd, string? Siafi)
+    {
+        public static readonly EnderecoGravado Vazio = new(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        public static EnderecoGravado DoCep(CepDto cep, string? numero, string? complemento) =>
+            new(cep.Cep, cep.Logradouro, numero, complemento, cep.Complemento, cep.Unidade, cep.Bairro, cep.Localidade, cep.Uf,
+                cep.Estado, cep.Regiao, cep.Ibge, cep.Gia, cep.Ddd, cep.Siafi);
+    }
 
     private sealed record CargoResumo(Guid Id, string Role);
+
+    private const string NadaAlterado = "Nenhum registro foi alterado.";
 
     private async Task<UsuarioTravado> TravarUsuarioAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
             .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone,
-                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone, u.Rg, u.TipoSanguineo, u.DoencasAlergias))
+                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone, u.Rg, u.TipoSanguineo, u.DoencasAlergias,
+                u.EhCin, u.DataExpiracao,
+                new EnderecoGravado(u.EnderecoCep, u.EnderecoLogradouro, u.EnderecoNumero, u.EnderecoComplemento, u.EnderecoComplementoCep,
+                    u.EnderecoUnidade, u.EnderecoBairro, u.EnderecoLocalidade, u.EnderecoUf, u.EnderecoEstado, u.EnderecoRegiao,
+                    u.EnderecoIbge, u.EnderecoGia, u.EnderecoDdd, u.EnderecoSiafi)))
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
+
+    private async Task<CepDto> ConsultarCepAsync(string cep, string consequencia, CancellationToken ct) =>
+        (await consultaCep.ConsultarAsync(cep, ct)).ExigirEndereco(
+            () => ApiProblemException.Invalid(Cep.CampoErro, $"endereco.cep não encontrado no ViaCEP. {consequencia}"), consequencia);
+
+    /// <summary>
+    /// Consulta o ViaCEP antes da transação (sem segurar o lock da linha durante a chamada HTTP), só quando o PUT troca o CEP de um
+    /// usuário ativo. CEP igual ao gravado não é consultado: os dados do CEP já gravados são mantidos.
+    /// </summary>
+    private async Task<CepDto?> PreConsultarCepAlteradoAsync(UpdateUsuarioRequest request, CancellationToken ct)
+    {
+        if (!request.EnderecoInformado || request.Endereco is not { CepInformado: true } pedido || Cep.Normalizar(pedido.Cep) is not { } cep)
+        {
+            return null;
+        }
+
+        var gravado = await db.Usuarios.AsNoTracking().Where(u => u.Id == request.Id && u.Ativo)
+            .Select(u => new { u.EnderecoCep }).SingleOrDefaultAsync(ct);
+        return gravado is null || gravado.EnderecoCep == cep ? null : await ConsultarCepAsync(cep, NadaAlterado, ct);
+    }
+
+    /// <summary>
+    /// Endereço resultante do PUT. Omitido mantém tudo; null ou cep vazio remove tudo; CEP igual mantém os dados do CEP gravados; CEP
+    /// novo substitui todos os dados do CEP pelos do ViaCEP e, se número ou complemento forem omitidos, eles ficam vazios (eram do
+    /// endereço anterior). Falha do ViaCEP recusa o PUT inteiro, sem tocar no endereço gravado.
+    /// </summary>
+    private async Task<EnderecoGravado> EnderecoEfetivoAsync(UpdateUsuarioRequest request, EnderecoGravado atual, CepDto? cepPreConsultado,
+        CancellationToken ct)
+    {
+        if (!request.EnderecoInformado)
+        {
+            return atual;
+        }
+
+        if (request.Endereco is not { } pedido)
+        {
+            return EnderecoGravado.Vazio;
+        }
+
+        var cep = pedido.CepInformado ? Cep.Normalizar(pedido.Cep) : atual.Cep;
+        var mesmoCep = cep == atual.Cep;
+        var numero = pedido.NumeroInformado ? NormalizarTexto(pedido.Numero) : mesmoCep ? atual.Numero : null;
+        var complemento = pedido.ComplementoInformado ? NormalizarTexto(pedido.Complemento) : mesmoCep ? atual.Complemento : null;
+
+        if (cep is null)
+        {
+            return numero is null && complemento is null
+                ? EnderecoGravado.Vazio
+                : throw ApiProblemException.Invalid(Cep.CampoErro, "endereco.cep é obrigatório para informar número ou complemento.");
+        }
+
+        if (mesmoCep)
+        {
+            return atual with { Numero = numero, Complemento = complemento };
+        }
+
+        var dadosCep = cepPreConsultado?.Cep == cep ? cepPreConsultado : await ConsultarCepAsync(cep, NadaAlterado, ct);
+        return EnderecoGravado.DoCep(dadosCep, numero, complemento);
+    }
 
     private async Task<CargoResumo> ObterCargoAtivoAsync(Guid cargoId, CancellationToken ct) =>
         await db.Cargos.AsNoTracking()

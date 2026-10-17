@@ -13,6 +13,32 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
     public const string CheckTipoSanguineo =
         "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')";
 
+    /// <summary>Colunas varchar do endereço, iguais em Usuarios e _usuarios_hist (EnderecoCep primeiro).</summary>
+    public static readonly (string Coluna, int Tamanho)[] ColunasEndereco =
+    [
+        (nameof(Usuario.EnderecoCep), Validation.Usuarios.Cep.Digitos),
+        (nameof(Usuario.EnderecoLogradouro), Validation.Usuarios.Endereco.LogradouroMaximo),
+        (nameof(Usuario.EnderecoNumero), Validation.Usuarios.Endereco.NumeroMaximo),
+        (nameof(Usuario.EnderecoComplemento), Validation.Usuarios.Endereco.ComplementoMaximo),
+        (nameof(Usuario.EnderecoComplementoCep), Validation.Usuarios.Endereco.ComplementoCepMaximo),
+        (nameof(Usuario.EnderecoUnidade), Validation.Usuarios.Endereco.UnidadeMaximo),
+        (nameof(Usuario.EnderecoBairro), Validation.Usuarios.Endereco.BairroMaximo),
+        (nameof(Usuario.EnderecoLocalidade), Validation.Usuarios.Endereco.LocalidadeMaximo),
+        (nameof(Usuario.EnderecoUf), Validation.Usuarios.Endereco.UfTamanho),
+        (nameof(Usuario.EnderecoEstado), Validation.Usuarios.Endereco.EstadoMaximo),
+        (nameof(Usuario.EnderecoRegiao), Validation.Usuarios.Endereco.RegiaoMaximo),
+        (nameof(Usuario.EnderecoIbge), Validation.Usuarios.Endereco.IbgeMaximo),
+        (nameof(Usuario.EnderecoGia), Validation.Usuarios.Endereco.GiaMaximo),
+        (nameof(Usuario.EnderecoDdd), Validation.Usuarios.Endereco.DddMaximo),
+        (nameof(Usuario.EnderecoSiafi), Validation.Usuarios.Endereco.SiafiMaximo),
+    ];
+
+    /// <summary>Sem CEP, nenhum campo de endereço; com CEP, 8 dígitos, cidade e UF (duas letras maiúsculas).</summary>
+    public static readonly string CheckEndereco =
+        "(" + string.Join(" AND ", ColunasEndereco.Select(c => $"[{c.Coluna}] IS NULL")) + ")" +
+        " OR ([EnderecoCep] IS NOT NULL AND DATALENGTH([EnderecoCep]) = 8 AND [EnderecoCep] COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9]%'" +
+        " AND [EnderecoLocalidade] IS NOT NULL AND [EnderecoUf] IS NOT NULL AND [EnderecoUf] COLLATE Latin1_General_BIN2 LIKE '[A-Z][A-Z]')";
+
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
     public DbSet<Cargo> Cargos => Set<Cargo>();
@@ -38,6 +64,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.UseSqlOutputClause(false);
                 table.HasCheckConstraint("CK_Usuarios_FotoCaminho", CheckFotoCaminho);
                 table.HasCheckConstraint("CK_Usuarios_TipoSanguineo", CheckTipoSanguineo);
+                table.HasCheckConstraint("CK_Usuarios_Endereco", CheckEndereco);
             });
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
@@ -54,6 +81,12 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(u => u.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
             entity.Property(u => u.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
+            entity.Property(u => u.EhCin).IsRequired();
+            entity.Property(u => u.DataExpiracao).HasColumnType("date");
+            foreach (var (coluna, tamanho) in ColunasEndereco)
+            {
+                entity.Property<string?>(coluna).HasColumnType($"varchar({tamanho})").HasMaxLength(tamanho).IsUnicode(false);
+            }
             entity.Property(u => u.SenhaHash).IsRequired();
             entity.Property(u => u.SecurityVersion).IsConcurrencyToken();
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
@@ -282,6 +315,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(h => h.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(h => h.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
             entity.Property(h => h.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
+            entity.Property(h => h.DataExpiracao).HasColumnType("date");
+            foreach (var (coluna, tamanho) in ColunasEndereco)
+            {
+                entity.Property<string?>(coluna).HasColumnType($"varchar({tamanho})").HasMaxLength(tamanho).IsUnicode(false);
+            }
             entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
             entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();
