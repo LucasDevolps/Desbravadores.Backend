@@ -6,11 +6,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Services;
 
-// Faxina das fotos (issue #116), no startup e depois a cada 24 h: remove gravações interrompidas (temporários com mais
-// de 1 h) e fotos sem referência em Usuarios.FotoCaminho com mais de 24 h (ex.: arquivo anterior que não pôde ser
-// apagado num lock do antivírus, ou um envio cujo commit teve resultado desconhecido). Conservadora: a idade mínima
-// protege envios em andamento, e as referências são lidas DEPOIS da listagem, então uma foto gravada entre as duas
-// leituras é recente demais para ser candidata. Arquivos fora do formato de FotoChave nunca são tocados.
 public sealed class FotosCleanupService(IServiceScopeFactory scopes, IFileStorage armazenamento, IOptions<MediaOptions> options,
     TimeProvider clock, ILogger<FotosCleanupService> logger) : BackgroundService
 {

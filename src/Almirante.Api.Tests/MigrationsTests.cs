@@ -6,8 +6,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Almirante.Api.Tests;
 
-// Não acessa banco: roda no CI comum. Os testes InMemory não aplicam migrations, então sem esta
-// verificação uma migration ignorada pelo EF (ex.: sem [DbContext]) só apareceria em produção.
 public class MigrationsTests
 {
     private static AlmiranteDbContext SqlServerContextSemConexao() =>

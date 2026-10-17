@@ -21,7 +21,6 @@ public sealed class DbCredentialRotationService(
 
             try { await manager.RotateAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            // Falha (ex.: SQL Server indisponível): a senha anterior continua válida; tenta de novo no próximo ciclo.
             catch (Exception exception) { logger.LogError(exception, "Falha ao rotacionar a senha do usuário SQL da aplicação."); }
         }
     }

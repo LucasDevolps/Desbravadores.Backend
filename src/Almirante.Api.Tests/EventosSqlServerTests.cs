@@ -10,9 +10,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Almirante.Api.Tests;
 
-// Fluxos completos de /api/Eventos contra SQL Server REAL (transação, rowversion, índices únicos, triggers,
-// SESSION_CONTEXT, concorrência). O InMemory não comprova nenhum desses comportamentos.
-// Ver SqlServerApiFactory (ALMIRANTE_TEST_SQLSERVER): um banco descartável por fixture, com todas as migrations.
 public sealed class EventosSqlFixture : IAsyncLifetime
 {
     public SqlServerApiFactory Factory { get; private set; } = null!;
@@ -40,8 +37,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 {
     private HttpClient Client => fx.Client;
     private SqlServerApiFactory Factory => fx.Factory;
-
-    // ------------------------------------------------------------------ apoio
 
     private async Task<List<Guid>> MembrosAsync(int quantidade)
     {
@@ -107,8 +102,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
     private static async Task<int> NumeroDoErroAsync(Func<Task> acao) => (await Assert.ThrowsAsync<SqlException>(acao)).Number;
 
-    // ------------------------------------------------------------------ POST: criação e cálculo
-
     [Fact]
     public async Task Post_GuidUnico_CriaEventoELancamentoConsolidado()
     {
@@ -121,7 +114,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.EndsWith($"/api/Eventos/{dto.Id}", response.Headers.Location!.ToString());
         Assert.Equal(dto.Id, dto.EventoGrupoId);
         Assert.Null(dto.EventoReferenciaId);
-        Assert.Equal([m[0]], dto.Membros);       // resposta sempre array
+        Assert.Equal([m[0]], dto.Membros);
         Assert.Equal(1, dto.QuantidadeMembros);
         Assert.Equal(20m, dto.ValorPorMembro);
         Assert.Equal(20m, dto.Total);
@@ -134,7 +127,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
         var lanc = Assert.Single(await LancamentosDe(dto.Id));
         Assert.Equal(m[0], lanc.MembroId);
-        Assert.Null(lanc.Finalidade);              // null real, nunca "" nem "null"
+        Assert.Null(lanc.Finalidade);
         Assert.Equal(CategoriaLancamento.Evento, lanc.Categoria);
         Assert.Equal(StatusLancamento.Pendente, lanc.Status);
         Assert.Equal(TipoFluxoLancamento.Entrada, lanc.TipoFluxo);
@@ -217,7 +210,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(0)]   // primeiro dia do mês
+    [InlineData(0)]
     [InlineData(10)]
     [InlineData(400)]
     public async Task Post_DatasValidas_PrimeiroDiaDoMesEFuturo(int deslocamentoDias)
@@ -231,7 +224,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     [Fact]
     public async Task Post_DataNoPrimeiroDiaDoMes_NasceComLancamentoPendente_NuncaPagoOuAtrasado()
     {
-        // só é possível "dentro do mês" antes de hoje quando hoje não é o dia 1
         var data = EventosTestKit.PrimeiroDiaDoMes;
         var dto = await CriarAsync((await MembrosAsync(1))[0], ajustes: [("dataEvento", data.ToString("yyyy-MM-dd"))]);
         Assert.Equal(StatusLancamento.Pendente, Assert.Single(await LancamentosDe(dto.Id)).Status);
@@ -251,7 +243,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Contains(fantasma.ToString(), await response.Content.ReadAsStringAsync());
         Assert.Equal(antes, (await Db(db => db.Eventos.CountAsync()), await Db(db => db.Lancamentos.CountAsync()), await Db(db => db.EventosOperacoes.CountAsync())));
 
-        // retry após falha: a chave não foi consumida pela tentativa que falhou
         var retry = await EventosTestKit.PostAsync(Client, EventosTestKit.Corpo(new[] { existente }), chave);
         Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
     }
@@ -285,8 +276,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var linha = await Db(db => db.Eventos.AsNoTracking().SingleAsync(e => e.Id == dto.Id));
         Assert.Equal(fx.AdminId, linha.CriadoPorUsuarioId);
     }
-
-    // ------------------------------------------------------------------ idempotência
 
     [Fact]
     public async Task Idempotencia_GuidUnicoEArrayDeUm_SaoAMesmaOperacao_Retorna200ComOResultadoOriginal()
@@ -355,7 +344,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var (outro, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(Factory, "TES");
         var resposta = await EventosTestKit.PostAsync(outro, EventosTestKit.Corpo(m[1]), chave);
 
-        // outro usuário com a mesma chave NÃO recebe a resposta alheia nem conflita: cria o próprio evento
         Assert.Equal(HttpStatusCode.Created, resposta.StatusCode);
         Assert.NotEqual(doAdmin.Id, (await EventosTestKit.LerAsync(resposta)).Id);
     }
@@ -408,8 +396,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.False(await Db(db => db.Eventos.Where(e => e.Id == dto.Id).Select(e => e.Ativo).SingleAsync()));
         Assert.All(await LancamentosDe(dto.Id), l => Assert.False(l.Ativo));
     }
-
-    // ------------------------------------------------------------------ passeio com grupos de preços diferentes
 
     [Fact]
     public async Task Referencia_Ibirapuera_OitoVezesVinteMaisDoisVezesCinco_TotalizaCentoESetentaSemAlterarOPrimeiroGrupo()
@@ -500,8 +486,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Single(await LancamentosDe(segundo.Id), l => l.Ativo);
     }
 
-    // ------------------------------------------------------------------ GET
-
     [Fact]
     public async Task Get_FiltroInclusivoOrdenadoPorDataLocalId_ExcluiInativos()
     {
@@ -534,8 +518,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Contains(dto.Id, lista!.Items.Select(i => i.Id));
         Assert.Equal(EventosTestKit.PrimeiroDiaDoMes.AddDays(-30), lista.DataInicial);
     }
-
-    // ------------------------------------------------------------------ PUT
 
     [Fact]
     public async Task Put_GuidUnico_MantemMembroEAtualizaCustos()
@@ -572,11 +554,11 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal((22m, 66m, 3), (novo.ValorPorMembro, novo.Total, novo.QuantidadeMembros));
         Assert.Equal(3, novo.Lancamentos.Count);
         Assert.All(novo.Lancamentos, l => Assert.Equal(22m, l.Valor));
-        Assert.Contains(novo.Lancamentos, l => l.Id == lancamentoMantido); // mantido: mesmo lançamento, atualizado
+        Assert.Contains(novo.Lancamentos, l => l.Id == lancamentoMantido);
         Assert.DoesNotContain(novo.Lancamentos, l => l.Id == lancamentoRemovido);
 
         var todos = await LancamentosDe(dto.Id);
-        Assert.Equal(4, todos.Count);                                     // histórico preservado (sem exclusão física)
+        Assert.Equal(4, todos.Count);
         var removido = todos.Single(l => l.Id == lancamentoRemovido);
         Assert.False(removido.Ativo);
         Assert.Equal(20m, removido.Valor);
@@ -586,7 +568,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.False(participacoes.Single(p => p.MembroId == m[2]).Ativo);
         Assert.NotNull(participacoes.Single(p => p.MembroId == m[2]).DesativadoEmUtc);
 
-        // remoção auditada com o motivo do PUT (trigger de Lancamentos)
         var auditoria = await Db(db => db.LancamentosDeletados.AsNoTracking().SingleAsync(d => d.LancamentoId == lancamentoRemovido));
         Assert.Equal(("Membro desistiu", fx.AdminId, dto.Id), (auditoria.Motivo, auditoria.UsuarioResponsavelId, auditoria.EventoId));
         Assert.Null(auditoria.Finalidade);
@@ -615,13 +596,12 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var corpo = Editar(dto, new[] { m[0], m[1] }, transporte: 11m);
 
         var primeiro = await EventosTestKit.PutAsync(Client, dto.Id, corpo);
-        var repetido = await EventosTestKit.PutAsync(Client, dto.Id, corpo); // versão agora desatualizada
+        var repetido = await EventosTestKit.PutAsync(Client, dto.Id, corpo);
 
         Assert.Equal(HttpStatusCode.OK, primeiro.StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, repetido.StatusCode);
         Assert.Equal(2, (await LancamentosDe(dto.Id)).Count);
 
-        // reenvio com a versão nova e os mesmos dados: nada além da versão muda
         var atual = await EventosTestKit.LerAsync(primeiro);
         var mesmoConteudo = await EventosTestKit.PutAsync(Client, dto.Id, Editar(atual, new[] { m[0], m[1] }));
         Assert.Equal(HttpStatusCode.OK, mesmoConteudo.StatusCode);
@@ -636,7 +616,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
         Assert.Equal(HttpStatusCode.Conflict,
             (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 99m, versao: Convert.ToBase64String(new byte[8])))).StatusCode);
-        Assert.Equal(20m, Assert.Single(await LancamentosDe(dto.Id)).Valor); // não sobrescreveu
+        Assert.Equal(20m, Assert.Single(await LancamentosDe(dto.Id)).Valor);
 
         Assert.Equal(HttpStatusCode.NotFound, (await EventosTestKit.PutAsync(Client, Guid.NewGuid(), Editar(dto, m))).StatusCode);
 
@@ -657,7 +637,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], respostas.Select(r => r.StatusCode).Order());
         var vencedor = await EventosTestKit.LerAsync(respostas.Single(r => r.StatusCode == HttpStatusCode.OK));
         var lancamentos = await LancamentosDe(dto.Id);
-        Assert.All(lancamentos, l => Assert.Equal(vencedor.ValorPorMembro, l.Valor)); // sem mistura das duas escritas
+        Assert.All(lancamentos, l => Assert.Equal(vencedor.ValorPorMembro, l.Valor));
         Assert.Equal(vencedor.Versao, (await ObterAsync(dto.Id)).Versao);
     }
 
@@ -695,7 +675,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var custos = await EventosTestKit.PutAsync(Client, g1.Id, Editar(g1, m[0], transporte: 1m));
         Assert.Equal(HttpStatusCode.OK, custos.StatusCode);
 
-        // depois de excluir o outro grupo, o cadastro remanescente pode mudar data e local
         Assert.Equal(HttpStatusCode.NoContent, (await EventosTestKit.DeleteAsync(Client, g2.Id, "x", g2.Versao)).StatusCode);
         var atual = await EventosTestKit.LerAsync(custos);
         var novaData = atual.DataEvento.AddDays(2);
@@ -719,7 +698,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.BadRequest, rejeitada.StatusCode);
         Assert.Contains("DataEvento", await rejeitada.Content.ReadAsStringAsync());
 
-        // evento histórico (data no mês passado): correção de custos com a data original não é bloqueada
         await using (var conexao = await ConexaoAsync())
         {
             await ExecAsync(conexao, "UPDATE dbo.eventos SET DataEvento = @d WHERE Id = @id", ("@d", mesPassado.ToDateTime(TimeOnly.MinValue)), ("@id", dto.Id));
@@ -732,8 +710,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(mesPassado, (await EventosTestKit.LerAsync(corrigido)).DataEvento);
     }
 
-    // ------------------------------------------------------------------ proteção financeira
-
     [Theory]
     [InlineData("Pago")]
     [InlineData("Atrasado")]
@@ -743,7 +719,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var dto = await CriarAsync(new[] { m[0], m[1] });
         var pago = dto.Lancamentos[0];
         await PagarAsync(pago.Id, status);
-        dto = await ObterAsync(dto.Id); // versão mudou com o status
+        dto = await ObterAsync(dto.Id);
 
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, dto.Membros, transporte: 99m))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { m[0], m[1], m[2] }))).StatusCode);
@@ -751,7 +727,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, dto.Membros, data: dto.DataEvento.AddDays(1)))).StatusCode);
 
         var lancamentos = await LancamentosDe(dto.Id);
-        Assert.Equal(2, lancamentos.Count);                      // nada criado/removido/recriado
+        Assert.Equal(2, lancamentos.Count);
         Assert.All(lancamentos, l => Assert.Equal((20m, true), (l.Valor, l.Ativo)));
         Assert.Equal(Enum.Parse<StatusLancamento>(status), lancamentos.Single(l => l.Id == pago.Id).Status);
         Assert.Equal(StatusLancamento.Pendente, lancamentos.Single(l => l.Id != pago.Id).Status);
@@ -771,7 +747,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var lanc = Assert.Single(await LancamentosDe(dto.Id));
         Assert.Equal((StatusLancamento.Pago, 20m), (lanc.Status, lanc.Valor));
-        // valor e status do pagamento não são tocados, mas a descrição acompanha o local corrigido
         Assert.Equal($"Evento - Parque Ibirapuera (corrigido) - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
     }
 
@@ -788,8 +763,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.DeleteAsync(Client, dto.Id, "x", dto.Versao)).StatusCode);
     }
 
-    // ------------------------------------------------------------------ DELETE
-
     [Fact]
     public async Task Delete_EventoPendente_DesativaTudoDoGrupo_PreservaOutrosGrupos_EGravaSnapshotPorTrigger()
     {
@@ -803,17 +776,16 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.False(await Db(db => db.Eventos.Where(e => e.Id == g1.Id).Select(e => e.Ativo).SingleAsync()));
         Assert.All(await Db(db => db.EventosMembros.Where(p => p.EventoId == g1.Id).ToListAsync()), p => Assert.False(p.Ativo));
         Assert.All(await LancamentosDe(g1.Id), l => Assert.False(l.Ativo));
-        Assert.Equal(2, (await LancamentosDe(g1.Id)).Count);                 // nada apagado fisicamente
-        Assert.True((await ObterAsync(g2.Id)).Ativo);                        // outro grupo preservado
+        Assert.Equal(2, (await LancamentosDe(g1.Id)).Count);
+        Assert.True((await ObterAsync(g2.Id)).Ativo);
         Assert.All(await LancamentosDe(g2.Id), l => Assert.True(l.Ativo));
 
-        // histórico criado exclusivamente pelo trigger
         var historico = Assert.Single(await Db(db => db.HistoricoEventos.AsNoTracking().Where(h => h.EventoId == g1.Id).ToListAsync()));
         Assert.Equal((g1.EventoGrupoId, (Guid?)null, g1.DataEvento, "Parque Ibirapuera"), (historico.EventoGrupoId, historico.EventoReferenciaId, historico.DataEvento, historico.Local));
         Assert.Equal((false, 10m, false, 8m, 2m), (historico.TransporteEhGratis, historico.TransporteValor, historico.AlimentacaoIndividual, historico.AlimentacaoValor, historico.SeguroObrigatorio));
         Assert.Equal((20m, 2, 40m), (historico.ValorPorMembro, historico.QuantidadeMembros, historico.Total));
         Assert.Equal((fx.AdminId, "198.51.100.77", "Grupo cancelado pela diretoria"), (historico.UsuarioResponsavelId, historico.IpResponsavel, historico.Motivo));
-        var relogioDoBanco = await EscalarAsync<DateTime>("SELECT SYSUTCDATETIME()");   // gerado pelo banco, não pela aplicação
+        var relogioDoBanco = await EscalarAsync<DateTime>("SELECT SYSUTCDATETIME()");
         Assert.InRange(historico.ExcluidoEmUtc, relogioDoBanco.AddMinutes(-5), relogioDoBanco.AddSeconds(5));
 
         var participantes = JsonNode.Parse(historico.ParticipantesJson)!.AsArray();
@@ -822,7 +794,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(g1.Lancamentos.Select(l => l.Id.ToString()).Order(), participantes.Select(p => ((string)p!["lancamentoId"]!).ToLowerInvariant()).Order());
         Assert.All(participantes, p => Assert.Equal(("Pendente", 20m), ((string)p!["status"]!, (decimal)p["valor"]!)));
 
-        // auditoria dos lançamentos desativados (trigger existente), agora com EventoId e Finalidade null
         var auditoriaLanc = await Db(db => db.LancamentosDeletados.AsNoTracking().Where(d => d.EventoId == g1.Id).ToListAsync());
         Assert.Equal(2, auditoriaLanc.Count);
         Assert.All(auditoriaLanc, d => Assert.Equal((fx.AdminId, "198.51.100.77", "Grupo cancelado pela diretoria", (string?)null), (d.UsuarioResponsavelId, d.IpResponsavel, d.Motivo, d.Finalidade)));
@@ -860,7 +831,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.All(await LancamentosDe(dto.Id), l => Assert.True(l.Ativo));
         Assert.Equal(0, await Db(db => db.HistoricoEventos.CountAsync(h => h.EventoId == dto.Id)));
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.EventoId == dto.Id)));
-        Assert.Equal(dto.Versao, (await ObterAsync(dto.Id)).Versao);   // rollback inclusive do "lock" de versão
+        Assert.Equal(dto.Versao, (await ObterAsync(dto.Id)).Versao);
     }
 
     [Fact]
@@ -908,7 +879,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             Assert.Equal("||", (string)(await comando.ExecuteScalarAsync())!);
         }
 
-        // uma exclusão sem contexto prévio (fora da aplicação) continua sendo recusada pelo trigger
         var outro = await CriarAsync((await MembrosAsync(1))[0]);
         await using var direta = await ConexaoAsync();
         Assert.Equal(50011, await NumeroDoErroAsync(() => ExecAsync(direta, "UPDATE dbo.eventos SET Ativo = 0 WHERE Id = @id", ("@id", outro.Id))));
@@ -953,14 +923,12 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             var ativo = await Db(db => db.Eventos.Where(e => e.Id == dto.Id).Select(e => e.Ativo).SingleAsync());
             if (excluiu == HttpStatusCode.NoContent)
             {
-                // exclusão venceu: tudo desativado e o pagamento não pode ter "sobrevivido" numa linha ativa
                 Assert.False(ativo);
                 Assert.All(lancamentos, l => Assert.False(l.Ativo));
                 Assert.Equal(1, await Db(db => db.HistoricoEventos.CountAsync(h => h.EventoId == dto.Id)));
             }
             else
             {
-                // pagamento venceu: a exclusão foi recusada (409) e nada mudou além do status
                 Assert.Equal(HttpStatusCode.Conflict, excluiu);
                 Assert.Equal(HttpStatusCode.OK, pagou);
                 Assert.True(ativo);
@@ -989,12 +957,9 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             Assert.Contains(editou, new[] { HttpStatusCode.OK, HttpStatusCode.Conflict });
             var lanc = Assert.Single(await LancamentosDe(dto.Id));
             Assert.Equal(StatusLancamento.Pago, lanc.Status);
-            // se o PUT venceu, ocorreu ANTES do pagamento; se perdeu, o valor pago continua o original
             Assert.Equal(editou == HttpStatusCode.OK ? 87m : 20m, lanc.Valor);
         }
     }
-
-    // ------------------------------------------------------------------ lançamentos vinculados a eventos (regressão do módulo)
 
     [Fact]
     public async Task Lancamentos_VinculadoAEvento_BloqueiaAlteracaoIsoladaEExclusao_MasPermiteStatus()
@@ -1026,7 +991,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal((20m, true, dto.DataEvento, CategoriaLancamento.Evento, (string?)null), (lanc.Valor, lanc.Ativo, lanc.Vencimento, lanc.Categoria, lanc.Finalidade));
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.LancamentoId == id)));
 
-        // status e descrição continuam no fluxo financeiro
         var status = await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status = "Pago", valor = 20m });
         Assert.Equal(HttpStatusCode.OK, status.StatusCode);
         var lido = await status.Content.ReadFromJsonAsync<LancamentoDto>();
@@ -1060,14 +1024,12 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var futuro = EventosTestKit.Hoje.AddDays(5);
 
         Assert.Equal(HttpStatusCode.Created, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("Mensalidade", 10m, futuro))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo(null, 10m, futuro))).StatusCode);   // finalidade nula
+        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo(null, 10m, futuro))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("", 10m, futuro))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("Mensalidade", 0m, futuro))).StatusCode); // valor zero
-        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("Mensalidade", 10m, EventosTestKit.Hoje.AddDays(-1)))).StatusCode); // data passada
+        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("Mensalidade", 0m, futuro))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("Mensalidade", 10m, EventosTestKit.Hoje.AddDays(-1)))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Client.PostAsJsonAsync("/api/Lancamentos/Registrar", Corpo("Evento", 10m, EventosTestKit.Hoje.AddDays(-1)))).StatusCode);
     }
-
-    // ------------------------------------------------------------------ banco: triggers, constraints, índices, rowversion
 
     [Fact]
     public async Task Trigger_ComContexto_RegistraSnapshot_ApenasNaTransicaoDe1Para0_ETrataVariasLinhas()
@@ -1077,20 +1039,16 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var b = await CriarAsync(m[1]);
         await using var conexao = await ConexaoAsync();
 
-        // alterações comuns e no-op: nenhum histórico, sem exigir contexto
         await ExecAsync(conexao, "UPDATE dbo.eventos SET [Local] = N'Novo local' WHERE Id = @id", ("@id", a.Id));
         await ExecAsync(conexao, "UPDATE dbo.eventos SET Ativo = Ativo WHERE Id IN (@a, @b)", ("@a", a.Id), ("@b", b.Id));
         Assert.Equal(0, await Db(db => db.HistoricoEventos.CountAsync(h => h.EventoId == a.Id || h.EventoId == b.Id)));
 
-        // sem contexto obrigatório: falha e nada muda (nem o evento, nem o histórico)
         Assert.Equal(50011, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET Ativo = 0 WHERE Id IN (@a, @b)", ("@a", a.Id), ("@b", b.Id))));
         Assert.Equal(2, await Db(db => db.Eventos.CountAsync(e => (e.Id == a.Id || e.Id == b.Id) && e.Ativo)));
 
-        // contexto parcial também falha
         await ExecAsync(conexao, "EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@u", ("@u", fx.AdminId));
         Assert.Equal(50011, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET Ativo = 0 WHERE Id = @a", ("@a", a.Id))));
 
-        // com contexto completo: uma linha de histórico por evento desativado, numa única instrução
         await ExecAsync(conexao, """
             EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value=N'2001:db8::1';
             EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value=N'trigger direto';
@@ -1099,9 +1057,8 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var historico = await Db(db => db.HistoricoEventos.AsNoTracking().Where(h => h.EventoId == a.Id || h.EventoId == b.Id).ToListAsync());
         Assert.Equal(2, historico.Count);
         Assert.All(historico, h => Assert.Equal((fx.AdminId, "2001:db8::1", "trigger direto"), (h.UsuarioResponsavelId, h.IpResponsavel, h.Motivo)));
-        Assert.Equal("Novo local", historico.Single(h => h.EventoId == a.Id).Local);  // snapshot dos dados imediatamente anteriores
+        Assert.Equal("Novo local", historico.Single(h => h.EventoId == a.Id).Local);
 
-        // segunda exclusão (0 -> 0) e reativação não geram novo histórico
         await ExecAsync(conexao, "UPDATE dbo.eventos SET Ativo = 0 WHERE Id IN (@a, @b)", ("@a", a.Id), ("@b", b.Id));
         Assert.Equal(2, await Db(db => db.HistoricoEventos.CountAsync(h => h.EventoId == a.Id || h.EventoId == b.Id)));
     }
@@ -1114,7 +1071,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(HttpStatusCode.NoContent, (await EventosTestKit.DeleteAsync(Client, dto.Id, "snapshot", dto.Versao)).StatusCode);
 
         await using var conexao = await ConexaoAsync();
-        // altera as linhas mutáveis depois da exclusão: o histórico permanece igual
         await ExecAsync(conexao, "UPDATE dbo.eventos SET [Local] = N'mudou', SeguroObrigatorio = 0, ValorPorMembro = 18 WHERE Id = @id", ("@id", dto.Id));
         await ExecAsync(conexao, "UPDATE dbo.Lancamentos SET Valor = 1, Status = 1 WHERE EventoId = @id", ("@id", dto.Id));
         var h = await Db(db => db.HistoricoEventos.AsNoTracking().SingleAsync(x => x.EventoId == dto.Id));
@@ -1130,15 +1086,12 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var g2 = await CriarAsync(m[1], ajustes: [("eventoReferenciaId", g1.Id)]);
         await using var conexao = await ConexaoAsync();
 
-        // move a participação do g2 para o membro que já está ativo no g1 (mesmo grupo): violação de unicidade
         var erro = await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.evento_membros SET MembroId = @m WHERE EventoId = @e", ("@m", m[0]), ("@e", g2.Id)));
         Assert.Equal(2601, erro);
 
-        // desativada a participação do g1, o índice filtrado libera o membro
         await ExecAsync(conexao, "UPDATE dbo.evento_membros SET Ativo = 0 WHERE EventoId = @e", ("@e", g1.Id));
         Assert.Equal(1, await ExecAsync(conexao, "UPDATE dbo.evento_membros SET MembroId = @m WHERE EventoId = @e", ("@m", m[0]), ("@e", g2.Id)));
 
-        // e agora reativar a participação do g1 (membro já ativo no g2 do mesmo grupo) volta a falhar
         Assert.Equal(2601, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.evento_membros SET Ativo = 1 WHERE EventoId = @e", ("@e", g1.Id))));
     }
 
@@ -1181,9 +1134,8 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
         Assert.Equal(547, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET TransporteValor = -1, ValorPorMembro = 9 WHERE Id = @id", ("@id", dto.Id))));
         Assert.Equal(547, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET ValorPorMembro = 999 WHERE Id = @id", ("@id", dto.Id))));
-        Assert.Equal(547, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET TransporteEhGratis = 1 WHERE Id = @id", ("@id", dto.Id)))); // gratis com valor != 0
+        Assert.Equal(547, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET TransporteEhGratis = 1 WHERE Id = @id", ("@id", dto.Id))));
         Assert.Equal(547, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.eventos SET EventoGrupoId = NEWID() WHERE Id = @id", ("@id", dto.Id))));
-        // FK composta: participante não pode declarar um grupo diferente do do evento
         Assert.Equal(547, await NumeroDoErroAsync(() => ExecAsync(conexao, "UPDATE dbo.evento_membros SET EventoGrupoId = NEWID() WHERE EventoId = @id", ("@id", dto.Id))));
         Assert.Equal(20m, (await ObterAsync(dto.Id)).ValorPorMembro);
     }
@@ -1218,8 +1170,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(dto.Lancamentos[0].Id, aud.LancamentoId);
     }
 
-    // ------------------------------------------------------------------ transação: rollback
-
     private sealed class FalhaAposSalvarInterceptor : SaveChangesInterceptor
     {
         public volatile bool Armada;
@@ -1250,7 +1200,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(0, await TestHelpers.WithDbAsync(factory, db => db.EventosOperacoes.CountAsync()));
         Assert.Equal(0, await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.CountAsync(l => l.EventoId != null)));
 
-        // retry com a mesma chave depois da falha cria normalmente, sem duplicar
         var retry = await EventosTestKit.PostAsync(client, EventosTestKit.Corpo(m), chave);
         Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
         Assert.Equal(2, await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.CountAsync(l => l.EventoId != null)));
@@ -1278,9 +1227,8 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(2, await TestHelpers.WithDbAsync(factory, db => db.EventosMembros.CountAsync(p => p.EventoId == criado.Id && p.Ativo)));
         Assert.Equal(0, await TestHelpers.WithDbAsync(factory, db => db.LancamentosDeletados.CountAsync()));
         var atual = await EventosTestKit.LerAsync(await client.GetAsync($"/api/Eventos/{criado.Id}"));
-        Assert.Equal(criado.Versao, atual.Versao); // até o "lock" de versão foi revertido
+        Assert.Equal(criado.Versao, atual.Versao);
 
-        // depois da falha, o mesmo PUT (mesma versão) funciona e o contexto de auditoria não ficou pendurado
         var ok = await EventosTestKit.PutAsync(client, criado.Id, Editar(criado, m[0], transporte: 50m, motivo: "remoção"));
         Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         Assert.Equal(1, await TestHelpers.WithDbAsync(factory, db => db.LancamentosDeletados.CountAsync(d => d.Motivo == "remoção")));
@@ -1325,22 +1273,18 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             var lancamento = (await LancamentosDe(dto.Id)).Single(l => l.Id == removido);
             if (removeu == HttpStatusCode.OK)
             {
-                // remoção venceu: a cobrança está inativa e o pagamento não pode ter sido gravado nela
                 Assert.False(lancamento.Ativo);
                 Assert.Equal(StatusLancamento.Pendente, lancamento.Status);
                 Assert.Equal(HttpStatusCode.NotFound, pagou);
             }
             else
             {
-                // pagamento venceu: a versão mudou e a remoção foi recusada (409); a cobrança segue ativa e paga
                 Assert.Equal(HttpStatusCode.Conflict, removeu);
                 Assert.True(lancamento.Ativo);
                 Assert.Equal(StatusLancamento.Pago, lancamento.Status);
             }
         }
     }
-
-    // ------------------------------------------------------------------ composição de custos após pagamento (achado 3 da PR #62)
 
     private async Task<(EventoDto Evento, List<Guid> Membros)> EventoComPagamentoAsync(string status, params (string Campo, object? Valor)[] ajustes)
     {
@@ -1353,7 +1297,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     private async Task AssertCadastroInalteradoAsync(EventoDto antes)
     {
         var atual = await ObterAsync(antes.Id);
-        Assert.Equal(antes.Versao, atual.Versao);   // até o "lock" de versão do PUT recusado foi revertido
+        Assert.Equal(antes.Versao, atual.Versao);
         Assert.Equal(antes.Transporte, atual.Transporte);
         Assert.Equal(antes.Alimentacao, atual.Alimentacao);
         Assert.Equal(antes.SeguroObrigatorio, atual.SeguroObrigatorio);
@@ -1367,9 +1311,9 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     [InlineData("Atrasado")]
     public async Task Put_RedistribuirCustosComMesmaSoma_ComLancamentoPagoOuAtrasado_Retorna409_SemAlterarNada(string status)
     {
-        var (dto, m) = await EventoComPagamentoAsync(status);   // 10 + 8 + 2 = 20
+        var (dto, m) = await EventoComPagamentoAsync(status);
 
-        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 5m, alimentacao: 13m));   // 5 + 13 + 2 = 20
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 5m, alimentacao: 13m));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         await AssertCadastroInalteradoAsync(dto);
@@ -1378,8 +1322,8 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(true, false)]    // transporte grátis, alimentação coletiva de 18: 0 + 18 + 2 = 20
-    [InlineData(false, true)]    // transporte de 18, alimentação individual: 18 + 0 + 2 = 20
+    [InlineData(true, false)]
+    [InlineData(false, true)]
     public async Task Put_TrocarBooleanosMantendoOTotal_ComLancamentoPago_Retorna409(bool gratis, bool individual)
     {
         var (dto, m) = await EventoComPagamentoAsync("Pago");
@@ -1389,15 +1333,15 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var response = await EventosTestKit.PutAsync(Client, dto.Id, EventosSqlSupport.Editar(dto, m, transporte: valorTransporte, gratis: gratis, alimentacao: valorAlimentacao, individual: individual));
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal(20m, valorTransporte + valorAlimentacao + 2m); // a soma não mudou: só a composição
+        Assert.Equal(20m, valorTransporte + valorAlimentacao + 2m);
         await AssertCadastroInalteradoAsync(dto);
     }
 
     [Fact]
     public async Task Put_SeguroTrocadoPorTransporteComMesmaSoma_ComLancamentoPago_Retorna409()
     {
-        var (dto, m) = await EventoComPagamentoAsync("Pago");   // 10 + 8 + 2
-        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 8m, seguro: 4m)); // 8 + 8 + 4
+        var (dto, m) = await EventoComPagamentoAsync("Pago");
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 8m, seguro: 4m));
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         await AssertCadastroInalteradoAsync(dto);
     }
@@ -1405,13 +1349,12 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     [Fact]
     public async Task Put_NumeroIgnoradoPeloBooleanoInalterado_NaoEhAlteracaoFinanceira_MesmoComLancamentoPago()
     {
-        // transporte grátis: o valor recebido é descartado (normalizado para 0); alimentação 8 e seguro 2 → 10
         var (dto, m) = await EventoComPagamentoAsync("Pago", ("transporte", new { valor = 555m, ehGratis = true }));
         Assert.Equal(new TransporteDto(0m, true), dto.Transporte);
 
         var response = await EventosTestKit.PutAsync(Client, dto.Id, EventosSqlSupport.Editar(dto, m, transporte: 777m, gratis: true));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);   // equivalência semântica: nada financeiro mudou
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var atual = await ObterAsync(dto.Id);
         Assert.Equal(new TransporteDto(0m, true), atual.Transporte);
         Assert.Equal((dto.ValorPorMembro, dto.Total), (atual.ValorPorMembro, atual.Total));

@@ -7,18 +7,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Services;
 
-// Bloqueio temporário por conta após falhas de senha consecutivas.
-//
-// - Recuperação: o bloqueio expira sozinho após LockoutMinutes; tentativas durante o bloqueio não
-//   o prolongam nem incrementam o contador (o fim do bloqueio é determinável).
-// - Janela: falhas mais antigas que FailureWindowMinutes reiniciam a contagem.
-// - Sucesso (fora de bloqueio) zera o contador.
-// - Concorrência: no SQL Server o incremento é um único UPDATE atômico (ExecuteUpdate), com as
-//   expressões avaliadas sobre os valores anteriores da linha; tentativas simultâneas não perdem
-//   incrementos. O provider InMemory (testes) não suporta ExecuteUpdate, então aplica as MESMAS
-//   expressões compiladas sobre a entidade rastreada.
-// - Enumeração: o chamador responde exatamente igual (401 genérico) para conta inexistente, senha
-//   errada ou conta bloqueada; e-mails inexistentes não geram contador.
 public sealed class LoginLockout(AlmiranteDbContext db, IOptions<LoginProtectionOptions> options)
 {
     private LoginProtectionOptions.LockoutSettings Settings => options.Value.Lockout;
@@ -32,7 +20,6 @@ public sealed class LoginLockout(AlmiranteDbContext db, IOptions<LoginProtection
         var bloqueioAte = agoraUtc.AddMinutes(Settings.LockoutMinutes);
         var maximo = Settings.MaxFailedAttempts;
 
-        // "Reinicia" quando não há falha recente ou quando um bloqueio anterior já expirou.
         Expression<Func<Usuario, int>> novoContador = u =>
             u.UltimaFalhaLoginUtc == null || u.UltimaFalhaLoginUtc <= inicioJanela ||
             (u.LoginBloqueadoAteUtc != null && u.LoginBloqueadoAteUtc <= agoraUtc)
@@ -66,7 +53,6 @@ public sealed class LoginLockout(AlmiranteDbContext db, IOptions<LoginProtection
         await db.SaveChangesAsync(ct);
     }
 
-    // Marca a entidade rastreada; persiste junto com o SaveChanges do login bem-sucedido.
     public static void RegistrarSucesso(Usuario usuario)
     {
         if (usuario.FalhasLoginConsecutivas == 0 && usuario.UltimaFalhaLoginUtc is null && usuario.LoginBloqueadoAteUtc is null) return;

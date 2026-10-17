@@ -9,9 +9,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Testes de segurança de /api/Eventos que reproduzem o comportamento real da aplicação (SQL Server real):
-// injeção, overposting, manipulação de IDs, spoofing de IP, idempotência sob concorrência e restrição no banco,
-// vazamento em logs/erros e concorrência entre eventos e lançamentos.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<EventosSqlFixture>
 {
@@ -58,7 +55,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         return r is null or DBNull ? default : (T)r;
     }
 
-    // Contador acumulado de deadlocks da instância (lido pelo harness, que tem VIEW SERVER STATE).
     private static async Task<long> DeadlocksAcumuladosAsync()
     {
         await using var h = await SqlIdentityEnvironment.OpenHarnessAsync();
@@ -73,8 +69,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         return await EscalarAsync<int>(c, "SELECT COUNT(*) FROM sys.tables");
     }
 
-    // ------------------------------------------------------------------ 1. SQL injection
-
     [Fact]
     public async Task SqlInjection_PayloadsEmLocalMotivoChaveEQuery_SaoGravadosComoTextoOuRecusados_SemAfetarOBanco()
     {
@@ -84,12 +78,10 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         const string local = "x'); DROP TABLE dbo.eventos; --";
         const string motivo = "'); UPDATE dbo.Lancamentos SET Valor = 0; DELETE FROM dbo.Usuarios; --";
 
-        // texto malicioso em "local": gravado literalmente (parâmetro), nada é executado
         var dto = await CriarAsync(Client, m, local: local);
         Assert.Equal(local, dto.Local);
         Assert.Equal(local, await Db(db => db.Eventos.Where(e => e.Id == dto.Id).Select(e => e.Local).SingleAsync()));
 
-        // PUT e DELETE: "motivo" com SQL vira dado do SESSION_CONTEXT/auditoria, jamais SQL
         var put = await EventosTestKit.PutAsync(Client, dto.Id, EventosTestKit.Corpo(new[] { m[0] }, dto.DataEvento, local, versao: dto.Versao, motivo: motivo));
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
         var atual = await EventosTestKit.LerAsync(put);
@@ -97,7 +89,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         Assert.Equal(motivo, await Db(db => db.HistoricoEventos.Where(h => h.EventoId == dto.Id).Select(h => h.Motivo).SingleAsync()));
         Assert.Equal(motivo, await Db(db => db.LancamentosDeletados.Where(d => d.EventoId == dto.Id).Select(d => d.Motivo).FirstAsync()));
 
-        // Idempotency-Key, datas e IDs com SQL: recusados na validação/binding (400/404), nunca 500
         var chave = await EventosTestKit.PostAsync(Client, EventosTestKit.Corpo(m[0]), "1'; DROP TABLE dbo.eventos;--");
         Assert.Equal(HttpStatusCode.BadRequest, chave.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await Client.GetAsync("/api/Eventos?dataInicial=2026-09-01';DROP TABLE dbo.eventos;--&dataFinal=2026-09-30")).StatusCode);
@@ -109,11 +100,9 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         Assert.Equal(tabelas, await TabelasAsync());
         Assert.True(await Db(db => db.Eventos.AnyAsync(e => e.Id == dto.Id)));
         Assert.True(await Db(db => db.Usuarios.CountAsync(u => m.Contains(u.Id))) == 2);
-        Assert.Equal(lancamentosAntes + 2, await Db(db => db.Lancamentos.CountAsync()));   // só os 2 criados aqui
+        Assert.Equal(lancamentosAntes + 2, await Db(db => db.Lancamentos.CountAsync()));
         Assert.DoesNotContain(await Db(db => db.Lancamentos.Where(l => l.EventoId == dto.Id).ToListAsync()), l => l.Valor == 0);
     }
-
-    // ------------------------------------------------------------------ 2/3/4. autorização, overposting, manipulação de IDs
 
     [Fact]
     public async Task Overposting_Post_CamposSensiveisNoJsonSaoIgnorados()
@@ -140,7 +129,7 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var linha = await Db(db => db.Eventos.AsNoTracking().SingleAsync(e => e.Id == dto.Id));
         Assert.Equal(fx.AdminId, linha.CriadoPorUsuarioId);
         var op = await Db(db => db.EventosOperacoes.AsNoTracking().SingleAsync(o => o.EventoId == dto.Id));
-        Assert.Equal((fx.AdminId, chave), (op.UsuarioId, op.IdempotencyKey));   // a chave é a do header, não a do corpo
+        Assert.Equal((fx.AdminId, chave), (op.UsuarioId, op.IdempotencyKey));
         var lanc = await Db(db => db.Lancamentos.AsNoTracking().SingleAsync(l => l.EventoId == dto.Id));
         Assert.Equal((StatusLancamento.Pendente, CategoriaLancamento.Evento, true, 20m), (lanc.Status, lanc.Categoria, lanc.Ativo, lanc.Valor));
     }
@@ -153,7 +142,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var outro = await CriarAsync(Client, (await MembrosAsync(1))[0]);
         var forjado = Guid.NewGuid();
 
-        // PUT com id/grupo/responsável/ip/ativo/status/total forjados, e o id de OUTRO evento no corpo
         var corpo = EventosTestKit.Corpo(new[] { m[0] }, alvo.DataEvento, alvo.Local, 12m, versao: alvo.Versao, motivo: "remoção");
         foreach (var (k, v) in new (string, object?)[]
         {
@@ -165,14 +153,13 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var atual = await EventosTestKit.LerAsync(put);
 
         Assert.Equal((alvo.Id, alvo.EventoGrupoId, (Guid?)null, true), (atual.Id, atual.EventoGrupoId, atual.EventoReferenciaId, atual.Ativo));
-        Assert.Equal(22m, atual.ValorPorMembro);                             // recalculado no servidor
-        Assert.Equal(outro.Versao, (await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{outro.Id}"))!.Versao);   // o outro evento não foi tocado
+        Assert.Equal(22m, atual.ValorPorMembro);
+        Assert.Equal(outro.Versao, (await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{outro.Id}"))!.Versao);
         var removido = await Db(db => db.LancamentosDeletados.AsNoTracking().SingleAsync(d => d.EventoId == alvo.Id));
         Assert.Equal(fx.AdminId, removido.UsuarioResponsavelId);
         Assert.NotEqual("6.6.6.6", removido.IpResponsavel);
         Assert.Equal(fx.AdminId, await Db(db => db.Lancamentos.Where(l => l.EventoId == alvo.Id && l.Ativo).Select(l => l.AtualizadoPorUsuarioId!.Value).FirstAsync()));
 
-        // DELETE com responsável e IP forjados no corpo
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{alvo.Id}")
         {
             Content = JsonContent.Create(new { motivo = "forja", versao = atual.Versao, usuarioResponsavelId = forjado, ipResponsavel = "6.6.6.6", id = outro.Id }),
@@ -181,7 +168,7 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         Assert.Equal(HttpStatusCode.NoContent, (await Client.SendAsync(delete)).StatusCode);
         var h = await Db(db => db.HistoricoEventos.AsNoTracking().SingleAsync(x => x.EventoId == alvo.Id));
         Assert.Equal((fx.AdminId, "198.51.100.10"), (h.UsuarioResponsavelId, h.IpResponsavel));
-        Assert.True((await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{outro.Id}"))!.Ativo);   // id do corpo não redireciona a exclusão
+        Assert.True((await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{outro.Id}"))!.Ativo);
     }
 
     [Fact]
@@ -190,14 +177,12 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var a = await CriarAsync(Client, (await MembrosAsync(1))[0]);
         var b = await CriarAsync(Client, (await MembrosAsync(1))[0]);
 
-        // versão do A aplicada à rota do B: 409 (rowversion não coincide), e nenhum dos dois é alterado
         var cruzado = await EventosTestKit.PutAsync(Client, b.Id, EventosTestKit.Corpo(b.Membros, b.DataEvento, b.Local, 99m, versao: a.Versao));
         Assert.True(cruzado.StatusCode is HttpStatusCode.Conflict);
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.DeleteAsync(Client, b.Id, "cruzado", a.Versao)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await EventosTestKit.DeleteAsync(Client, Guid.NewGuid(), "x", a.Versao)).StatusCode);
         Assert.Equal((a.Versao, b.Versao), ((await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{a.Id}"))!.Versao, (await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{b.Id}"))!.Versao));
 
-        // lançamento de outro evento/qualquer: MembroId/EventoId no corpo do PUT de lançamentos são ignorados
         var lancB = b.Lancamentos[0].Id;
         var forjar = await Client.PutAsJsonAsync($"/api/Lancamentos/{lancB}", new { status = "Pago", membroId = a.Membros[0], eventoId = a.Id });
         Assert.Equal(HttpStatusCode.OK, forjar.StatusCode);
@@ -227,12 +212,9 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
 
         var depois = await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{dto.Id}");
         Assert.Equal((dto.Versao, true), (depois!.Versao, depois.Ativo));
-        // métodos que não existem no recurso: nada de PATCH nem de DELETE em coleção
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await Client.PatchAsync($"/api/Eventos/{dto.Id}", JsonContent.Create(new { }))).StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await Client.DeleteAsync("/api/Eventos")).StatusCode);
     }
-
-    // ------------------------------------------------------------------ 5. IP de auditoria / proxy
 
     private static async Task<string> IpAuditadoAsync(SqlServerApiFactory factory, HttpClient client, string remoteIp, string? xForwardedFor)
     {
@@ -251,7 +233,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
     [Fact]
     public async Task IpDeAuditoria_SemProxyConfiavel_XForwardedForForjadoNuncaEhAuditado()
     {
-        // padrão (fora do Docker/IIS): ForwardedHeaders desligado; o header do cliente é ignorado
         var ip = await IpAuditadoAsync(Factory, Client, "198.51.100.10", "127.0.0.1");
         Assert.Equal("198.51.100.10", ip);
     }
@@ -262,15 +243,10 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         using var factory = new SqlServerApiFactory(new Dictionary<string, string?> { ["ReverseProxy:TrustedNetworkCidr"] = "172.30.0.0/16" });
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
 
-        // cliente externo direto (fora da rede do proxy) forjando 127.0.0.1: o header é ignorado
         Assert.Equal("203.0.113.5", await IpAuditadoAsync(factory, client, "203.0.113.5", "127.0.0.1"));
-        // nginx legítimo (dentro da rede confiável) repassando o IP real do cliente
         Assert.Equal("198.51.100.77", await IpAuditadoAsync(factory, client, "172.30.0.2", "198.51.100.77"));
-        // cliente tentou prefixar um IP forjado: vale só o valor mais à direita (o que o nginx observou)
         Assert.Equal("198.51.100.78", await IpAuditadoAsync(factory, client, "172.30.0.2", "127.0.0.1, 198.51.100.78"));
     }
-
-    // ------------------------------------------------------------------ 6. idempotência: escopo, concorrência e restrição no banco
 
     [Fact]
     public async Task Idempotencia_UsuarioAeB_MesmaChave_ConcorrentementeCadaUmCriaExatamenteUmEvento()
@@ -279,7 +255,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var m = await MembrosAsync(2);
         var chave = Guid.NewGuid().ToString();
 
-        // A×3 e B×3 ao mesmo tempo, com a MESMA chave: uma criação por usuário, o resto é replay 200 do próprio usuário
         var respostasA = Enumerable.Range(0, 3).Select(_ => EventosTestKit.PostAsync(Client, EventosTestKit.Corpo(m[0]), chave)).ToList();
         var respostasB = Enumerable.Range(0, 3).Select(_ => EventosTestKit.PostAsync(b, EventosTestKit.Corpo(m[1]), chave)).ToList();
         var a = await Task.WhenAll(respostasA);
@@ -294,14 +269,12 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         Assert.Single(idsB);
         Assert.NotEqual(idsA[0], idsB[0]);
 
-        // nenhum usuário enxerga a resposta do outro: B (mesma chave, membro de A) NÃO recebe o evento de A
         Assert.Equal(2, await Db(db => db.EventosOperacoes.CountAsync(o => o.IdempotencyKey == chave)));
         var doA = await Db(db => db.EventosOperacoes.SingleAsync(o => o.IdempotencyKey == chave && o.UsuarioId == fx.AdminId));
         var doB = await Db(db => db.EventosOperacoes.SingleAsync(o => o.IdempotencyKey == chave && o.UsuarioId == bId));
         Assert.Equal((idsA[0], idsB[0]), (doA.EventoId, doB.EventoId));
-        // e o mesmo membro de A enviado por B com a mesma chave é a operação de B (não é conflito 409 nem replay do A)
         var trocado = await EventosTestKit.PostAsync(b, EventosTestKit.Corpo(m[0]), chave);
-        Assert.Equal(HttpStatusCode.Conflict, trocado.StatusCode);   // dados diferentes da operação DE B (m[1]) com a chave de B
+        Assert.Equal(HttpStatusCode.Conflict, trocado.StatusCode);
     }
 
     [Fact]
@@ -312,45 +285,40 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var dto = await CriarAsync(Client, m, chave);
         await using var c = await ConexaoAsync();
 
-        // INSERT direto da mesma (UsuarioId, chave): o índice único recusa, sem passar por nenhum SELECT prévio
         var ex = await Assert.ThrowsAsync<SqlException>(() => ExecAsync(c,
             "INSERT INTO dbo.eventos_operacoes (Id, UsuarioId, IdempotencyKey, RequestHash, EventoId, CriadoEmUtc) VALUES (NEWID(), @u, @k, N'x', @e, SYSUTCDATETIME())",
             ("@u", fx.AdminId), ("@k", chave), ("@e", dto.Id)));
         Assert.Equal(2601, ex.Number);
-        // outro usuário com a mesma chave é permitido pelo banco
         Assert.Equal(1, await ExecAsync(c,
             "INSERT INTO dbo.eventos_operacoes (Id, UsuarioId, IdempotencyKey, RequestHash, EventoId, CriadoEmUtc) SELECT TOP 1 NEWID(), Id, @k, N'x', @e, SYSUTCDATETIME() FROM dbo.Usuarios WHERE Id <> @u",
             ("@u", fx.AdminId), ("@k", chave), ("@e", dto.Id)));
     }
-
-    // ------------------------------------------------------------------ 8. vazamento em logs e erros
 
     [Fact]
     public async Task Logs_NaoContemTokenSenhaChaveJwtNemConnectionString_EmOperacoesDeEventos()
     {
         var m = await MembrosAsync(2);
         var dto = await CriarAsync(Client, m);
-        await EventosTestKit.PutAsync(Client, dto.Id, EventosTestKit.Corpo(m, dto.DataEvento, dto.Local, 30m, versao: "AAAAAAAAB9E="));   // 409 (recusa logada)
+        await EventosTestKit.PutAsync(Client, dto.Id, EventosTestKit.Corpo(m, dto.DataEvento, dto.Local, 30m, versao: "AAAAAAAAB9E="));
         var atual = await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{dto.Id}");
         await EventosTestKit.DeleteAsync(Client, dto.Id, "log", atual!.Versao);
-        await EventosTestKit.DeleteAsync(Client, dto.Id, "log", atual.Versao);   // 404 (recusa logada)
+        await EventosTestKit.DeleteAsync(Client, dto.Id, "log", atual.Versao);
 
         var token = Client.DefaultRequestHeaders.Authorization!.Parameter!;
         var senhaSql = new SqlConnectionStringBuilder(Factory.ConnectionString).Password;
         var logs = string.Join('\n', Factory.Logs.Entries);
-        Assert.Contains("Operação recusada", logs);                        // eventos de recusa existem no log estruturado
+        Assert.Contains("Operação recusada", logs);
         Assert.DoesNotContain(token, logs);
         Assert.DoesNotContain(AlmiranteApiFactory.AdminSenha, logs);
         Assert.DoesNotContain(Factory.JwtKeyBase64, logs);
         Assert.DoesNotContain(senhaSql, logs);
         Assert.DoesNotContain("Password=", logs, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(m[0].ToString() + "\"", logs);               // nenhum corpo de requisição em log
+        Assert.DoesNotContain(m[0].ToString() + "\"", logs);
     }
 
     [Fact]
     public async Task Erro500_EmProducao_NaoDevolveStackTraceSqlNemDetalhesInternos()
     {
-        // InMemory + evento => o serviço lança NotSupportedException (falha inesperada real no pipeline de produção)
         using var factory = new ConfiguredApiFactory("Production");
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
         var response = await EventosTestKit.PostAsync(client, EventosTestKit.Corpo(Guid.NewGuid()));
@@ -362,8 +330,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
             Assert.DoesNotContain(proibido, corpo);
         Assert.False(response.Headers.Contains("X-Powered-By"));
     }
-
-    // ------------------------------------------------------------------ 7. desserialização: nunca 500
 
     [Theory]
     [InlineData("{")]
@@ -401,8 +367,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         Assert.Contains((await Client.SendAsync(vazio)).StatusCode, new[] { HttpStatusCode.BadRequest, HttpStatusCode.UnsupportedMediaType });
     }
 
-    // ------------------------------------------------------------------ 9/10. lançamentos vinculados e concorrência (estresse)
-
     [Fact]
     public async Task Concorrencia_EstresseMisto_PagarEditarExcluirEmVariosEventos_SemDeadlockNemEstadoIncoerente()
     {
@@ -425,8 +389,8 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         }
 
         var resultados = await Task.WhenAll(tarefas);
-        Assert.DoesNotContain(resultados, r => r.Status == HttpStatusCode.InternalServerError);   // deadlock/exceção inesperada = 500
-        Assert.Equal(deadlocksAntes, await DeadlocksAcumuladosAsync());   // contador do próprio SQL Server: zero deadlocks, inclusive os já retentados
+        Assert.DoesNotContain(resultados, r => r.Status == HttpStatusCode.InternalServerError);
+        Assert.Equal(deadlocksAntes, await DeadlocksAcumuladosAsync());
 
         foreach (var e in dtos)
         {
@@ -437,21 +401,19 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
 
             if (!evento.Ativo)
             {
-                Assert.Empty(ativos);                                              // excluído: nada ativo sobrou
-                Assert.All(lancs, l => Assert.Equal(StatusLancamento.Pendente, l.Status));   // e nenhum pagamento foi engolido
+                Assert.Empty(ativos);
+                Assert.All(lancs, l => Assert.Equal(StatusLancamento.Pendente, l.Status));
                 Assert.Equal(1, historicos);
             }
             else
             {
                 Assert.Equal(2, ativos.Count);
-                Assert.All(ativos, l => Assert.Equal(evento.ValorPorMembro, l.Valor));   // total/valor coerentes com o cadastro
+                Assert.All(ativos, l => Assert.Equal(evento.ValorPorMembro, l.Valor));
                 Assert.Equal(evento.ValorPorMembro * 2, ativos.Sum(l => l.Valor));
                 Assert.Equal(0, historicos);
-                // se o edit ganhou, o valor é o novo; se perdeu (409), continua o original: nunca uma mistura
                 Assert.Contains(evento.ValorPorMembro, new[] { 20m, 60m });
             }
 
-            // pagamento e exclusão nunca convivem: exclusão só passa sem Pago/Atrasado
             var pagos = lancs.Count(l => l.Status != StatusLancamento.Pendente);
             if (!evento.Ativo) Assert.Equal(0, pagos);
         }
@@ -464,7 +426,6 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var dto = await CriarAsync(Client, m);
         var id = dto.Lancamentos[0].Id;
 
-        // valor igual ao atual + status é permitido; qualquer mudança real de campo financeiro é 409, em campos isolados ou combinados
         foreach (var corpo in new object[]
         {
             new { valor = 21m }, new { valor = 0.01m, status = "Pago" }, new { vencimento = dto.DataEvento.AddDays(3).ToString("yyyy-MM-dd") },
@@ -472,18 +433,15 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         })
             Assert.Equal(HttpStatusCode.Conflict, (await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", corpo)).StatusCode);
 
-        // nenhuma das tentativas mudou o status (a validação é atômica: 409 antes de qualquer gravação)
         var lanc = await Db(db => db.Lancamentos.AsNoTracking().SingleAsync(l => l.Id == id));
         Assert.Equal((StatusLancamento.Pendente, 20m, dto.DataEvento, CategoriaLancamento.Evento), (lanc.Status, lanc.Valor, lanc.Vencimento, lanc.Categoria));
 
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "contorno" }) };
         Assert.Equal(HttpStatusCode.Conflict, (await Client.SendAsync(delete)).StatusCode);
-        // marcado como Pago pelo fluxo permitido, continua bloqueado para exclusão isolada
         Assert.Equal(HttpStatusCode.OK, (await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status = "Pago" })).StatusCode);
         var delete2 = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "contorno" }) };
         Assert.Equal(HttpStatusCode.Conflict, (await Client.SendAsync(delete2)).StatusCode);
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.LancamentoId == id)));
-        // o registro geral "para todos os membros" nunca cria nem altera lançamentos de evento
         var eventoAntes = await Db(db => db.Lancamentos.CountAsync(l => l.EventoId == dto.Id));
         var geral = new HttpRequestMessage(HttpMethod.Post, "/api/Lancamentos/Registrar")
         {

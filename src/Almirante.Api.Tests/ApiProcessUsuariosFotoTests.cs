@@ -6,9 +6,6 @@ using System.Text.Json.Nodes;
 
 namespace Almirante.Api.Tests;
 
-// Ponta a ponta no binário REAL (Kestrel HTTPS, identidades SQL de produção, disco real): o roteiro pedido para validar
-// usuários e foto — listar, cadastrar (menor com e sem responsável, adulto), alterar, enviar foto, baixar, trocar,
-// recusas do servidor de verdade (413/415/422) e excluir a foto e os usuários.
 [Trait("Category", "RequiresSqlServer")]
 public class ApiProcessUsuariosFotoTests
 {
@@ -29,7 +26,6 @@ public class ApiProcessUsuariosFotoTests
         Assert.True(started, $"a API deveria subir (código {exitCode}). Saída:\n{api.Output}");
         using var client = api.CreateClient(await api.Listening);
 
-        // Login (CSRF -> token)
         var csrf = await client.GetFromJsonAsync<JsonElement>("/api/Auth/csrf");
         client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", csrf.GetProperty("csrfToken").GetString());
         var login = await client.PostAsJsonAsync("/api/Auth/login", new { email = ApiProcess.AdminEmail, senha = ApiProcess.AdminSenha });
@@ -37,13 +33,11 @@ public class ApiProcessUsuariosFotoTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",
             (await login.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetProperty("accessToken").GetString());
 
-        // 1. Listar
         var lista = JsonNode.Parse(await client.GetStringAsync("/api/Usuarios"))!.AsArray();
         Assert.Contains(lista, u => (string)u!["email"]! == ApiProcess.AdminEmail);
         var cargoDs = (await client.GetFromJsonAsync<JsonElement>("/api/Cargos")).EnumerateArray()
             .Single(c => c.GetProperty("role").GetString() == "DS").GetProperty("id").GetGuid();
 
-        // 2. Cadastrar: menor sem responsável (400), menor com responsável e adulto sem (201)
         var hoje = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, SaoPaulo).DateTime);
         object Corpo(string nascimento, object? responsavel = null) => new
         {
@@ -62,7 +56,6 @@ public class ApiProcessUsuariosFotoTests
         Assert.Equal(HttpStatusCode.Created, criadoAdulto.StatusCode);
         var adultoId = Guid.Parse((string)JsonNode.Parse(await criadoAdulto.Content.ReadAsStringAsync())!["id"]!);
 
-        // 3. Alterar (responsável omitido é mantido)
         var alteracao = await client.PutAsJsonAsync($"/api/Usuarios/{id}", new
         {
             nome = "Desbravador E2E Alterado", email = (string)desbravador["email"]!, cargoId = cargoDs, telefone = "(21) 3456-7890",
@@ -71,7 +64,6 @@ public class ApiProcessUsuariosFotoTests
         var alterado = JsonNode.Parse(await alteracao.Content.ReadAsStringAsync())!;
         Assert.Equal(("2134567890", "Responsável E2E"), ((string)alterado["telefone"]!, (string)alterado["responsavelNome"]!));
 
-        // 4. Subir a foto (JPEG com EXIF/GPS e orientação) e baixar
         var rota = $"/api/Usuarios/{id}/foto";
         var envio = await client.PutAsync(rota, FotosTestKit.Multipart(FotosTestKit.ComExif(FotosTestKit.Jpeg(1600, 1200), 6)));
         Assert.True(envio.StatusCode == HttpStatusCode.OK, await envio.Content.ReadAsStringAsync());
@@ -85,7 +77,6 @@ public class ApiProcessUsuariosFotoTests
         condicional.Headers.IfNoneMatch.Add(baixada.Headers.ETag!);
         Assert.Equal(HttpStatusCode.NotModified, (await client.SendAsync(condicional)).StatusCode);
 
-        // 5. Recusas do servidor real: corpo acima do limite (413), compressão de transporte (415), bomba (422)
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await client.PutAsync(rota, FotosTestKit.Multipart(new byte[11 * 1024 * 1024]))).StatusCode);
         var comCompressao = FotosTestKit.Multipart(FotosTestKit.Jpeg(200, 200));
         comCompressao.Headers.ContentEncoding.Add("gzip");
@@ -93,7 +84,6 @@ public class ApiProcessUsuariosFotoTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity,
             (await client.PutAsync(rota, FotosTestKit.Multipart(FotosTestKit.PngBomba(50_000, 50_000), "bomba.png", "image/png"))).StatusCode);
 
-        // 6. Trocar e excluir a foto; excluir os usuários de teste (exclusão lógica)
         Assert.Equal(HttpStatusCode.OK, (await client.PutAsync(rota, FotosTestKit.Multipart(FotosTestKit.Png(300, 300), "nova.png", "image/png"))).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync(rota)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync(rota)).StatusCode);
@@ -101,10 +91,8 @@ public class ApiProcessUsuariosFotoTests
         Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/Usuarios/{id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/Usuarios/{adultoId}")).StatusCode);
 
-        // Disco: nada sobrou do usuário. Banco: histórico pelo trigger com a identidade de runtime e IP real.
         Assert.False(Directory.Exists(Path.Combine(api.FotosPath!, "usuarios", id.ToString("N"))));
         await using var verificacao = await SqlIdentityEnvironment.OpenHarnessAsync(env.Database);
-        // alteração cadastral, envio, troca e exclusão da foto
         Assert.Equal(4, await SqlIdentityEnvironment.ScalarAsync(verificacao,
             $"SELECT COUNT(*) FROM dbo._usuarios_hist WHERE UsuarioId = '{id}' AND TipoOperacao = 'UPDATE' AND IpResponsavel = '127.0.0.1'"));
         Assert.Equal(1, await SqlIdentityEnvironment.ScalarAsync(verificacao,

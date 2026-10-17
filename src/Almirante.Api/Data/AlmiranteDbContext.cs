@@ -5,14 +5,13 @@ namespace Almirante.Api.Data;
 
 public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : DbContext(options)
 {
-    // Defesa em profundidade para Usuarios.FotoCaminho (mesmo formato de Services/FotoChave): exatamente
-    // "usuarios/" + Id do PRÓPRIO usuário em 32 hex minúsculos + "/" + 32 hex + ".webp" (79 caracteres). Um caminho
-    // gravado por outra via que não siga esse formato, aponte para a pasta de outro usuário ou tente sair da raiz
-    // ("..", absoluto, outra extensão) é recusado pelo próprio banco. BIN2: distingue maiúsculas.
     public const string CheckFotoCaminho =
         "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79" +
         " AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp'" +
         " AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')";
+
+    public const string CheckTipoSanguineo =
+        "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')";
 
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
@@ -24,53 +23,40 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
     public DbSet<EventoMembro> EventosMembros => Set<EventoMembro>();
     public DbSet<EventoOperacao> EventosOperacoes => Set<EventoOperacao>();
 
-    // Somente leitura pela aplicação: linhas são inseridas exclusivamente pelo trigger de
-    // auditoria (ver Entities/LancamentoDeletado.cs).
     public DbSet<LancamentoDeletado> LancamentosDeletados => Set<LancamentoDeletado>();
 
-    // Idem: historico_eventos só é escrito pelo trigger de exclusão lógica de eventos.
     public DbSet<HistoricoEvento> HistoricoEventos => Set<HistoricoEvento>();
 
-    // Idem: _usuarios_hist só é escrito pelo trigger TR_Usuarios_Historico (alteração/exclusão lógica de usuários).
     public DbSet<UsuarioHistorico> UsuariosHistorico => Set<UsuarioHistorico>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Usuario>(entity =>
         {
-            // Trigger AFTER UPDATE (TR_Usuarios_Historico): mesmo motivo de Lancamentos, o EF não pode usar OUTPUT
-            // nesta tabela (inclusive no UPDATE de login/lockout, que não gera histórico mas passa pelo trigger).
             entity.ToTable("Usuarios", table =>
             {
                 table.UseSqlOutputClause(false);
                 table.HasCheckConstraint("CK_Usuarios_FotoCaminho", CheckFotoCaminho);
+                table.HasCheckConstraint("CK_Usuarios_TipoSanguineo", CheckTipoSanguineo);
             });
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
-            // varchar (não Unicode): a aplicação só aceita e-mail/CPF/telefone em ASCII imprimível
-            // (UsuariosService.SomenteAsciiImprimivel), para que nenhuma conversão nvarchar -> varchar perca caracteres.
             entity.Property(u => u.Email).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
             entity.Property(u => u.EmailNormalizado).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
             entity.Property(u => u.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(u => u.DataNascimento).HasColumnType("date");
             entity.Property(u => u.Telefone).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
-            // Colunas novas sempre varchar (desempenho) e com o tamanho exato do valor normalizado: nome na página
-            // 1252 (TextoVarchar), e-mail ASCII, CPF e telefone só dígitos, caminho da foto com 79 caracteres fixos.
             entity.Property(u => u.ResponsavelNome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false);
             entity.Property(u => u.ResponsavelEmail).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false);
             entity.Property(u => u.ResponsavelCpf).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(u => u.ResponsavelTelefone).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(u => u.FotoCaminho).HasColumnType("varchar(79)").HasMaxLength(79).IsUnicode(false);
+            entity.Property(u => u.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(u => u.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
+            entity.Property(u => u.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
             entity.Property(u => u.SenhaHash).IsRequired();
-            // Token de concorrência: todo UPDATE de Usuarios (login, rehash, reset de senha) filtra por esta
-            // versão, então um login/rehash baseado em credenciais anteriores a um reset falha em vez de
-            // persistir uma sessão ou restaurar o hash antigo (ver AuthService.LoginAsync).
             entity.Property(u => u.SecurityVersion).IsConcurrencyToken();
-            // Garantia definitiva de e-mail único (login), inclusive entre ativos e inativos e sob concorrência: a
-            // aplicação consulta antes para dar a mensagem de negócio e traduz a violação deste índice em 409.
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
-            // Mesma garantia para o CPF (já normalizado), entre ativos e inativos; registros legados sem CPF (NULL)
-            // ficam fora do índice. Sem equivalente em _usuarios_hist: lá o mesmo valor se repete entre versões.
             entity.HasIndex(u => u.Cpf)
                 .IsUnique()
                 .HasDatabaseName("UX_Usuarios_Cpf")
@@ -106,12 +92,6 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
         modelBuilder.Entity<Lancamento>(entity =>
         {
-            // Lancamentos tem um trigger AFTER UPDATE (TR_Lancamentos_AuditoriaExclusaoLogica,
-            // ver migration AddLancamentoGeral). O SQL Server rejeita OUTPUT sem INTO em DML sobre
-            // uma tabela com trigger ("Msg 334"); desligar a cláusula OUTPUT aqui faz o EF Core
-            // usar SELECT @@ROWCOUNT no lugar, compatível com o trigger, para qualquer INSERT/
-            // UPDATE/DELETE gerado por SaveChanges nesta tabela (não afeta o UPDATE de exclusão
-            // lógica do lançamento geral, que é SQL bruto e nunca usa OUTPUT).
             entity.ToTable("Lancamentos", table =>
             {
                 table.UseSqlOutputClause(false);
@@ -138,10 +118,6 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasOne<Evento>().WithMany().HasForeignKey(l => l.EventoId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(l => l.Membro).WithMany(u => u.Lancamentos).HasForeignKey(l => l.MembroId).OnDelete(DeleteBehavior.Restrict);
 
-            // Auditoria mínima do PUT (issue #50): só o último responsável, sem navegação (mesmo padrão
-            // de LancamentoOperacao.CriadoPorUsuarioId/LancamentoDeletado.UsuarioResponsavelId abaixo).
-            // Restrict (não Cascade): excluir um usuário nunca deve apagar o histórico de lançamentos que
-            // ele atualizou.
             entity.HasOne<Usuario>()
                 .WithMany()
                 .HasForeignKey(l => l.AtualizadoPorUsuarioId)
@@ -204,14 +180,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
         modelBuilder.Entity<Evento>(entity =>
         {
-            // Trigger AFTER UPDATE (TR_eventos_AuditoriaExclusaoLogica): mesmo motivo de Lancamentos, o EF
-            // não pode usar OUTPUT nesta tabela (também traz a rowversion por SELECT).
             entity.ToTable("eventos", table =>
             {
                 table.UseSqlOutputClause(false);
                 table.HasCheckConstraint("CK_eventos_valores_nao_negativos",
                     "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ValorPorMembro] >= 0");
-                // Componentes ignorados pelos booleanos são sempre zero e o valor por membro é a soma exata.
                 table.HasCheckConstraint("CK_eventos_valores_normalizados",
                     "([TransporteEhGratis] = 0 OR [TransporteValor] = 0) AND ([AlimentacaoIndividual] = 0 OR [AlimentacaoValor] = 0) " +
                     "AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio]");
@@ -244,15 +217,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasIndex(m => m.MembroId);
             entity.HasIndex(m => m.LancamentoId);
 
-            // Proteção do banco: um membro ATIVO por EventoGrupoId, mesmo entre cadastros de preços
-            // diferentes. Duas requisições simultâneas não cobram a mesma pessoa duas vezes: a segunda
-            // falha na constraint (a aplicação a traduz em 409). Linhas desativadas ficam de fora.
             entity.HasIndex(m => new { m.EventoGrupoId, m.MembroId })
                 .IsUnique()
                 .HasDatabaseName("UX_evento_membros_grupo_membro_ativo")
                 .HasFilter("[Ativo] = 1");
 
-            // FK composta: EventoGrupoId replicado nunca diverge do grupo do evento.
             entity.HasOne(m => m.Evento).WithMany(e => e.Membros)
                 .HasForeignKey(m => new { m.EventoId, m.EventoGrupoId })
                 .HasPrincipalKey(e => new { e.Id, e.EventoGrupoId })
@@ -301,9 +270,6 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK__usuarios_hist_TipoOperacao", "[TipoOperacao] IN ('UPDATE', 'DELETE')"));
             entity.HasKey(h => h.Id);
             entity.Property(h => h.Nome).HasMaxLength(200).IsRequired();
-            // Email continua nvarchar(256): comporta qualquer valor de Usuarios.Email (varchar(100)) e preserva, sem
-            // conversão, linhas gravadas antes da redução da coluna de origem. Os dados pessoais têm o mesmo tipo
-            // de Usuarios e nenhum índice único (o mesmo CPF aparece em várias versões do mesmo usuário).
             entity.Property(h => h.Email).HasMaxLength(256).IsRequired();
             entity.Property(h => h.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(h => h.DataNascimento).HasColumnType("date");
@@ -313,6 +279,9 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(h => h.ResponsavelCpf).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(h => h.ResponsavelTelefone).HasColumnType("varchar(11)").HasMaxLength(11).IsUnicode(false);
             entity.Property(h => h.FotoCaminho).HasColumnType("varchar(79)").HasMaxLength(79).IsUnicode(false);
+            entity.Property(h => h.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
+            entity.Property(h => h.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
+            entity.Property(h => h.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
             entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
             entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();

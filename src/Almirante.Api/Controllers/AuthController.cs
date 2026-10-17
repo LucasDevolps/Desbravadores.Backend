@@ -18,8 +18,6 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     [HttpGet("csrf"), AllowAnonymous]
     public IActionResult Csrf() => Ok(new { csrfToken = antiforgery.GetAndStoreTokens(HttpContext).RequestToken });
 
-    // Contrato: 200 somente {"token":{"accessToken","expiresAtUtc"}}. 401 genérico idêntico para
-    // e-mail inexistente, senha incorreta, conta bloqueada ou cargo inativo. 429 pelo rate limit.
     [HttpPost("login"), AllowAnonymous, ValidateAntiForgeryToken]
     [EnableRateLimiting(LoginRateLimiting.PolicyName)]
     [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
@@ -59,8 +57,6 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         return NoContent();
     }
 
-    // O usuário é determinado exclusivamente pela identidade autenticada (sub -> NameIdentifier);
-    // não há parâmetro de rota/query que permita escolher outro perfil.
     [HttpGet("Me"), Authorize]
     [ProducesResponseType<MeDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

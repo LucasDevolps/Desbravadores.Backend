@@ -4,7 +4,6 @@ using Almirante.Api.Services;
 
 namespace Almirante.Api.Tests;
 
-// Chave da foto (FotoChave) e armazenamento em disco (LocalFileStorage), direto nas classes, em pasta temporária própria.
 public sealed class FotosArmazenamentoTests : IDisposable
 {
     private readonly string _raiz = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N"));
@@ -22,8 +21,6 @@ public sealed class FotosArmazenamentoTests : IDisposable
     }
 
     private string Caminho(string chave) => Path.Combine(_raiz, chave.Replace('/', Path.DirectorySeparatorChar));
-
-    // ------------------------------------------------------------------ FotoChave
 
     [Fact]
     public void FotoChave_GeraCaminhoRelativoNoFormatoEsperado_ComParteAleatoriaDiferenteACadaVez()
@@ -48,14 +45,14 @@ public sealed class FotosArmazenamentoTests : IDisposable
         {
             null,
             "",
-            $"usuarios/{id}/{aleatorio}.png",                    // outra extensão
-            $"usuarios/{id.ToUpperInvariant()}/{aleatorio}.webp",  // maiúsculas
-            $"usuarios/{id}/{aleatorio[..31]}..webp",             // ".." no nome
-            $"usuarios\\{id}\\{aleatorio}.webp",                 // barra invertida
-            $"/usuarios/{id}/{aleatorio}.web",                   // absoluto
-            $"usuarios/../../{aleatorio}{aleatorio[..10]}.webp", // sai da raiz
-            $"usuarios/{id}/{aleatorio}.webp\n",                 // quebra de linha no fim
-            $"usuarios/{id}/{aleatorio}x.webp",                  // tamanho errado
+            $"usuarios/{id}/{aleatorio}.png",
+            $"usuarios/{id.ToUpperInvariant()}/{aleatorio}.webp",
+            $"usuarios/{id}/{aleatorio[..31]}..webp",
+            $"usuarios\\{id}\\{aleatorio}.webp",
+            $"/usuarios/{id}/{aleatorio}.web",
+            $"usuarios/../../{aleatorio}{aleatorio[..10]}.webp",
+            $"usuarios/{id}/{aleatorio}.webp\n",
+            $"usuarios/{id}/{aleatorio}x.webp",
         };
     }
 
@@ -67,8 +64,6 @@ public sealed class FotosArmazenamentoTests : IDisposable
         Assert.False(FotoChave.PertenceA(chave, Guid.NewGuid()));
     }
 
-    // ------------------------------------------------------------------ gravação, leitura e exclusão
-
     [Fact]
     public async Task Gravar_Ler_Excluir_FluxoCompleto_SemSobrarTemporarioNemPastaVazia()
     {
@@ -79,7 +74,7 @@ public sealed class FotosArmazenamentoTests : IDisposable
 
         Assert.Equal(conteudo, await File.ReadAllBytesAsync(Caminho(chave)));
         var pasta = Path.GetDirectoryName(Caminho(chave))!;
-        Assert.Single(Directory.GetFiles(pasta));   // nenhum .tmp-* sobrando
+        Assert.Single(Directory.GetFiles(pasta));
         if (!OperatingSystem.IsWindows())
         {
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(Caminho(chave)));
@@ -95,9 +90,9 @@ public sealed class FotosArmazenamentoTests : IDisposable
 
         await _armazenamento.DeleteAsync(chave, CancellationToken.None);
         Assert.False(File.Exists(Caminho(chave)));
-        Assert.False(Directory.Exists(pasta));                                  // pasta do usuário vazia é removida
+        Assert.False(Directory.Exists(pasta));
         Assert.Null(await _armazenamento.OpenReadAsync(chave, CancellationToken.None));
-        await _armazenamento.DeleteAsync(chave, CancellationToken.None);       // idempotente
+        await _armazenamento.DeleteAsync(chave, CancellationToken.None);
     }
 
     [Fact]
@@ -135,8 +130,6 @@ public sealed class FotosArmazenamentoTests : IDisposable
         await Assert.ThrowsAsync<ArgumentException>(() => _armazenamento.OpenReadAsync(invalida, CancellationToken.None));
         await Assert.ThrowsAsync<ArgumentException>(() => _armazenamento.DeleteAsync(invalida, CancellationToken.None));
     }
-
-    // ------------------------------------------------------------------ links simbólicos e junções
 
     [Fact]
     public async Task PastaDoUsuarioQueEhLink_EhRecusadaNaGravacao()
@@ -177,12 +170,10 @@ public sealed class FotosArmazenamentoTests : IDisposable
         }
     }
 
-    // ------------------------------------------------------------------ listagem e temporários (faxina)
-
     [Fact]
     public async Task Listar_DevolveSoFotosNoFormato_EPurge_ApagaSoTemporariosAntigos()
     {
-        Assert.Empty(await _armazenamento.ListAsync(CancellationToken.None));     // ainda sem a pasta "usuarios"
+        Assert.Empty(await _armazenamento.ListAsync(CancellationToken.None));
         Assert.Equal(0, await _armazenamento.PurgeIncompleteAsync(DateTime.UtcNow, CancellationToken.None));
 
         var usuario = Guid.NewGuid();
@@ -202,6 +193,6 @@ public sealed class FotosArmazenamentoTests : IDisposable
         Assert.Equal(1, removidos);
         Assert.False(File.Exists(tmpAntigo));
         Assert.True(File.Exists(tmpNovo));
-        Assert.True(File.Exists(anotacao));   // arquivo fora do formato nunca é tocado
+        Assert.True(File.Exists(anotacao));
     }
 }

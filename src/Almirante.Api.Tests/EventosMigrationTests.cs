@@ -7,9 +7,6 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace Almirante.Api.Tests;
 
-// Migration AddEventos (issue #56) aplicada e revertida sobre um banco JÁ populado, em SQL Server real:
-// preserva os lançamentos legados, recria o trigger de auditoria com EventoId/Finalidade nula e o Down é
-// possível mesmo com eventos e lançamentos de evento (Finalidade nula) existentes.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class EventosMigrationTests
 {
@@ -53,7 +50,6 @@ public sealed class EventosMigrationTests
             await TestHelpers.InserirUsuarioLegadoAsync(db, usuario);
             usuarioId = usuario.Id;
 
-            // lançamento legado (enums inteiros, Finalidade preenchida) ANTES da migration
             await db.Database.ExecuteSqlInterpolatedAsync($@"
                 INSERT INTO Lancamentos (Id, MembroId, Finalidade, Descricao, Categoria, Valor, Vencimento, Status, TipoFluxo, DataCriacao, Ativo)
                 VALUES ({legado}, {usuario.Id}, {"Mensalidade"}, {"legado"}, {1}, {30m}, {new DateTime(2026, 10, 1)}, {1}, {0}, {new DateTime(2026, 9, 1)}, {true})");
@@ -64,12 +60,10 @@ public sealed class EventosMigrationTests
         await using var conexao = new SqlConnection(factory.ConnectionString);
         await conexao.OpenAsync();
 
-        // dados legados intactos; Finalidade agora aceita NULL; EventoId nulo
         Assert.Equal("Mensalidade", await Escalar<string>(conexao, "SELECT Finalidade FROM Lancamentos WHERE Id = @id", ("@id", legado)));
         Assert.Null(await Escalar<Guid?>(conexao, "SELECT EventoId FROM Lancamentos WHERE Id = @id", ("@id", legado)));
         Assert.Equal("YES", await Escalar<string>(conexao, "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Lancamentos' AND COLUMN_NAME = 'Finalidade'"));
 
-        // trigger recriado: continua exigindo contexto e passa a copiar EventoId (nulo aqui)
         Assert.Equal(50001, (await Assert.ThrowsAsync<SqlException>(() => Exec(conexao, "UPDATE Lancamentos SET Ativo = 0 WHERE Id = @id", ("@id", legado)))).Number);
         await Exec(conexao, """
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@u;
@@ -85,7 +79,6 @@ public sealed class EventosMigrationTests
             EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value=NULL;
             """);
 
-        // cria um evento e um lançamento de evento (Finalidade NULL) para provar o Down com dados
         var evento = Guid.NewGuid();
         var lancEvento = Guid.NewGuid();
         await Exec(conexao, """
@@ -102,7 +95,7 @@ public sealed class EventosMigrationTests
         {
             var migrator = db.GetService<IMigrator>();
 
-            await migrator.MigrateAsync(MigrationAnterior); // Down com eventos existentes
+            await migrator.MigrateAsync(MigrationAnterior);
 
             await using var c2 = new SqlConnection(factory.ConnectionString);
             await c2.OpenAsync();
@@ -114,7 +107,7 @@ public sealed class EventosMigrationTests
             Assert.Equal(0, await Escalar<int>(c2, "SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Lancamentos') AND name = 'EventoId'"));
             await c2.CloseAsync();
 
-            await migrator.MigrateAsync(); // e novamente para a frente
+            await migrator.MigrateAsync();
         }
 
         await using var c3 = new SqlConnection(factory.ConnectionString);
@@ -125,9 +118,6 @@ public sealed class EventosMigrationTests
     }
     private const string MigrationResposta = "20260921222826_AddEventosOperacoesResposta";
 
-    // Migration incremental que guarda a resposta original do POST (RespostaJson): o Up sobre um banco já populado na versão
-    // anterior (eventos ativos e inativos, operações idempotentes antigas) preserva tudo e deixa as operações antigas SEM
-    // resposta (não existe fonte confiável do resultado original); o Down descarta só as respostas e nada mais.
     [Fact]
     public async Task AddEventosOperacoesResposta_PreservaOperacoesAntigas_SemInventarSnapshot_EDownDescartaSoAsRespostas()
     {
@@ -139,7 +129,7 @@ public sealed class EventosMigrationTests
         await using (var db = new AlmiranteDbContext(options))
         {
             var migrator = db.GetService<IMigrator>();
-            await migrator.MigrateAsync(Migration); // versão anterior à correção da PR #62
+            await migrator.MigrateAsync(Migration);
 
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro.", CriadoPor = "Teste", Role = "DS" };
             db.Cargos.Add(cargo);
@@ -170,7 +160,6 @@ public sealed class EventosMigrationTests
         await using (var c = new SqlConnection(factory.ConnectionString))
         {
             await c.OpenAsync();
-            // Up: operações, chaves e vínculos intactos; a coluna existe, é anulável e nada foi inventado
             Assert.Equal(2, await Escalar<int>(c, "SELECT COUNT(*) FROM eventos_operacoes"));
             Assert.Equal(2, await Escalar<int>(c, "SELECT COUNT(*) FROM eventos_operacoes WHERE RespostaJson IS NULL"));
             Assert.Equal(ativo, await Escalar<Guid>(c, "SELECT EventoId FROM eventos_operacoes WHERE IdempotencyKey = N'chave-antiga-ativa'"));
@@ -178,13 +167,11 @@ public sealed class EventosMigrationTests
             Assert.Equal("YES", await Escalar<string>(c, "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'eventos_operacoes' AND COLUMN_NAME = 'RespostaJson'"));
             Assert.Equal(-1, await Escalar<int>(c, "SELECT CAST(CHARACTER_MAXIMUM_LENGTH AS int) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'eventos_operacoes' AND COLUMN_NAME = 'RespostaJson'"));
             Assert.Equal(1, await Escalar<int>(c, "SELECT COUNT(*) FROM sys.check_constraints WHERE name = N'CK_eventos_operacoes_RespostaJson'"));
-            // a constraint aceita JSON e recusa lixo
             await Exec(c, "UPDATE eventos_operacoes SET RespostaJson = N'{\"ok\":true}' WHERE Id = @o", ("@o", operacaoAtiva));
             Assert.Equal(547, (await Assert.ThrowsAsync<SqlException>(() => Exec(c, "UPDATE eventos_operacoes SET RespostaJson = N'não é json' WHERE Id = @o", ("@o", operacaoAtiva)))).Number);
         }
         SqlConnection.ClearAllPools();
 
-        // Down: só a coluna e a constraint saem; operações, chaves, eventos e vínculos permanecem (as respostas se perdem)
         await using (var db = new AlmiranteDbContext(options))
         {
             await db.GetService<IMigrator>().MigrateAsync(Migration);
@@ -200,7 +187,6 @@ public sealed class EventosMigrationTests
         }
         SqlConnection.ClearAllPools();
 
-        // e para a frente de novo: as operações voltam ao estado "sem resposta original"
         await using (var db = new AlmiranteDbContext(options))
         {
             await db.GetService<IMigrator>().MigrateAsync();

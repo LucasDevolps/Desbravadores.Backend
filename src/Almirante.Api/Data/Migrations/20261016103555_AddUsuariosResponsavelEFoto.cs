@@ -15,8 +15,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // 1) Antes de qualquer alteração: ResponsavelNome é varchar (desempenho, nunca nvarchar) e a aplicação só aceita
-            //    nele caracteres da página 1252 (TextoVarchar). Em outra página de código os acentos seriam trocados em silêncio.
             migrationBuilder.Sql(VerificarCollation);
 
             migrationBuilder.AddColumn<string>(
@@ -59,7 +57,6 @@ namespace Almirante.Api.Data.Migrations
                 maxLength: 11,
                 nullable: true);
 
-            // Histórico: mesmos tipos de Usuarios, NULL nas linhas antigas (o valor da época não existia).
             migrationBuilder.AddColumn<string>(
                 name: "FotoCaminho",
                 table: "_usuarios_hist",
@@ -100,13 +97,11 @@ namespace Almirante.Api.Data.Migrations
                 maxLength: 11,
                 nullable: true);
 
-            // 2) Defesa em profundidade do caminho da foto (mesma constante do modelo, AlmiranteDbContext.CheckFotoCaminho).
             migrationBuilder.AddCheckConstraint(
                 name: "CK_Usuarios_FotoCaminho",
                 table: "Usuarios",
                 sql: "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79 AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp' AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')");
 
-            // 3) Trigger com as colunas novas (CREATE OR ALTER: mantém o objeto e as permissões, troca só a definição).
             migrationBuilder.Sql(TriggerComResponsavelEFoto);
         }
 
@@ -166,7 +161,6 @@ namespace Almirante.Api.Data.Migrations
                 table: "_usuarios_hist");
         }
 
-        // Colunas novas herdam a collation do banco: só a página 1252 (Latin1) é aceita.
         private const string VerificarCollation = """
             DECLARE @Collation sysname = CONVERT(sysname, DATABASEPROPERTYEX(DB_NAME(), 'Collation'));
             IF CONVERT(int, COLLATIONPROPERTY(@Collation, 'CodePage')) <> 1252
@@ -178,10 +172,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Igual à de AddUsuariosDadosPessoais, com os dados do responsável e FotoCaminho: copiados do estado ANTERIOR
-        // (deleted) e considerados mudança cadastral (trocar ou remover a foto gera histórico). EXCEPT compara NULL com NULL
-        // como iguais (o "<>" não detectaria NULL -> valor); BIN2 detecta mudança só de caixa. Continua set-based e na mesma
-        // instrução/transação do UPDATE: falha no INSERT do histórico desfaz a alteração.
         private const string TriggerComResponsavelEFoto = """
             CREATE OR ALTER TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN
@@ -224,7 +214,6 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        // Definição de AddUsuariosDadosPessoais, restaurada no Down (cópia literal; aquela migration não é alterada).
         private const string TriggerAnterior = """
             CREATE OR ALTER TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN

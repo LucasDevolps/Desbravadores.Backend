@@ -8,10 +8,6 @@ using static Almirante.Api.Tests.SqlIdentityEnvironment;
 
 namespace Almirante.Api.Tests;
 
-// Integridade da auditoria de exclusões e detecção de privilégio excessivo da identidade de runtime, contra
-// SQL Server real (bloqueadores 3 e 4 da validação da PR #59). Banco e usuários descartáveis, preparados
-// pelo mesmo bootstrap do operador e removidos ao final. O modelo completo de identidades está em
-// SqlIdentityModelTests.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class DbPrivilegeTests
 {
@@ -40,17 +36,12 @@ public sealed class DbPrivilegeTests
 
     private static async Task SeedAsync(SqlIdentityEnvironment env)
     {
-        // Seed e migrations como a API: o seed inicial roda com a identidade de runtime.
         var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(env.AppCs).AddInterceptors(new AppDbCredentialInterceptor(env.Provider)).Options;
         await using var db = new AlmiranteDbContext(options);
         await DbSeeder.SeedAsync(db, new PasswordHasher<Almirante.Api.Entities.Usuario>(),
             Microsoft.Extensions.Options.Options.Create(new SeedOptions { Nome = "Admin", Email = "admin@local.dev", Senha = "Tst-Senha-Longa-2026-ok" }));
     }
 
-    // IMPERSONATE é permissão de classe 4 (sobre outro principal do banco), não aparece em nenhuma
-    // checagem de papel/objeto/esquema. Com IMPERSONATE em dbo, um EXECUTE AS USER dá db_owner
-    // efetivo — e a versão anterior do provisionamento filtrava p.class IN (0,1,3), então o GRANT
-    // sobrevivia a todo startup e a auditoria dizia que estava tudo certo.
     [Fact]
     public async Task ImpersonateEmDbo_EDetectadoPelaAuditoria_ERevogadoPeloBootstrap()
     {
@@ -75,7 +66,6 @@ public sealed class DbPrivilegeTests
         Assert.Empty(await DbPrivilegeAuditor.FindExcessPrivilegesAsync(app));
     }
 
-    // Um GRANT direto ao usuário (não à role) e um DELETE em tabela de negócio precisam ser vistos pela auditoria.
     [Fact]
     public async Task ConcessaoDiretaExcessivaAoRuntime_EDetectadaPelaAuditoria_ERevogadaPeloBootstrap()
     {
@@ -89,7 +79,6 @@ public sealed class DbPrivilegeTests
         {
             var achados = await DbPrivilegeAuditor.FindExcessPrivilegesAsync(comprometido);
             Assert.Contains("DELETE em Lancamentos", achados);
-            // O GRANT direto de escrita na auditoria não é privilégio EFETIVO: o DENY da role prevalece — a auditoria mede o efetivo.
             Assert.DoesNotContain(achados, f => f.StartsWith("INSERT direto na tabela de auditoria", StringComparison.Ordinal));
             Assert.Contains("ALTER em Cargos", achados);
         }
@@ -115,7 +104,6 @@ public sealed class DbPrivilegeTests
 
         await using var app = await env.OpenAppAsync();
 
-        // Escrita direta na auditoria (fabricar/alterar/apagar) precisa ser negada (229 = permission denied).
         foreach (var sql in new[]
         {
             "INSERT INTO lancamentos_deletados (Id, LancamentoId, UsuarioResponsavelId, IpResponsavel, Motivo, MembroId, Finalidade, Categoria, TipoFluxo, Valor, Vencimento, Status, DataCriacaoOriginal) " +
@@ -128,7 +116,6 @@ public sealed class DbPrivilegeTests
             Assert.Equal(229, ex.Number);
         }
 
-        // Exclusão legítima: o trigger (cadeia de propriedade) grava mesmo sem INSERT direto para a aplicação.
         await ExecAsync(app, $"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value='{usuarioId}';
             EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='198.51.100.23';

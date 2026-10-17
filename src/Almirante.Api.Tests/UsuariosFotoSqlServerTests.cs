@@ -16,8 +16,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Tests;
 
-// Fábrica SQL Server com limite de envios alto (cada classe faz muitos uploads com o mesmo administrador) e, quando
-// pedido, armazenamento e banco com falhas injetáveis.
 public class FotosSqlFixture : IAsyncLifetime
 {
     public SqlServerApiFactory Factory { get; private set; } = null!;
@@ -70,7 +68,6 @@ public sealed class ArmazenamentoComFalhas(IFileStorage real) : IFileStorage
     public Task<int> PurgeIncompleteAsync(DateTime anterioresAUtc, CancellationToken ct) => real.PurgeIncompleteAsync(anterioresAUtc, ct);
 }
 
-// Falha "de banco" nos comandos SQL que satisfazem o predicado.
 public sealed class FalhaDeComandoInterceptor : DbCommandInterceptor
 {
     public volatile Func<string, bool>? Predicado;
@@ -99,8 +96,6 @@ public sealed class FalhaDeComandoInterceptor : DbCommandInterceptor
     }
 }
 
-// Foto de perfil (issue #116) contra SQL Server REAL e disco real: gravação, troca, exclusão, histórico pelo trigger,
-// permissões, concorrência, CHECK do caminho e consistência diante de falhas no disco e no banco.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixture<FotosSqlFixture>, IDisposable
 {
@@ -109,7 +104,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
     private HttpClient Client => fx.Client;
     private SqlServerApiFactory Factory => fx.Factory;
 
-    // Cada teste deixa as falhas desarmadas para o próximo.
     public void Dispose()
     {
         fx.Falhas.Predicado = null;
@@ -127,6 +121,7 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         var response = await Client.PostAsJsonAsync("/api/Usuarios", new
         {
             nome = $"Foto SQL {Guid.NewGuid():N}", email = $"foto-{Guid.NewGuid():N}@local.dev", senha = $"Forte-{Guid.NewGuid():N}", cargoId,
+            cpf = TestHelpers.NovoCpf(),
         });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!.Id;
@@ -157,8 +152,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
 
     private string[] ArquivosDoUsuario(Guid id) => Directory.Exists(PastaDoUsuario(id)) ? Directory.GetFiles(PastaDoUsuario(id)) : [];
 
-    // ------------------------------------------------------------------ fluxo completo
-
     [Fact]
     public async Task Enviar_Ler_Trocar_Excluir_ComHistoricoEDiscoConsistentes()
     {
@@ -178,14 +171,14 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
 
         var baixada = await Client.GetByteArrayAsync(Rota(id));
         Assert.Equal(await File.ReadAllBytesAsync(NoDisco(primeira!)), baixada);
-        Assert.Equal((768, 1024), FotosTestKit.Dimensoes(baixada));          // orientação 6 aplicada, reduzida a 1024
+        Assert.Equal((768, 1024), FotosTestKit.Dimensoes(baixada));
         Assert.False(FotosTestKit.Contem(baixada, FotosTestKit.MarcadorExif));
 
         var troca = await EnviarAsync(id, FotosTestKit.Png(300, 300), nome: "outra.png", tipo: "image/png");
         Assert.Equal(HttpStatusCode.OK, troca.StatusCode);
         var segunda = await CaminhoAsync(id);
         Assert.NotEqual(primeira, segunda);
-        Assert.False(File.Exists(NoDisco(primeira!)));                        // a anterior sai do disco
+        Assert.False(File.Exists(NoDisco(primeira!)));
         Assert.Equal(new[] { NoDisco(segunda!) }, ArquivosDoUsuario(id));
 
         Assert.Equal(HttpStatusCode.NoContent, (await ExcluirAsync(id)).StatusCode);
@@ -196,7 +189,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         Assert.Equal(HttpStatusCode.NotFound, denovo.StatusCode);
         Assert.Contains("não tem foto", (string)JsonNode.Parse(await denovo.Content.ReadAsStringAsync())!["detail"]!);
 
-        // Histórico pelo trigger: envio (de NULL), troca (da 1ª) e exclusão (da 2ª), com responsável e IP.
         var historico = await HistoricoAsync(id);
         Assert.Equal(new string?[] { null, primeira, segunda }, historico.Select(h => h.FotoCaminho));
         Assert.All(historico, h =>
@@ -206,8 +198,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
             Assert.Equal(IpTeste, h.IpResponsavel);
         });
     }
-
-    // ------------------------------------------------------------------ alvo, permissão e situação
 
     [Fact]
     public async Task UsuarioInexistente_404_EInativo_409NoEnvio_MasExclusaoDaFotoContinuaPermitida()
@@ -220,13 +210,13 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         var excluirUsuario = new HttpRequestMessage(HttpMethod.Delete, $"/api/Usuarios/{id}");
         excluirUsuario.Headers.Add(AlmiranteApiFactory.TestRemoteIpHeader, IpTeste);
         Assert.Equal(HttpStatusCode.NoContent, (await Client.SendAsync(excluirUsuario)).StatusCode);
-        Assert.NotNull(await CaminhoAsync(id));                             // a exclusão lógica mantém a foto
+        Assert.NotNull(await CaminhoAsync(id));
 
         var envio = await EnviarAsync(id);
         Assert.Equal(HttpStatusCode.Conflict, envio.StatusCode);
         Assert.Equal("Usuário inativo.", (string)JsonNode.Parse(await envio.Content.ReadAsStringAsync())!["title"]!);
 
-        Assert.Equal(HttpStatusCode.NoContent, (await ExcluirAsync(id)).StatusCode);   // remover dado pessoal é sempre permitido
+        Assert.Equal(HttpStatusCode.NoContent, (await ExcluirAsync(id)).StatusCode);
         Assert.Null(await CaminhoAsync(id));
         Assert.Empty(ArquivosDoUsuario(id));
     }
@@ -235,7 +225,7 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
     public async Task SoAdministradorGerenciaAFotoDeAdministrador()
     {
         var admin = await CriarAsync("ADM");
-        Assert.Equal(HttpStatusCode.OK, (await EnviarAsync(admin)).StatusCode);   // o solicitante da fixture é ADM
+        Assert.Equal(HttpStatusCode.OK, (await EnviarAsync(admin)).StatusCode);
         var caminho = await CaminhoAsync(admin);
         var (diretor, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(Factory, "DIR");
         using var _ = diretor;
@@ -243,7 +233,7 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         Assert.Equal(HttpStatusCode.Forbidden, (await EnviarAsync(admin, client: diretor)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await ExcluirAsync(admin, diretor)).StatusCode);
         Assert.Equal(caminho, await CaminhoAsync(admin));
-        Assert.Equal(HttpStatusCode.OK, (await diretor.GetAsync(Rota(admin))).StatusCode);   // ver continua permitido
+        Assert.Equal(HttpStatusCode.OK, (await diretor.GetAsync(Rota(admin))).StatusCode);
 
         var membro = await CriarAsync();
         Assert.Equal(HttpStatusCode.OK, (await EnviarAsync(membro, client: diretor)).StatusCode);
@@ -264,8 +254,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         Assert.Empty(await HistoricoAsync(id));
     }
 
-    // ------------------------------------------------------------------ concorrência
-
     [Fact]
     public async Task EnviosConcorrentesDoMesmoUsuario_SeSerializam_ESobraExatamenteUmArquivo()
     {
@@ -278,8 +266,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         Assert.Equal(new[] { NoDisco(caminho!) }, ArquivosDoUsuario(id));
         Assert.Equal(5, (await HistoricoAsync(id)).Count);
     }
-
-    // ------------------------------------------------------------------ CHECK do caminho no próprio banco
 
     [Theory]
     [InlineData("outro")]
@@ -307,8 +293,6 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         Assert.Equal(547, erro.Number);
         Assert.Contains("CK_Usuarios_FotoCaminho", erro.Message);
     }
-
-    // ------------------------------------------------------------------ falhas no disco e no banco
 
     [Theory]
     [InlineData("io")]
@@ -364,7 +348,7 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
 
         fx.Falhas.Predicado = null;
         Assert.Null(await CaminhoAsync(id));
-        Assert.Single(ArquivosDoUsuario(id));                                       // na dúvida, o arquivo fica
+        Assert.Single(ArquivosDoUsuario(id));
         Assert.Contains(Factory.Logs.Entries, e => e.Contains("Não foi possível confirmar se a foto"));
     }
 
@@ -375,23 +359,20 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         Assert.Equal(HttpStatusCode.OK, (await EnviarAsync(id)).StatusCode);
         var primeira = await CaminhoAsync(id);
 
-        fx.Armazenamento.FalhasAoApagar = 1;                                         // uma falha: a 2ª tentativa apaga
+        fx.Armazenamento.FalhasAoApagar = 1;
         Assert.Equal(HttpStatusCode.OK, (await EnviarAsync(id)).StatusCode);
         Assert.False(File.Exists(NoDisco(primeira!)));
 
         var segunda = await CaminhoAsync(id);
-        fx.Armazenamento.FalhasAoApagar = 3;                                         // todas as tentativas falham
+        fx.Armazenamento.FalhasAoApagar = 3;
         Assert.Equal(HttpStatusCode.OK, (await EnviarAsync(id)).StatusCode);
-        Assert.True(File.Exists(NoDisco(segunda!)));                                // órfã: fica para a faxina
+        Assert.True(File.Exists(NoDisco(segunda!)));
         Assert.Contains(Factory.Logs.Entries, e => e.Contains("a faxina diária tenta de novo"));
     }
-
-    // ------------------------------------------------------------------ fora do SQL Server
 
     [Fact]
     public async Task Servico_ForaDoSqlServer_RecusaEnviarEExcluir_AntesDeTocarNoDisco()
     {
-        // Transação, trigger e SESSION_CONTEXT só existem no SQL Server: com InMemory o serviço recusa logo na entrada.
         using var emMemoria = new AlmiranteApiFactory();
         using var scope = emMemoria.Services.CreateScope();
         var servico = scope.ServiceProvider.GetRequiredService<UsuarioFotoService>();

@@ -14,18 +14,6 @@ public enum FormatoFoto
 
 public sealed record FotoProcessada(byte[] Conteudo, int Largura, int Altura, int Qualidade);
 
-// Pipeline de segurança da foto (issue #116), do mais barato ao mais caro (Skia; decisão e mitigações no ADR-0011):
-//   1. assinatura real (magic bytes) de JPEG/PNG/WebP, igual ao tipo declarado (extensão + Content-Type). Nada além
-//      desses três formatos chega ao Skia (GIF, BMP, ICO, HEIF, RAW... nunca são decodificados);
-//   2. só o CABEÇALHO (SKCodec, sem decodificar pixels): dimensões mínimas e máximo de megapixels. É aqui que morre a
-//      imagem-bomba (ex.: PNG de poucos KB declarando 50000x50000), antes de qualquer alocação proporcional à imagem;
-//   3. decodificação num bitmap de tamanho já conhecido e limitado: o JPEG decodifica reduzido (escala DCT), só o 1º
-//      quadro de animações, cor convertida para sRGB, entrada truncada recusada;
-//   4. orientação pelo EXIF, redução para caber em MaxWidth x MaxHeight (nunca amplia) e reencode em WebP sem nenhum
-//      metadado (o Skia não grava EXIF e o pixmap vai sem perfil de cor), baixando a qualidade até caber em
-//      MaxStoredSizeMb; a saída é conferida de novo (formato, dimensões e ausência de chunks EXIF/ICC/XMP).
-// Só os pixels sobrevivem: conteúdo anexado (poliglota JPEG+ZIP/HTML) ou escondido em metadados não chega ao disco.
-// A decodificação nativa não é interrompível: o prazo é conferido entre as etapas, e os limites acima mantêm cada etapa curta.
 public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<ProcessadorFotos> logger)
 {
     private const int PassoQualidade = 8;
@@ -34,8 +22,6 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
 
     private readonly MediaOptions.ImageSettings _limites = options.Value.Images;
 
-    // Prazo medido pelo relógio monotônico e conferido entre as etapas, junto com o cancelamento do cliente. Não usa
-    // timer: um timer depende do thread pool, que sob carga (justamente quando o prazo importa) atrasa o disparo.
     private sealed class Prazo(TimeSpan limite, CancellationToken ct)
     {
         private readonly long _inicio = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -50,7 +36,6 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
         }
     }
 
-    // Síncrono de propósito: decodificação e reencode são CPU no código nativo do Skia, sem E/S para aguardar.
     public FotoProcessada Processar(byte[] arquivo, FormatoFoto declarado, CancellationToken ct)
     {
         var formato = DetectarAssinatura(arquivo) ?? throw NaoSuportado("O arquivo não é uma imagem JPEG, PNG ou WebP.");
@@ -79,8 +64,6 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
             : null;
     }
 
-    // Defesa em profundidade sobre a SAÍDA do encoder: só um WebP dentro das dimensões configuradas e sem chunk de
-    // metadado (EXIF, ICCP, XMP) vai para o disco.
     public void ExigirSaidaValida(byte[] conteudo)
     {
         if (DetectarAssinatura(conteudo) != FormatoFoto.Webp || ChunksRiff(conteudo).Any(c => c is "EXIF" or "ICCP" or "XMP "))
@@ -103,10 +86,6 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
         ExigirDimensoes(codec.Info.Width, codec.Info.Height);
         prazo.Conferir();
 
-        // Escala de decodificação: o JPEG reduz já no DCT, em oitavos, quando a imagem é maior que o necessário; os outros
-        // formatos devolvem o próprio tamanho ou o tamanho exato pedido. Nunca amplia (escala máxima 1). O Skia arredonda
-        // o JPEG para o oitavo MAIS PRÓXIMO, que pode ficar abaixo do alvo (1600x1200 com alvo 1024 daria 5/8 = 1000):
-        // sobe um oitavo até alcançar o alvo, para a redução final partir de pixels suficientes.
         var lado = Math.Max(_limites.MaxWidth, _limites.MaxHeight);
         var escala = Math.Min(1f, (float)lado / Math.Max(codec.Info.Width, codec.Info.Height));
         var dimensoes = codec.GetScaledDimensions(escala);
@@ -143,8 +122,6 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
         }
     }
 
-    // As 8 orientações do EXIF (tag 0x0112), aplicadas com a matriz que leva o pixel (x, y) da imagem gravada para a
-    // posição em que ele deve ser exibido. 5 a 8 giram 90 graus, então largura e altura se invertem.
     private static SKBitmap Orientar(SKBitmap origem, SKEncodedOrigin orientacao)
     {
         float w = origem.Width, h = origem.Height;
@@ -164,12 +141,10 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
         using var canvas = new SKCanvas(destino);
         using var imagem = SKImage.FromBitmap(origem);
         canvas.SetMatrix(matriz);
-        // Giro de 90 graus e espelhamento caem exatamente na grade de pixels: amostragem por vizinho mais próximo é exata.
         canvas.DrawImage(imagem, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest));
         return destino;
     }
 
-    // Cabe em MaxWidth x MaxHeight mantendo a proporção; imagem que já cabe é só copiada (nunca ampliada).
     private SKBitmap Reduzir(SKBitmap origem)
     {
         var fator = Math.Min(1d, Math.Min((double)_limites.MaxWidth / origem.Width, (double)_limites.MaxHeight / origem.Height));
@@ -180,12 +155,10 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
 
     private FotoProcessada Codificar(SKBitmap imagem, Prazo prazo)
     {
-        // Pixels já em sRGB; o pixmap vai SEM espaço de cor para o encoder não gravar perfil ICC.
         using var pixels = new SKPixmap(imagem.Info.WithColorSpace(null), imagem.GetPixels(), imagem.RowBytes);
         for (var qualidade = _limites.WebpQuality; ; qualidade = Math.Max(_limites.MinWebpQuality, qualidade - PassoQualidade))
         {
             prazo.Conferir();
-            // O encoder só devolve null para pixmap inválido; este foi alocado e preenchido acima.
             using var dados = pixels.Encode(new SKWebpEncoderOptions(SKWebpEncoderCompression.Lossy, qualidade))!;
             if (dados.Size <= _limites.MaxStoredBytes)
             {
@@ -202,8 +175,6 @@ public sealed class ProcessadorFotos(IOptions<MediaOptions> options, ILogger<Pro
         }
     }
 
-    // FourCC dos chunks de um RIFF (WebP): [FourCC][tamanho LE de 4 bytes][dados, alinhados em 2 bytes]. Um tamanho
-    // forjado só encerra a leitura (o avanço é limitado ao fim do arquivo).
     private static IEnumerable<string> ChunksRiff(byte[] riff)
     {
         for (var posicao = 12; posicao + 8 <= riff.Length;)

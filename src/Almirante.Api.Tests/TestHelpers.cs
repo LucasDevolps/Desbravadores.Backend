@@ -12,8 +12,6 @@ namespace Almirante.Api.Tests;
 
 public static class TestHelpers
 {
-    // Gravada diretamente como hash (sem passar pela política de senha): representa credenciais
-    // pré-existentes, que devem continuar autenticando mesmo sem cumprir a política atual.
     public const string SenhaPadraoTeste = "senha123";
 
     public static async Task<string> LoginAsAdminAsync(HttpClient client)
@@ -39,7 +37,6 @@ public static class TestHelpers
         client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", json.GetProperty("csrfToken").GetString());
     }
 
-    // Envia uma tentativa de login (com CSRF válido já presente no client) e devolve a resposta crua.
     public static Task<HttpResponseMessage> PostLoginAsync(HttpClient client, string email, string senha,
         string? remoteIp = null, string? xForwardedFor = null, string? xForwardedProto = null)
     {
@@ -55,14 +52,10 @@ public static class TestHelpers
         var client = factory.CreateClient();
         var token = await LoginAsAdminAsync(client);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        // O antiforgery do ASP.NET Core vincula o token ao usuário autenticado no momento da emissão;
-        // o CSRF obtido antes do login (anônimo) não valida em chamadas autenticadas como o logout.
         await AddCsrfAsync(client);
         return client;
     }
 
-    // Cria (via seed de Cargos já existente, ver DbSeeder.SeedCargosAsync) um usuário de teste
-    // com o Role informado e devolve um HttpClient autenticado como esse usuário.
     public static async Task<(HttpClient Client, Guid UsuarioId)> CreateAuthenticatedClientForRoleAsync(
         WebApplicationFactory<Program> factory, string role)
     {
@@ -78,7 +71,6 @@ public static class TestHelpers
         return (client, usuario.Id);
     }
 
-    // Adiciona um usuário diretamente no banco com a senha SenhaPadraoTeste.
     public static async Task<Usuario> AddUsuarioAsync(WebApplicationFactory<Program> factory, string nome, string role)
     {
         using var scope = factory.Services.CreateScope();
@@ -104,9 +96,6 @@ public static class TestHelpers
         return usuario;
     }
 
-    // Para testes de migration que populam um schema ANTERIOR ao modelo atual: grava o usuário só com as colunas que
-    // existem desde AddLoginLockout (o SaveChanges do EF incluiria colunas mais novas, como Usuarios.Ativo).
-    // Os cargos referenciados já devem estar salvos.
     public static Task InserirUsuarioLegadoAsync(AlmiranteDbContext db, Usuario u) =>
         db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO Usuarios (Id, Nome, Email, EmailNormalizado, SenhaHash, CargoId, DataCriacao, SecurityVersion, FalhasLoginConsecutivas)
@@ -119,7 +108,6 @@ public static class TestHelpers
         return await action(scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>());
     }
 
-    // Remove campos que variam por requisição (traceId) para comparar corpos de erro.
     public static async Task<string> NormalizedProblemAsync(HttpResponseMessage response)
     {
         var node = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync())!.AsObject();
@@ -127,8 +115,6 @@ public static class TestHelpers
         return node.ToJsonString();
     }
 
-    // CPF válido aleatório (11 dígitos com os verificadores do módulo 11). Por padrão começa com 0: prova que o CPF é
-    // texto (zero à esquerda preservado). Nunca uma sequência de um único dígito.
     public static string NovoCpf(bool comZeroInicial = true)
     {
         while (true)

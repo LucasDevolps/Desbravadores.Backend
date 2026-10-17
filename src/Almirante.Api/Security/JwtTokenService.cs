@@ -37,8 +37,6 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options, TimeProvider c
 
 public static class JwtKeySet
 {
-    // HS256 (RFC 7518, seção 3.2) exige chave de tamanho >= saída do hash: 256 bits = 32 bytes do
-    // material DECODIFICADO. O valor configurado é Base64, então 32 caracteres não bastam.
     public const int MinimumKeyBytes = 32;
 
     public static SymmetricSecurityKey GetKey(JwtOptions options, string kid)
@@ -49,10 +47,6 @@ public static class JwtKeySet
         return new SymmetricSecurityKey(bytes) { KeyId = kid };
     }
 
-    // Nunca inclui o valor da chave na mensagem de erro (ela vai para log/exceção de startup).
-    // Só é possível verificar formato e tamanho; aleatoriedade não é verificável aqui — por isso a
-    // documentação exige gerar a chave com CSPRNG (ex.: openssl rand -base64 32). A checagem de bytes
-    // repetidos só barra o caso trivial (ex.: "AAAA...=" = 32 zeros), não prova entropia.
     public static bool TryDecode(string? encoded, out byte[] bytes, out string error)
     {
         bytes = [];

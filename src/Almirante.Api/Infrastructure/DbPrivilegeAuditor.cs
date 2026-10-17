@@ -5,15 +5,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Almirante.Api.Infrastructure;
 
-// Confere as permissões EFETIVAS da identidade com que a aplicação se conecta ao SQL Server (login SQL
-// da aplicação ou identidade Windows do IIS), do ponto de vista do próprio SQL Server: papéis fixos de
-// servidor/banco (inclusive por grupo Windows), permissões diretas ou herdadas, DELETE arbitrário,
-// escrita na tabela de auditoria e propriedade de esquemas/objetos. Só devolve códigos fixos — nunca
-// connection string nem senha — para poderem ir a log/exceção de startup.
 public static class DbPrivilegeAuditor
 {
     public const string AuditTable = "lancamentos_deletados";
-    // Tabelas de auditoria escritas somente por trigger (cadeia de propriedade dbo): a aplicação só lê.
     public const string EventosAuditTable = "historico_eventos";
     public const string UsuariosAuditTable = "_usuarios_hist";
     public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable];
@@ -25,9 +19,6 @@ public static class DbPrivilegeAuditor
     private static readonly string[] DatabaseRoles =
         ["db_owner", "db_securityadmin", "db_accessadmin", "db_backupoperator", "db_ddladmin", "db_datawriter"];
 
-    // Permissões de servidor que nenhuma identidade da aplicação (runtime ou administrativa) pode ter.
-    // Usuários contidos nem são principais de servidor, então nunca as têm; a lista existe para provar
-    // isso (e para barrar um login de servidor configurado no lugar deles).
     public static readonly string[] ServerPermissions =
         ["CONTROL SERVER", "ALTER ANY LOGIN", "ALTER ANY DATABASE", "CREATE ANY DATABASE", "ALTER ANY SERVER ROLE", "IMPERSONATE ANY LOGIN",
          "ALTER SETTINGS", "SHUTDOWN", "ALTER ANY CREDENTIAL", "ALTER ANY LINKED SERVER", "ALTER ANY CONNECTION", "ADMINISTER BULK OPERATIONS"];
@@ -36,13 +27,10 @@ public static class DbPrivilegeAuditor
         ["CONTROL", "ALTER", "ALTER ANY SCHEMA", "ALTER ANY ROLE", "ALTER ANY USER", "CREATE TABLE", "CREATE PROCEDURE",
          "CREATE VIEW", "CREATE SCHEMA", "TAKE OWNERSHIP", "IMPERSONATE ANY LOGIN", "DELETE", "EXECUTE"];
 
-    // Identidade "sa": pelo nome, mas sobretudo pelo SID 0x01 (um "sa" renomeado continua sendo o "sa") e pelo
-    // principal_id 1. Recusada independentemente de qualquer configuração.
     public static async Task<bool> IsSaAsync(SqlConnection connection, CancellationToken cancellationToken = default) =>
         await ScalarAsync(connection,
             "SELECT CASE WHEN LOWER(ISNULL(SUSER_SNAME(), N'')) = N'sa' OR SUSER_SID() = 0x01 OR ORIGINAL_LOGIN() = N'sa' THEN 1 ELSE 0 END", cancellationToken) == 1;
 
-    // A conexão já deve estar aberta com a identidade a ser auditada.
     public static async Task<IReadOnlyList<string>> FindExcessPrivilegesAsync(SqlConnection connection, CancellationToken cancellationToken = default)
     {
         var findings = new List<string>();
@@ -65,18 +53,10 @@ public static class DbPrivilegeAuditor
             if (await ScalarAsync(connection, $"SELECT ISNULL(HAS_PERMS_BY_NAME(DB_NAME(), N'DATABASE', N'{permission}'), 0)", cancellationToken) == 1)
                 findings.Add($"permissão de banco {permission}");
 
-        // IMPERSONATE em um principal do banco (classe 4) não aparece em nenhuma das checagens acima:
-        // é permissão sobre OUTRO usuário/role, não sobre o banco ou um objeto. Com IMPERSONATE em dbo
-        // (ou em qualquer membro de db_owner), um EXECUTE AS USER dá privilégio total — por isso entra
-        // aqui, e por isso BuildProvisionSql passou a revogar a classe 4.
         findings.AddRange(await PrincipalsAsync(connection, "IMPERSONATE", cancellationToken));
 
-        // EXECUTE por objeto (procedure/função): o teste de escopo de banco acima não alcança um
-        // GRANT EXECUTE pontual, e uma procedure com EXECUTE AS OWNER seria um caminho de escalada.
         findings.AddRange(await ModulesAsync(connection, "EXECUTE", cancellationToken));
 
-        // Exclusão física só é aceitável em AuthSessions (limpeza de sessões expiradas); a auditoria não
-        // pode ser escrita diretamente — só o trigger (cadeia de propriedade) grava nela.
         findings.AddRange(await TablesAsync(connection, "DELETE", $"t.name <> N'{SessionsTable}'", "DELETE em", cancellationToken));
         foreach (var permission in new[] { "INSERT", "UPDATE", "DELETE" })
             findings.AddRange(await TablesAsync(connection, permission, $"t.name IN ({string.Join(", ", AuditTables.Select(t => $"N'{t}'"))})", $"{permission} direto na tabela de auditoria", cancellationToken));
@@ -90,8 +70,6 @@ public static class DbPrivilegeAuditor
         return findings.Distinct().ToList();
     }
 
-    // Permissão sobre outro principal do banco (securable USER/ROLE), do ponto de vista da identidade
-    // conectada. Ignora o próprio usuário (IMPERSONATE em si mesmo é inócuo e sempre verdadeiro).
     private static async Task<IEnumerable<string>> PrincipalsAsync(SqlConnection connection, string permission, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -105,7 +83,6 @@ public static class DbPrivilegeAuditor
         return await ReadNamesAsync(command, $"{permission} sobre o principal", cancellationToken);
     }
 
-    // EXECUTE por objeto: procedures e funções do esquema dbo.
     private static async Task<IEnumerable<string>> ModulesAsync(SqlConnection connection, string permission, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -138,18 +115,6 @@ public static class DbPrivilegeAuditor
         return names;
     }
 
-    // Auditoria da identidade ADMINISTRATIVA (ConnectionStrings:AlmiranteAdmin), do ponto de vista do próprio
-    // SQL Server (privilégios EFETIVOS; o nome do usuário não conta). Ela precisa de DDL e concessões no
-    // schema dbo (migrations, GRANT à role de runtime) e de ALTER ANY USER (rotação da senha do usuário de
-    // runtime) — e de mais nada. O resultado é sempre fatal no startup (DbAdminPrivilegeCheck).
-    //
-    // Recusado: ser "sa"; qualquer papel de servidor perigoso; qualquer permissão de servidor perigosa
-    // (CONTROL SERVER, ALTER ANY LOGIN, IMPERSONATE ANY LOGIN...); IMPERSONATE sobre outro principal; papéis
-    // fixos do banco (db_owner, db_ddladmin, db_securityadmin, db_datareader/writer...) e permissões de
-    // banco que ultrapassam o schema dbo (CONTROL/ALTER no banco, ALTER ANY ROLE/SCHEMA, TAKE OWNERSHIP,
-    // BACKUP); ser dono do banco; banco TRUSTWORTHY ou com cadeia de propriedade entre bancos ligada (um
-    // módulo criado com DDL viraria escalada para o servidor); e qualquer permissão administrativa em OUTRO
-    // banco da instância.
     public static async Task<IReadOnlyList<string>> FindAdminExcessPrivilegesAsync(SqlConnection connection, CancellationToken cancellationToken = default)
     {
         var findings = new List<string>();
@@ -181,8 +146,6 @@ public static class DbPrivilegeAuditor
         if (await ScalarAsync(connection, "SELECT COUNT(*) FROM sys.databases WHERE database_id = DB_ID() AND is_db_chaining_on = 1", cancellationToken) > 0)
             findings.Add("cadeia de propriedade entre bancos ligada no banco da aplicação");
 
-        // Outros bancos da instância: nenhuma permissão administrativa. (Um usuário contido nem é principal
-        // de servidor; isto prova o efeito, inclusive para uma identidade configurada por outro caminho.)
         foreach (var database in await OtherDatabasesAsync(connection, cancellationToken))
             foreach (var permission in OtherDatabasePermissions)
                 if (await ScalarAsync(connection, $"SELECT ISNULL(HAS_PERMS_BY_NAME(N'{database.Replace("'", "''")}', N'DATABASE', N'{permission}'), 0)", cancellationToken) == 1)
@@ -191,14 +154,9 @@ public static class DbPrivilegeAuditor
         return findings.Distinct().ToList();
     }
 
-    // Papéis fixos do banco que a identidade administrativa não usa: as permissões dela são explícitas (CONTROL no
-    // schema dbo + DDL + ALTER ANY USER), justamente para não herdar o alcance de um papel fixo.
     private static readonly string[] AdminForbiddenDatabaseRoles =
         ["db_owner", "db_securityadmin", "db_accessadmin", "db_ddladmin", "db_backupoperator", "db_datareader", "db_datawriter"];
 
-    // Permissões de BANCO (escopo do banco inteiro, não do schema dbo) que ela não pode ter. SELECT/INSERT/UPDATE/
-    // DELETE/EXECUTE no escopo do banco sairiam de db_datareader/db_datawriter ou de GRANT no banco; as dela vêm
-    // do schema dbo, e HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', ...) só é verdadeiro para a concessão no banco.
     private static readonly string[] AdminForbiddenDatabasePermissions =
         ["CONTROL", "ALTER", "ALTER ANY SCHEMA", "ALTER ANY ROLE", "ALTER ANY ASSEMBLY", "TAKE OWNERSHIP", "BACKUP DATABASE", "BACKUP LOG",
          "EXECUTE", "DELETE", "INSERT", "UPDATE", "SELECT"];
@@ -206,7 +164,6 @@ public static class DbPrivilegeAuditor
     private static readonly string[] OtherDatabasePermissions =
         ["CONTROL", "ALTER", "ALTER ANY USER", "ALTER ANY ROLE", "CREATE TABLE", "TAKE OWNERSHIP", "BACKUP DATABASE", "INSERT", "UPDATE", "DELETE", "EXECUTE"];
 
-    // Bancos online que não são o da aplicação. tempdb fica de fora: toda sessão cria tabelas temporárias nele.
     private static async Task<IReadOnlyList<string>> OtherDatabasesAsync(SqlConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -225,9 +182,6 @@ public static class DbPrivilegeAuditor
     }
 }
 
-// Política de startup para a identidade ADMINISTRATIVA. Sem modos: qualquer achado recusa iniciar
-// (fail closed). O modo Warn/Off que existiu aqui permitia rodar a API com "sa"; foi removido, e
-// SqlIdentityPolicy recusa que a configuração antiga (Security:AdminPrivilegeCheck) volte a valer.
 public static class DbAdminPrivilegeCheck
 {
     public static async Task RunAsync(SqlConnection connection, CancellationToken cancellationToken = default)
@@ -244,9 +198,6 @@ public static class DbAdminPrivilegeCheck
     }
 }
 
-// Política de startup para a identidade que NÃO é o login rotacionado (ex.: Windows Authentication do
-// IIS): Security:DbPrivilegeCheck = Enforce (recusa iniciar), Warn (padrão; só registra) ou Off. O login
-// SQL rotacionado (DbCredentials:AppUser) é sempre Enforce, dentro do DbCredentialManager.
 public static class DbPrivilegeCheck
 {
     public const string SettingName = "Security:DbPrivilegeCheck";
@@ -272,7 +223,6 @@ public static class DbPrivilegeCheck
         if (opened) await connection.OpenAsync(cancellationToken);
         try
         {
-            // "sa" é recusado em qualquer modo (inclusive Off): a API nunca executa SQL como sa.
             if (await DbPrivilegeAuditor.IsSaAsync(connection, cancellationToken))
                 throw new InvalidOperationException(
                     "A API está conectada ao SQL Server como 'sa' (ou como o login de SID 0x01), o que é proibido em qualquer configuração. " +

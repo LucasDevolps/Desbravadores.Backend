@@ -252,9 +252,10 @@ Diferenças em relação ao Docker Compose:
   entre deploys), já que aqui o nginx e a API rodam na mesma máquina — diferente do Docker, onde a
   confiança é numa subnet inteira;
 - as fotos de usuários ficam numa pasta **fora** de `C:\desbravadores\site` (o `robocopy /MIR` do deploy apagaria o
-  que estivesse dentro), informada ao app pool pela variável `Media__Storage__Path`. O deploy confere a variável e a
-  pasta antes de tirar o site do ar. Preparação, uma vez, como administrador (o pool `Almirante` lê, grava e apaga,
-  sem permissão de execução; herança desligada só na raiz, nunca com `/T`):
+  que estivesse dentro), informada ao app pool pela variável `Media__Storage__Path`. O deploy prepara isso sozinho,
+  antes de tirar o site do ar: sem a variável, usa a pasta `fotos` ao lado do site e a define no pool; sem a pasta,
+  cria-a com a ACL abaixo (o pool lê, grava e apaga, sem permissão de execução; herança desligada só na raiz, nunca
+  com `/T`). Uma pasta já existente mantém a ACL que tiver. O equivalente manual, como administrador:
 
   ```powershell
   New-Item -ItemType Directory -Force C:\desbravadores\fotos | Out-Null
@@ -366,15 +367,26 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
 **Dados pessoais de usuários.** `POST`, `PUT` e `GET /api/Usuarios` trafegam `cpf`, `dataNascimento`
-(`yyyy-MM-dd`, sem horário, não futura) e `telefone`, todos opcionais e `null` em cadastros antigos. O
+(`yyyy-MM-dd`, sem horário, não futura) e `telefone`, `null` em cadastros antigos. O **`cpf` é obrigatório no
+cadastro** (`POST` sem CPF retorna `400`); no `PUT` ele pode ser trocado, mas um CPF já gravado não pode ser removido
+(`400`), e cadastros antigos sem CPF continuam editáveis sem ele. Data de nascimento e telefone são opcionais. O
 `email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é aceito com ou sem máscara, precisa ter 11
 dígitos com dígitos verificadores válidos e é gravado só com os dígitos; é único entre todos os usuários, inclusive
 inativos (índice `UX_Usuarios_Cpf`; duplicidade gera `409`). O telefone é fixo (10 dígitos, começando de 2 a 5) ou
 celular (11 dígitos, começando com 9), com DDD válido, com ou sem a máscara `(11) 98765-4321`, e é gravado só com
 dígitos (valores antigos com máscara ficam como estão até serem alterados). No `PUT`, um desses campos **omitido**
-mantém o valor atual, e `null` (ou `""` em `cpf`/`telefone`) o remove. Alteração e exclusão lógica gravam o estado
-anterior completo, incluindo esses campos, em `_usuarios_hist`, pela trigger `TR_Usuarios_Historico`, na mesma
-transação.
+mantém o valor atual, e `null` (ou `""` em `cpf`/`telefone`) o remove (exceto o CPF gravado, acima). Alteração e
+exclusão lógica gravam o estado anterior completo, incluindo esses campos, em `_usuarios_hist`, pela trigger
+`TR_Usuarios_Historico`, na mesma transação.
+
+**RG, tipo sanguíneo e doenças/alergias.** Os três são opcionais (`null` quando não informados ou em cadastros antigos;
+nenhum valor padrão é inventado) e seguem a mesma regra de omissão/limpeza no `PUT`. `rg`: até 20 caracteres (letras sem
+acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito), gravado como informado e não único.
+`tipoSanguineo`: `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+` ou `O-` (aceita minúsculas, grava em maiúsculas; o banco
+também recusa outro valor pela CHECK `CK_Usuarios_TipoSanguineo`). `doencasAlergias`: **um único texto livre** (um
+`textarea` no frontend, com quebras de linha) com doenças, alergias e cuidados de saúde, até 2000 caracteres na página
+1252 (acentos sim, emojis não); acima do limite é recusado com `400`, nunca truncado. São dados sensíveis: saem só em
+`/api/Usuarios` (mesma autorização do CRUD), nunca em `/api/Auth/Me`, e não são registrados em log.
 
 **Responsável (issues #112 e #131).** `responsavelNome`, `responsavelEmail`, `responsavelCpf` e `responsavelTelefone`
 seguem as mesmas regras dos campos equivalentes do usuário (o CPF do responsável não é único e não pode ser igual ao
@@ -414,7 +426,10 @@ resposta tem `ETag` (muda a cada troca) e `Cache-Control: private, no-cache`.
 
 `Media:Storage:Path` é obrigatório fora de Development (em Development, sem valor, usa uma pasta descartável no
 temp) e a API não sobe se ele for relativo, estiver dentro do site ou não aceitar escrita. No Docker Compose ele aponta
-para o volume nomeado `almirante-fotos`; no IIS, veja [Docker/Nginx no Windows (IIS)](#dockernginx-no-windows-iis).
+para o volume nomeado `almirante-fotos`, ou para a pasta do host em `FOTOS_HOST_PATH`, quando definida. O deploy Linux
+define `$HOME/almirante/fotos` (ao lado do `.env` fixo) e cria a pasta com dono `app` e modo `700`. Na primeira vez,
+copia as fotos que já estivessem no volume, que é mantido. Para ver ou copiar os arquivos, use `sudo` ou um container.
+No IIS, veja [Docker/Nginx no Windows (IIS)](#dockernginx-no-windows-iis).
 Uma faxina diária remove gravações interrompidas e fotos sem referência no banco
 (`Media:Storage:LimpezaHabilitada`).
 

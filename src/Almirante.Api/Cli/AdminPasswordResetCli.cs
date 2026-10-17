@@ -6,12 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Cli;
 
-// Rotação de senha do admin (issue #50): hoje não existe endpoint de autoatendimento nem ferramenta
-// alguma para isso fora de editar o banco direto (ver docs/authentication-security.md, seção
-// "Rotação de valores expostos"). Este comando reaproveita o mesmo IPasswordHasher<Usuario> e a
-// mesma PasswordPolicy já usados pelo seed (DbSeeder), sem tocar no fluxo de seed idempotente, e
-// revoga as sessões ativas do usuário na mesma chamada a SaveChangesAsync (atômico via o DbContext).
-// A senha nunca passa por argv (só prompt interativo sem eco) nem é logada em nenhum ponto.
 public static class AdminPasswordResetCli
 {
     public const string CommandName = "reset-admin-password";
@@ -25,7 +19,6 @@ public static class AdminPasswordResetCli
         SenhaInvalida,
     }
 
-    // Lógica testável (sem I/O de console): usada tanto pelo CLI real quanto pelos testes.
     public static async Task<(ResetResult Resultado, IReadOnlyList<string> Erros)> ResetPasswordAsync(
         AlmiranteDbContext db,
         IPasswordHasher<Usuario> passwordHasher,
@@ -36,8 +29,6 @@ public static class AdminPasswordResetCli
     {
         var emailNormalizado = email.Trim().ToUpperInvariant();
 
-        // Um login concorrente que já leu o usuário pode vencer a corrida pelo UPDATE (SecurityVersion é
-        // token de concorrência); nesse caso relê e reaplica o reset, em vez de perder a troca de senha.
         for (var tentativa = 1; ; tentativa++)
         {
             db.ChangeTracker.Clear();
@@ -53,15 +44,9 @@ public static class AdminPasswordResetCli
                 return (ResetResult.SenhaInvalida, erros);
             }
 
-            // Hash novo, SecurityVersion+1 e revogação das sessões saem no MESMO SaveChanges (uma
-            // transação). SecurityVersion invalida os access tokens já emitidos e, por ser token de
-            // concorrência, faz qualquer login/rehash lido antes deste reset falhar ao persistir
-            // (ver AuthService.LoginAsync).
             usuario.SenhaHash = passwordHasher.HashPassword(usuario, novaSenha);
             usuario.SecurityVersion++;
 
-            // Só remover a senha antiga não invalida sessões já emitidas (refresh token é opaco e não
-            // revalida credenciais) — revogar aqui é o que de fato força novo login em todo dispositivo.
             var agora = clock.GetUtcNow().UtcDateTime;
             var sessoesAtivas = await db.AuthSessions
                 .Where(s => s.UsuarioId == usuario.Id && s.RevokedAtUtc == null)
@@ -83,9 +68,6 @@ public static class AdminPasswordResetCli
         }
     }
 
-    // Entrada de linha de comando: `dotnet run --project src/Almirante.Api -- reset-admin-password <email>`.
-    // Roda antes do host normal subir (ver Program.cs) e nunca aceita a senha como argumento —
-    // só via prompt interativo sem eco, para não sobrar em histórico de shell/log de processo.
     public static async Task<int> RunAsync(IServiceProvider services, string[] args, string? connectionStringOverride = null, CancellationToken cancellationToken = default)
     {
         if (args.Length < 2 || string.IsNullOrWhiteSpace(args[1]))
@@ -130,8 +112,6 @@ public static class AdminPasswordResetCli
         Console.Write(prompt);
         if (Console.IsInputRedirected)
         {
-            // Sem TTY (pipe, docker exec sem -it): ReadKey lançaria InvalidOperationException. Lê uma
-            // linha do stdin (não há eco, pois não há terminal); a senha continua fora de argv/log.
             var line = Console.In.ReadLine();
             Console.WriteLine();
             return line ?? "";

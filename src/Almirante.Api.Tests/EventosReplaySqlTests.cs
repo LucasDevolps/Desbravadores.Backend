@@ -13,14 +13,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Almirante.Api.Tests;
 
-// Replay idempotente de POST /api/Eventos: devolve o resultado ORIGINAL (200), não o estado atual, com a versão
-// original; independe do relógio (virada de mês); nunca vaza entre usuários; e a resposta original é gravada na MESMA
-// transação do evento. SQL Server real, relógio controlável e estratégia de retry equivalente à do Aspire.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class EventosReplaySqlTests : IAsyncLifetime
 {
-    // Falha ao persistir a resposta original: dispara quando a gravação carrega um EventoOperacao alterado (o UPDATE
-    // que acrescenta a resposta depois de o banco gerar a rowversion), i.e. ENTRE gravar o evento e gravar a resposta.
     private sealed class FalhaAoPersistirRespostaInterceptor : SaveChangesInterceptor
     {
         public volatile bool Armada;
@@ -41,14 +36,12 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
     private Guid _outroUsuarioId;
     private HttpClient _semPermissao = null!;
 
-    // Datas fixas em relação ao relógio CONTROLADO (não ao relógio real).
     private static readonly DateTimeOffset UltimoDiaDeAgosto = new(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset PrimeiroDiaDeSetembro = new(2026, 9, 1, 0, 30, 0, TimeSpan.Zero);
     private static readonly DateOnly DataDeAgosto = new(2026, 8, 31);
 
     public async Task InitializeAsync()
     {
-        // Só o EventosService usa o relógio controlado (a autenticação segue o relógio real: o JWT e as sessões dependem dele).
         _factory = EventosSqlSupport.FabricaComRetry(o => o.AddInterceptors(_falha), s => s.AddScoped(sp => new EventosService(
             sp.GetRequiredService<AlmiranteDbContext>(), _clock, sp.GetRequiredService<ILogger<EventosService>>(), sp.GetRequiredService<EventosLockOptions>())));
         _client = await TestHelpers.CreateAuthenticatedClientAsync(_factory);
@@ -88,8 +81,6 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
     private Task<int> ContarOperacoes() => Sql<int>("SELECT COUNT(*) FROM eventos_operacoes");
     private Task<int> ContarLancamentosDeEvento() => Sql<int>("SELECT COUNT(*) FROM Lancamentos WHERE EventoId IS NOT NULL");
 
-    // ------------------------------------------------------------------ resultado original ao longo do tempo
-
     [Fact]
     public async Task CriarEditarCustosEParticipantes_ReplayDevolveOResultadoOriginal_ComAVersaoOriginal_SemNovosRegistros()
     {
@@ -105,10 +96,9 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         var replay = await Post(_client, m, chave);
 
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
-        Assert.Equal(original, await EventosTestKit.LerAsync(replay), EventoDtoComparer.Instance);  // mesmo ID e DTO original
+        Assert.Equal(original, await EventosTestKit.LerAsync(replay), EventoDtoComparer.Instance);
         Assert.Equal(original.Versao, (await EventosTestKit.LerAsync(replay)).Versao);
         Assert.Equal((eventos, operacoes, lancamentos), (await ContarEventos(), await ContarOperacoes(), await ContarLancamentosDeEvento()));
-        // o GET continua sendo o estado atual: 1 participante, valor novo
         Assert.Equal((1, 60m), (atual.QuantidadeMembros, atual.ValorPorMembro));
         Assert.Equal([m[0]], atual.Membros);
     }
@@ -126,8 +116,7 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
 
         Assert.Equal(original.Versao, reenvio.Versao);
         Assert.NotEqual(atual.Versao, reenvio.Versao);
-        Assert.Equal(20m, reenvio.ValorPorMembro);  // conteúdo original (antigo)
-        // editar a partir do replay (dados antigos + versão original) não passa pelo controle de concorrência
+        Assert.Equal(20m, reenvio.ValorPorMembro);
         var put = await EventosTestKit.PutAsync(_client, original.Id, EventosSqlSupport.Editar(reenvio, m, transporte: 99m));
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
         Assert.Equal(atual.Transporte, (await Obter(original.Id)).Transporte);
@@ -143,7 +132,7 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
 
         var replay = await EventosTestKit.LerAsync(await Post(_client, m, chave));
 
-        Assert.Equal(StatusLancamento.Pendente, Assert.Single(replay.Lancamentos).Status);  // resultado original prometido
+        Assert.Equal(StatusLancamento.Pendente, Assert.Single(replay.Lancamentos).Status);
         Assert.Equal(original.Versao, replay.Versao);
         var atual = await Obter(original.Id);
         Assert.Equal(StatusLancamento.Pago, Assert.Single(atual.Lancamentos).Status);
@@ -162,7 +151,6 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         var no = JsonNode.Parse(json!)!.AsObject();
         Assert.Equal(original.Versao, (string)no["versao"]!);
         Assert.Equal(Convert.ToBase64String((await Sql<byte[]>("SELECT Versao FROM eventos WHERE Id = @e", ("@e", original.Id)))!), (string)no["versao"]!);
-        // só os campos do DTO de evento: nada de token, cookie, connection string, claims ou entidade de usuário
         var esperados = new[] { "id", "eventoGrupoId", "eventoReferenciaId", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio",
             "membros", "quantidadeMembros", "valorPorMembro", "total", "ativo", "versao", "lancamentos" };
         Assert.Empty(no.Select(p => p.Key).Except(esperados, StringComparer.OrdinalIgnoreCase));
@@ -170,8 +158,6 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.DoesNotContain("token", json!, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Server=", json!, StringComparison.OrdinalIgnoreCase);
     }
-
-    // ------------------------------------------------------------------ relógio: virada de mês
 
     [Fact]
     public async Task CriarEm30OuUltimoDiaDoMes_ReenviarNoMesSeguinte_EReplayValido_MasChaveNovaComDataAntigaEh400()
@@ -185,7 +171,6 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(original.Id, (await EventosTestKit.LerAsync(replay)).Id);
 
-        // operação nova (chave nova) com a data agora anterior ao mês corrente continua inválida
         var nova = await Post(_client, (await Membros(1))[0], Nova());
         Assert.Equal(HttpStatusCode.BadRequest, nova.StatusCode);
         Assert.Contains("DataEvento", await nova.Content.ReadAsStringAsync());
@@ -202,7 +187,7 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         _clock.Now = PrimeiroDiaDeSetembro;
         var diferente = await Post(_client, m, chave, local: "Outro Parque");
 
-        Assert.Equal(HttpStatusCode.Conflict, diferente.StatusCode);  // conflito de idempotência, não 400 de data nem de parsing
+        Assert.Equal(HttpStatusCode.Conflict, diferente.StatusCode);
         Assert.Contains("dados diferentes", await diferente.Content.ReadAsStringAsync());
         Assert.Equal(1, await ContarEventos());
     }
@@ -216,37 +201,31 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
 
         var malformado = await EventosTestKit.PostJsonBrutoAsync(_client, "{ \"local\": ", chave);
         Assert.Equal(HttpStatusCode.BadRequest, malformado.StatusCode);
-        var semMembros = await EventosTestKit.PostJsonBrutoAsync(_client, "{}", chave);   // campos obrigatórios ausentes: 400 de formato
+        var semMembros = await EventosTestKit.PostJsonBrutoAsync(_client, "{}", chave);
         Assert.Equal(HttpStatusCode.BadRequest, semMembros.StatusCode);
 
-        // sem autenticação e sem permissão, uma chave existente não devolve nada
         using var anonimo = _factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await Post(anonimo, m, chave)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await Post(_semPermissao, m, chave)).StatusCode);
     }
-
-    // ------------------------------------------------------------------ equivalência
 
     [Fact]
     public async Task ReplayEquivalente_MembrosReordenados_GuidUnicoVersusArray_ENumerosIgnorados_DevolveOOriginalMesmoDepoisDeEditar()
     {
         var m = await Membros(2);
 
-        // (a) ordem dos membros
         var c1 = Nova();
         var a = await Criar(new[] { m[0], m[1] }, c1);
         Assert.Equal(HttpStatusCode.OK, (await EventosTestKit.PutAsync(_client, a.Id, EventosSqlSupport.Editar(a, m, transporte: 12m))).StatusCode);
         var ra = await Post(_client, new[] { m[1], m[0] }, c1);
         Assert.Equal((HttpStatusCode.OK, a.Versao, 20m), (ra.StatusCode, (await EventosTestKit.LerAsync(ra)).Versao, (await EventosTestKit.LerAsync(ra)).ValorPorMembro));
 
-        // (b) GUID único versus array de um elemento
         var solo = (await Membros(1))[0];
         var c2 = Nova();
         var b = await Criar(solo, c2);
         var rb = await Post(_client, new[] { solo }, c2);
         Assert.Equal((HttpStatusCode.OK, b.Id), (rb.StatusCode, (await EventosTestKit.LerAsync(rb)).Id));
 
-        // (c) valores numéricos ignorados pelos booleanos (transporte grátis / alimentação individual)
         var outro = (await Membros(1))[0];
         var c3 = Nova();
         var r1 = await Post(_client, outro, c3, transporte: 555m, gratis: true, alimentacao: 777m, individual: true);
@@ -256,8 +235,6 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.Equal((HttpStatusCode.OK, c.Id, 2m), (rc.StatusCode, (await EventosTestKit.LerAsync(rc)).Id, (await EventosTestKit.LerAsync(rc)).ValorPorMembro));
     }
 
-    // ------------------------------------------------------------------ usuários e exclusão
-
     [Fact]
     public async Task MesmaChaveParaUsuariosDistintos_IsolaOReplay_SemVazarRespostaAlheia()
     {
@@ -266,14 +243,12 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         var doAdmin = await Criar(m, chave);
         Assert.Equal(HttpStatusCode.OK, (await EventosTestKit.PutAsync(_client, doAdmin.Id, EventosSqlSupport.Editar(doAdmin, m, transporte: 40m))).StatusCode);
 
-        // outro usuário, mesma chave e mesmo conteúdo: cria o PRÓPRIO evento (grupo diferente), nunca recebe o do primeiro
         var outroMembro = (await Membros(1))[0];
         var doOutro = await Criar(outroMembro, chave, _outroUsuario);
         Assert.NotEqual(doAdmin.Id, doOutro.Id);
         Assert.Equal(2, await Sql<int>("SELECT COUNT(*) FROM eventos_operacoes WHERE IdempotencyKey = @k", ("@k", chave)));
         Assert.Equal(1, await Sql<int>("SELECT COUNT(*) FROM eventos_operacoes WHERE IdempotencyKey = @k AND UsuarioId = @u", ("@k", chave), ("@u", _outroUsuarioId)));
 
-        // e o replay de cada um devolve o seu
         var replayOutro = await EventosTestKit.LerAsync(await Post(_outroUsuario, outroMembro, chave));
         Assert.Equal(doOutro.Id, replayOutro.Id);
         var replayAdmin = await EventosTestKit.LerAsync(await Post(_client, m, chave));
@@ -296,8 +271,6 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.Equal((1, 1, 1), (await ContarEventos(), await ContarOperacoes(), await ContarLancamentosDeEvento()));
         Assert.Equal(0, await Sql<int>("SELECT COUNT(*) FROM Lancamentos WHERE EventoId = @e AND Ativo = 1", ("@e", original.Id)));
     }
-
-    // ------------------------------------------------------------------ concorrência e atomicidade
 
     [Fact]
     public async Task DuasRequisicoesEquivalentesConcorrentes_UmEventoUmaOperacaoEUmConjuntoDeLancamentos_RespostaOriginalConsistente()
@@ -340,15 +313,12 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.Equal((1, 1, 2), (await ContarEventos(), await ContarOperacoes(), await ContarLancamentosDeEvento()));
     }
 
-    // ------------------------------------------------------------------ operações anteriores à correção
-
     [Fact]
     public async Task OperacaoPreexistenteSemRespostaSalva_Retorna409EstavelSemCriarNada_EPreservaAChave()
     {
         var m = await Membros(1);
         var chave = Nova();
         var original = await Criar(m, chave);
-        // simula uma operação criada ANTES da correção: não existe resposta original persistida
         await using (var c = new Microsoft.Data.SqlClient.SqlConnection(_factory.ConnectionString))
         {
             await c.OpenAsync();
@@ -365,18 +335,16 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.Equal("EVENTO_IDEMPOTENCIA_SEM_RESPOSTA_ORIGINAL", (string)problema["codigo"]!);
         Assert.Equal(original.Id.ToString(), (string)problema["eventoId"]!);
         Assert.Contains("Consulte", (string)problema["detail"]!);
-        Assert.DoesNotContain("nova Idempotency-Key", (string)problema["detail"]!, StringComparison.OrdinalIgnoreCase);  // sem recomendar recriação
+        Assert.DoesNotContain("nova Idempotency-Key", (string)problema["detail"]!, StringComparison.OrdinalIgnoreCase);
         Assert.Equal((1, 1, 1), (await ContarEventos(), await ContarOperacoes(), await ContarLancamentosDeEvento()));
-        Assert.Equal(1, await Sql<int>("SELECT COUNT(*) FROM eventos_operacoes WHERE IdempotencyKey = @k", ("@k", chave)));   // chave não apagada
+        Assert.Equal(1, await Sql<int>("SELECT COUNT(*) FROM eventos_operacoes WHERE IdempotencyKey = @k", ("@k", chave)));
 
-        // conteúdo diferente com a mesma chave continua sendo o conflito de idempotência
         var diferente = await Post(_client, m, chave, local: "Outro Parque");
         Assert.Equal(HttpStatusCode.Conflict, diferente.StatusCode);
         Assert.Contains("dados diferentes", await diferente.Content.ReadAsStringAsync());
     }
 }
 
-// Comparação estrutural de EventoDto (listas por valor).
 internal sealed class EventoDtoComparer : IEqualityComparer<EventoDto>
 {
     public static readonly EventoDtoComparer Instance = new();

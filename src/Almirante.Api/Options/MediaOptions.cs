@@ -3,7 +3,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Options;
 
-// Fotos de usuários (issue #116): onde ficam e os limites do processamento. Os nomes de Media:Images seguem a issue.
 public sealed class MediaOptions
 {
     public const string SectionName = "Media";
@@ -11,16 +10,12 @@ public sealed class MediaOptions
     public StorageSettings Storage { get; set; } = new();
     public ImageSettings Images { get; set; } = new();
 
-    // Usado só em Development quando Media:Storage:Path não é informado (descartável, fora do repositório).
     public static string CaminhoPadraoDesenvolvimento => System.IO.Path.Combine(System.IO.Path.GetTempPath(), "almirante", "fotos");
 
     public sealed class StorageSettings
     {
-        // Pasta ABSOLUTA, fora do site (o robocopy /MIR do deploy Windows apaga o que estiver dentro dele) e nunca
-        // servida pelo IIS/nginx: a API entrega a foto depois de autenticar e autorizar. Obrigatória fora de Development.
         public string? Path { get; set; }
 
-        // Faxina diária de temporários e de fotos sem referência no banco (FotosCleanupService).
         public bool LimpezaHabilitada { get; set; } = true;
     }
 
@@ -46,8 +41,6 @@ public sealed class MediaOptions
     }
 }
 
-// Falha clara no startup (ValidateOnStart) em vez de no primeiro upload: pasta ausente, relativa, dentro do site (ou
-// contendo o site), sem permissão de escrita, ou limites incoerentes. Nenhum valor de segredo passa por aqui.
 public sealed class MediaOptionsValidator(IHostEnvironment environment) : IValidateOptions<MediaOptions>
 {
     public ValidateOptionsResult Validate(string? name, MediaOptions options)
@@ -127,8 +120,6 @@ public sealed class MediaOptionsValidator(IHostEnvironment environment) : IValid
         Path.EndsInDirectorySeparator(caminho) ? caminho : caminho + Path.DirectorySeparatorChar;
 }
 
-// Pastas das fotos: no Linux, só o dono (o usuário da API) entra (0700); no Windows valem as ACLs da pasta raiz,
-// herdadas (ver README, IIS).
 public static class DiretorioPrivado
 {
     public static void Criar(string caminho)

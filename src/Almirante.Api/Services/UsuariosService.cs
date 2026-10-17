@@ -13,17 +13,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
 
-// Regras de /api/Usuarios. Alteração e exclusão lógica acontecem em UMA transação com SESSION_CONTEXT (responsável
-// das claims e IP da conexão, nunca do corpo): o trigger TR_Usuarios_Historico copia o estado anterior para
-// _usuarios_hist na mesma instrução do UPDATE, então não existe alteração sem histórico nem histórico de alteração
-// desfeita. O e-mail único é garantido pelo índice IX_Usuarios_EmailNormalizado; a consulta prévia só produz a
-// mensagem de negócio, e a violação do índice (corrida entre duas requisições) vira o mesmo 409. O CPF segue o mesmo
-// desenho com o índice UX_Usuarios_Cpf (filtrado: usuários sem CPF não colidem).
 public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher, TimeProvider clock, DataCivil dataCivil,
     ILogger<UsuariosService> logger)
 {
     public const int NomeMaximo = 200;
     public const int EmailMaximo = 100;
+    public const int DoencasAlergiasMaximo = 2000;
 
     private const int SqlUnicidadeIndice = 2601;
     private const int SqlUnicidadeConstraint = 2627;
@@ -42,6 +37,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         ResponsavelEmail = u.ResponsavelEmail,
         ResponsavelCpf = u.ResponsavelCpf,
         ResponsavelTelefone = u.ResponsavelTelefone,
+        Rg = u.Rg,
+        TipoSanguineo = u.TipoSanguineo,
+        DoencasAlergias = u.DoencasAlergias,
         PossuiFoto = u.FotoCaminho != null,
         DataCriacao = u.DataCriacao,
         Funcao = u.Cargo!.Nome,
@@ -59,10 +57,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         },
     };
 
-    // Mesma normalização do login (AuthService) e do seed: e-mails iguais a menos de maiúsculas/minúsculas colidem.
     public static string NormalizarEmail(string email) => email.Trim().ToUpperInvariant();
 
-    // Endereço simples (sem nome de exibição) com domínio que contenha ponto.
     public static bool EmailValido(string? email)
     {
         var valor = email?.Trim();
@@ -70,40 +66,27 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             && endereco.Host.Contains('.') && !endereco.Host.StartsWith('.') && !endereco.Host.EndsWith('.');
     }
 
-    // E-mail, CPF e telefone são varchar: um caractere fora do ASCII imprimível seria trocado em silêncio na conversão
-    // para a página de código da collation. A entrada é recusada antes de chegar ao banco.
     public static bool SomenteAsciiImprimivel(string valor) => valor.All(c => c is >= ' ' and <= '~');
 
-    // E-mail que pode existir em Usuarios.EmailNormalizado (varchar(100), ASCII). Qualquer outro nunca casa.
     public static bool EmailArmazenavel(string emailNormalizado) =>
         emailNormalizado.Length <= EmailMaximo && SomenteAsciiImprimivel(emailNormalizado);
 
-    // Normalização ÚNICA do CPF (cadastro, alteração, consulta de duplicidade e validação): remove a máscara
-    // convencional (pontos e hífen) e espaços externos; vazio vira NULL. Continua texto (zeros à esquerda preservados).
-    // Não valida: só define o que é "o mesmo CPF"; o formato (11 dígitos + verificadores) é de Cpf.EhValido.
     public static string? NormalizarCpf(string? cpf)
     {
         var valor = cpf?.Replace(".", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal).Trim();
         return string.IsNullOrEmpty(valor) ? null : valor;
     }
 
-    // Telefone é guardado só com dígitos (TelefoneBrasileiro); vazio vira NULL. Valores gravados antes, com máscara,
-    // continuam como estão até a próxima alteração do campo.
     public static string? NormalizarTelefone(string? telefone) => TelefoneBrasileiro.Normalizar(telefone);
 
-    // Texto livre (nome e e-mail do responsável): sem espaços externos; vazio vira NULL.
     public static string? NormalizarTexto(string? valor)
     {
         var texto = valor?.Trim();
         return string.IsNullOrEmpty(texto) ? null : texto;
     }
 
-    // Parâmetro de SQL bruto para coluna varchar: tipado como varchar(tamanho), nunca como o nvarchar padrão de string,
-    // para o SQL Server não converter implicitamente (desempenho). Os valores já foram validados para caber na coluna.
     public static SqlParameter Varchar(string nome, string? valor, int tamanho) =>
         new(nome, SqlDbType.VarChar, tamanho) { Value = (object?)valor ?? DBNull.Value };
-
-    // ---------------------------------------------------------------- GET
 
     public async Task<IReadOnlyList<UsuarioListItemDto>> ListAsync(bool incluirInativos, CancellationToken cancellationToken)
     {
@@ -113,8 +96,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .Select(ParaDto)
             .ToListAsync(cancellationToken);
     }
-
-    // ---------------------------------------------------------------- POST
 
     public async Task<UsuarioListItemDto> RegistrarAsync(RegistrarUsuarioRequest request, CancellationToken ct)
     {
@@ -129,7 +110,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         }
 
         var cpf = NormalizarCpf(request.Cpf);
-        // Sem filtro de Ativo: o CPF de um usuário excluído logicamente continua reservado (mesma regra do índice).
         if (cpf is not null && await db.Usuarios.AnyAsync(u => u.Cpf == cpf, ct))
         {
             throw CpfJaCadastrado();
@@ -148,6 +128,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             ResponsavelEmail = NormalizarTexto(request.ResponsavelEmail),
             ResponsavelCpf = NormalizarCpf(request.ResponsavelCpf),
             ResponsavelTelefone = NormalizarTelefone(request.ResponsavelTelefone),
+            Rg = Rg.Normalizar(request.Rg),
+            TipoSanguineo = TipoSanguineo.Normalizar(request.TipoSanguineo),
+            DoencasAlergias = NormalizarTexto(request.DoencasAlergias),
             SenhaHash = string.Empty,
             CargoId = cargo.Id,
             DataCriacao = clock.GetUtcNow().UtcDateTime,
@@ -175,8 +158,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         return await ObterDtoAsync(usuario.Id, ct);
     }
 
-    // ---------------------------------------------------------------- PUT
-
     public async Task<UsuarioListItemDto> UpdateAsync(UpdateUsuarioRequest request, CancellationToken ct)
     {
         ExigirSqlServer();
@@ -201,8 +182,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw EmailDeOutroUsuario();
             }
 
-            // Dados pessoais e do responsável omitidos no JSON mantêm o valor lido sob o lock acima; informados (inclusive
-            // null/"") substituem. O próprio usuário fica fora da consulta de duplicidade.
             var cpf = request.CpfInformado ? NormalizarCpf(request.Cpf) : atual.Cpf;
             var dataNascimento = request.DataNascimentoInformada ? request.DataNascimento : atual.DataNascimento;
             var telefone = request.TelefoneInformado ? NormalizarTelefone(request.Telefone) : atual.Telefone;
@@ -210,8 +189,15 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             var responsavelEmail = request.ResponsavelEmailInformado ? NormalizarTexto(request.ResponsavelEmail) : atual.ResponsavelEmail;
             var responsavelCpf = request.ResponsavelCpfInformado ? NormalizarCpf(request.ResponsavelCpf) : atual.ResponsavelCpf;
             var responsavelTelefone = request.ResponsavelTelefoneInformado ? NormalizarTelefone(request.ResponsavelTelefone) : atual.ResponsavelTelefone;
+            var rg = request.RgInformado ? Rg.Normalizar(request.Rg) : atual.Rg;
+            var tipoSanguineo = request.TipoSanguineoInformado ? TipoSanguineo.Normalizar(request.TipoSanguineo) : atual.TipoSanguineo;
+            var doencasAlergias = request.DoencasAlergiasInformado ? NormalizarTexto(request.DoencasAlergias) : atual.DoencasAlergias;
 
-            // Regra do responsável com a data de nascimento EFETIVA (informada ou a gravada), mesma regra do POST.
+            if (cpf is null && atual.Cpf is not null)
+            {
+                throw ApiProblemException.Invalid("Cpf", "cpf é obrigatório e não pode ser removido.");
+            }
+
             var erros = RegraResponsavel.Validar(dataNascimento, responsavelNome, responsavelEmail, responsavelCpf, cpf, dataCivil.Hoje());
             if (erros.Count > 0)
             {
@@ -223,8 +209,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw CpfDeOutroUsuario();
             }
 
-            // O trigger grava o estado ANTERIOR completo em _usuarios_hist (TipoOperacao UPDATE) antes de a alteração
-            // valer, na mesma instrução: se a gravação do histórico falhar, o UPDATE inteiro é desfeito.
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
             try
             {
@@ -236,7 +220,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                         ResponsavelNome = {Varchar("@responsavelNome", responsavelNome, NomeMaximo)},
                         ResponsavelEmail = {Varchar("@responsavelEmail", responsavelEmail, EmailMaximo)},
                         ResponsavelCpf = {Varchar("@responsavelCpf", responsavelCpf, Cpf.Digitos)},
-                        ResponsavelTelefone = {Varchar("@responsavelTelefone", responsavelTelefone, TelefoneBrasileiro.MaximoDigitos)}
+                        ResponsavelTelefone = {Varchar("@responsavelTelefone", responsavelTelefone, TelefoneBrasileiro.MaximoDigitos)},
+                        Rg = {Varchar("@rg", rg, Rg.Maximo)}, TipoSanguineo = {Varchar("@tipoSanguineo", tipoSanguineo, TipoSanguineo.Maximo)},
+                        DoencasAlergias = {Varchar("@doencasAlergias", doencasAlergias, DoencasAlergiasMaximo)}
                     WHERE Id = {request.Id} AND Ativo = 1
                     """, ct);
             }
@@ -256,8 +242,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         return await ObterDtoAsync(request.Id, ct);
     }
 
-    // ---------------------------------------------------------------- DELETE (exclusão lógica)
-
     public async Task DeleteAsync(DeleteUsuarioRequest request, CancellationToken ct)
     {
         ExigirSqlServer();
@@ -268,8 +252,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
         await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
-            // XLOCK: um cadastro de evento concorrente com este membro espera a exclusão terminar (e então o vê
-            // inativo), ou a exclusão espera o cadastro e o encontra abaixo (ver EventosService.ExigirMembrosExistentesAsync).
             var atual = await TravarUsuarioAsync(request.Id, ct);
             if (!atual.Ativo)
             {
@@ -278,8 +260,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
             ExigirPermissaoSobreCargo(atual.Role, request.SolicitanteEhAdmin);
 
-            // Só eventos na data da exclusão ou depois (referência UTC do servidor, mesma de /api/Eventos) bloqueiam;
-            // participações em eventos passados permanecem no histórico e não impedem a exclusão.
             var hoje = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
             var bloqueadores = (await db.EventosMembros.AsNoTracking()
                 .Where(m => m.MembroId == request.Id && m.Ativo && m.Evento!.Ativo && m.Evento.DataEvento >= hoje)
@@ -293,8 +273,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw EventosFuturos(bloqueadores);
             }
 
-            // O trigger grava o estado anterior (TipoOperacao DELETE). SecurityVersion + 1 invalida sessões e refresh
-            // tokens do usuário (OnTokenValidated e AuthService.RefreshAsync comparam a versão); o login recusa inativos.
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoDelete, ct);
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE dbo.Usuarios SET Ativo = 0, SecurityVersion = SecurityVersion + 1 WHERE Id = {request.Id} AND Ativo = 1", ct);
@@ -304,19 +282,17 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         logger.LogInformation("Usuário {UsuarioId} excluído logicamente por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
     }
 
-    // ---------------------------------------------------------------- apoio
-
     private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone,
-        string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone);
+        string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone,
+        string? Rg, string? TipoSanguineo, string? DoencasAlergias);
 
     private sealed record CargoResumo(Guid Id, string Role);
 
-    // Lock exclusivo da linha até o fim da transação: PUT/DELETE concorrentes do mesmo usuário se serializam.
     private async Task<UsuarioTravado> TravarUsuarioAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
             .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone,
-                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone))
+                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone, u.Rg, u.TipoSanguineo, u.DoencasAlergias))
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
 
@@ -327,9 +303,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.Invalid("CargoId", "cargoId inexistente ou inativo.");
 
-    // Todos os papéis da diretoria administram usuários (policy GestaoCadastros), mas só um Administrador cria, altera,
-    // exclui ou promove alguém a Administrador: evita que outro papel desative ou assuma a conta administrativa.
-    // Vale também para a foto (UsuarioFotoService).
     internal static void ExigirPermissaoSobreCargo(string role, bool solicitanteEhAdmin)
     {
         if (role == Roles.Admin && !solicitanteEhAdmin)
@@ -353,7 +326,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     private static bool ViolouEmailUnico(Exception? ex) =>
         ex is SqlException { Number: SqlUnicidadeIndice or SqlUnicidadeConstraint } sql && sql.Message.Contains(IndiceEmailUnico, StringComparison.Ordinal);
 
-    // A mensagem do SQL Server traz o valor duplicado (o CPF): nunca é repassada ao cliente, só o nome do índice é usado.
     private static bool ViolouCpfUnico(Exception? ex) =>
         ex is SqlException { Number: SqlUnicidadeIndice or SqlUnicidadeConstraint } sql && sql.Message.Contains(IndiceCpfUnico, StringComparison.Ordinal);
 

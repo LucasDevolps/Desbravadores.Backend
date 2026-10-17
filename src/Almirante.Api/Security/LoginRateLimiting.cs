@@ -7,13 +7,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Security;
 
-// Rate limiting nativo do ASP.NET Core para POST /api/Auth/login, independente do nginx.
-//
-// Partição = HttpContext.Connection.RemoteIpAddress, lido quando o middleware executa, ou seja,
-// DEPOIS de UseForwardedHeaders: só reflete X-Forwarded-For quando a conexão veio da rede
-// ReverseProxy:TrustedNetworkCidr; um header enviado por cliente não confiável é ignorado.
-// O contador fica em memória: é por instância da API (uma réplica = limite efetivo; N réplicas
-// = até N vezes o limite). O limite global por conta é o lockout persistido (LoginLockout).
 public static class LoginRateLimiting
 {
     public const string PolicyName = "login";

@@ -51,7 +51,6 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         [FromBody] RegistrarLancamentoRequest request,
         CancellationToken cancellationToken)
     {
-        // O responsável (auditoria de CriadoPorUsuarioId) vem sempre da identidade autenticada.
         if (!User.TentarObterUsuarioId(out var usuarioSolicitanteId))
         {
             return IdentidadeInvalida();
@@ -87,8 +86,6 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<LancamentoDto>> Update(Guid id, [FromBody] UpdateLancamentoRequest request, CancellationToken cancellationToken)
     {
-        // O responsável (auditoria de AtualizadoPorUsuarioId) vem sempre da identidade autenticada,
-        // nunca do body — mesmo padrão de Registrar/Delete acima.
         if (!User.TentarObterUsuarioId(out var usuarioResponsavelId))
         {
             return IdentidadeInvalida();
@@ -114,7 +111,6 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         return deleted ? NoContent() : NotFound();
     }
 
-    // Inalcançável com o pipeline atual (OnTokenValidated exige sub GUID), mantido como defesa.
     private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails
     {
         Title = "Identidade autenticada inválida.",

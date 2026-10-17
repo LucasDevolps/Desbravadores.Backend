@@ -4,8 +4,6 @@ using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace Almirante.Api.Infrastructure;
 
-// PUT /api/Usuarios/{id}/foto lê o multipart em streaming (sem IFormFile), então o Swashbuckle não enxerga o corpo:
-// o schema multipart/form-data com o campo "arquivo" (binário) é declarado aqui.
 public sealed class UsuariosFotoOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)

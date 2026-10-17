@@ -59,6 +59,19 @@ jobs:
         id: compose-mode
         run: bash scripts/deploy-config.sh modo .env "$GITHUB_OUTPUT"
 
+      # Fotos de usuários (issue #116): pasta do host no usuário do runner, ao lado do .env fixo, criada aqui
+      # (nada a preparar à mão na máquina). FOTOS_HOST_PATH faz o compose.yaml montá-la no lugar do volume.
+      # O chmod só roda na criação: depois do próximo passo o dono passa a ser o "app" da imagem.
+      - name: Definir pasta de fotos no host
+        run: |
+          pasta="$HOME/almirante/fotos"
+          if [ ! -d "$pasta" ]; then
+            mkdir -p "$pasta"
+            chmod 700 "$pasta"
+          fi
+          echo "FOTOS_HOST_PATH=$pasta" >> "$GITHUB_ENV"
+          echo "Pasta de fotos: $pasta"
+
       # Só o nome DNS validado de TLS_PUBLIC_HOST entra no arquivo montado pelo compose.tls.yaml; é ele
       # que define o único Host aceito pelo nginx e o destino canônico do redirect HTTP -> HTTPS.
       - name: Gerar host permitido do nginx (modo tls)
@@ -67,8 +80,46 @@ jobs:
           PUBLIC_HOST: ${{ steps.compose-mode.outputs.public_host }}
         run: bash scripts/deploy-config.sh gerar-host-tls nginx/generated/tls-host.conf "$PUBLIC_HOST"
 
+      # Modo https (HTTPS local em 127.0.0.1:API_HTTPS_HOST_PORT, compose.https.yaml): o certificado fica fixo na
+      # máquina, em $HOME/almirante/certs (ao lado do .env), e é copiado para nginx/certs, que o checkout limpa a
+      # cada execução. Se faltar, ou vencer em menos de 30 dias, é gerado aqui como em docs/local-login.md
+      # (autoassinado para localhost e 127.0.0.1): nada a preparar à mão na máquina.
+      - name: Preparar certificado HTTPS local (modo https)
+        if: steps.compose-mode.outputs.mode == 'https'
+        run: |
+          certs="$HOME/almirante/certs"
+          if ! openssl x509 -checkend 2592000 -noout -in "$certs/localhost.pem" > /dev/null 2>&1 || [ ! -f "$certs/localhost.key" ]; then
+            mkdir -p "$certs"
+            chmod 700 "$certs"
+            openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -noenc \
+              -keyout "$certs/localhost.key" -out "$certs/localhost.pem" \
+              -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' 2> /dev/null
+            chmod 600 "$certs/localhost.key"
+            echo "Certificado HTTPS local gerado em $certs (autoassinado, 825 dias)."
+          fi
+          mkdir -p nginx/certs
+          cp "$certs/localhost.pem" "$certs/localhost.key" nginx/certs/
+          echo "Certificado HTTPS local: $certs/localhost.pem (vence em $(openssl x509 -enddate -noout -in "$certs/localhost.pem" | cut -d= -f2))"
+
       - name: Validar configuração efetiva do Compose
         run: docker compose ${{ steps.compose-mode.outputs.files }} config --quiet
+
+      # A API roda como "app" (não-root) e precisa gravar na pasta. Um container descartável da própria imagem,
+      # sem dependências, ajusta o dono: root só com CAP_CHOWN (o serviço tem cap_drop ALL). Na primeira vez, fotos
+      # que já estivessem no volume almirante-fotos são copiadas (como "app") para a pasta; o volume é mantido.
+      - name: Ajustar dono da pasta de fotos (e migrar o volume antigo)
+        env:
+          FILES: ${{ steps.compose-mode.outputs.files }}
+        run: |
+          # shellcheck disable=SC2086
+          docker compose $FILES build api
+          # shellcheck disable=SC2086
+          docker compose $FILES run --rm -T --no-deps --user root --cap-add CHOWN --entrypoint chown api app:app /var/lib/almirante/fotos
+          if docker volume inspect almirante-fotos > /dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            docker compose $FILES run --rm -T --no-deps -v almirante-fotos:/origem:ro --entrypoint sh api -c \
+              'if [ -z "$(ls -A /var/lib/almirante/fotos)" ] && [ -n "$(ls -A /origem)" ]; then cp -a /origem/. /var/lib/almirante/fotos/ && echo "Fotos do volume almirante-fotos copiadas para a pasta do host."; fi'
+          fi
 
       - name: Build e subir containers
         run: docker compose ${{ steps.compose-mode.outputs.files }} up -d --build
@@ -94,8 +145,13 @@ jobs:
           MODE: ${{ steps.compose-mode.outputs.mode }}
           PUBLIC_HOST: ${{ steps.compose-mode.outputs.public_host }}
           HOST_PORT: ${{ steps.compose-mode.outputs.port }}
+          HTTPS_PORT: ${{ steps.compose-mode.outputs.https_port }}
         run: |
-          if [ "$MODE" = "tls" ]; then
+          if [ "$MODE" = "https" ]; then
+            # Modo https: confere a porta HTTPS publicada, confiando só no certificado local (sem -k).
+            url="https://localhost:${HTTPS_PORT}/health"
+            curl_flags=(-fsS --cacert nginx/certs/localhost.pem)
+          elif [ "$MODE" = "tls" ]; then
             # Modo TLS: exige a borda HTTPS pública de verdade (certificado válido para o
             # host, resposta final 200). Sem -k/--insecure — um certificado inválido deve
             # reprovar o deploy, não ser contornado. compose.tls.yaml publica só 443.
@@ -214,19 +270,22 @@ jobs:
           }
 
       # Fotos de usuários (issue #116): a pasta fica FORA do site (o robocopy /MIR abaixo apagaria o que estivesse
-      # dentro) e é configurada no app pool (Media__Storage__Path, com ACL própria; ver README, "Docker/Nginx no Windows
-      # (IIS)"). Conferido ANTES de tirar o site do ar: um host sem essa configuração falha aqui, com o site no ar.
-      - name: Validar pasta de fotos do app pool (Media__Storage__Path)
+      # dentro) e é informada ao app pool por Media__Storage__Path. Sem a variável, o deploy usa a pasta "fotos" ao
+      # lado do site e a define no pool; sem a pasta, cria-a com a ACL do README ("Docker/Nginx no Windows (IIS)"):
+      # só o pool lê, grava e apaga, herança desligada só na raiz (nunca /T). Uma pasta já existente mantém a ACL do
+      # operador. Roda ANTES de tirar o site do ar; definir a variável recicla o pool, que volta já com a pasta.
+      - name: Preparar pasta de fotos do app pool (Media__Storage__Path)
         shell: pwsh
         run: |
           Import-Module WebAdministration -ErrorAction Stop
           $site = Get-Website | Where-Object { $_.PhysicalPath.TrimEnd('\') -eq "${{ env.SITE_PATH }}".TrimEnd('\') } | Select-Object -First 1
-          $filtro = "system.applicationHost/applicationPools/add[@name='$($site.applicationPool)']/environmentVariables"
+          $pool = $site.applicationPool
+          $filtro = "system.applicationHost/applicationPools/add[@name='$pool']/environmentVariables"
           $pasta = (Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name Collection |
             Where-Object { $_.name -eq 'Media__Storage__Path' } | Select-Object -First 1).value
-          if ([string]::IsNullOrWhiteSpace($pasta)) {
-            Write-Error "O app pool '$($site.applicationPool)' não define Media__Storage__Path (pasta absoluta das fotos, fora de ${{ env.SITE_PATH }}). Configure-o antes do deploy; nada foi alterado."
-            exit 1
+          $definida = -not [string]::IsNullOrWhiteSpace($pasta)
+          if (-not $definida) {
+            $pasta = Join-Path (Split-Path "${{ env.SITE_PATH }}".TrimEnd('\') -Parent) 'fotos'
           }
           $completa = [System.IO.Path]::GetFullPath($pasta).TrimEnd('\') + '\'
           $siteCompleto = [System.IO.Path]::GetFullPath("${{ env.SITE_PATH }}").TrimEnd('\') + '\'
@@ -235,8 +294,18 @@ jobs:
             exit 1
           }
           if (-not (Test-Path $pasta -PathType Container)) {
-            Write-Error "A pasta de fotos $pasta não existe. Crie-a com a ACL documentada no README antes do deploy; nada foi alterado."
-            exit 1
+            New-Item -ItemType Directory -Path $pasta -Force | Out-Null
+            icacls $pasta /inheritance:r /grant:r "IIS AppPool\${pool}:(OI)(CI)(R,W,D)" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Não foi possível aplicar a ACL em $pasta (icacls saiu com $LASTEXITCODE). O site continua no ar."
+              exit 1
+            }
+            Write-Host "Pasta de fotos criada com a ACL do app pool '$pool': $pasta"
+          }
+          if (-not $definida) {
+            Add-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name '.' `
+              -Value @{ name = 'Media__Storage__Path'; value = $pasta }
+            Write-Host "Media__Storage__Path definido no app pool '$pool': $pasta"
           }
           Write-Host "Pasta de fotos conferida: $pasta"
 

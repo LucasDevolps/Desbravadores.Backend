@@ -6,8 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// POST /api/Usuarios com os dados do responsável (issues #112 e #131) e as regras de CPF/telefone, sem SQL Server.
-// PUT com valores efetivos (o que não vem no corpo é lido do banco) e histórico: UsuariosResponsavelSqlServerTests.
 public sealed class UsuariosResponsavelTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     private static readonly TimeZoneInfo SaoPaulo = TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo");
@@ -27,6 +25,7 @@ public sealed class UsuariosResponsavelTests(AlmiranteApiFactory factory) : ICla
             ["email"] = $"ds-{Guid.NewGuid():N}@local.dev",
             ["senha"] = "Forte-Senha-9x2k",
             ["cargoId"] = await CargoIdAsync(),
+            ["cpf"] = TestHelpers.NovoCpf(),
         };
         foreach (var (campo, valor) in extras) corpo[campo] = valor;
         return await client.PostAsJsonAsync("/api/Usuarios", corpo);
@@ -51,8 +50,6 @@ public sealed class UsuariosResponsavelTests(AlmiranteApiFactory factory) : ICla
         foreach (var (campo, valor) in extras) corpo[campo] = valor;
         return corpo;
     }
-
-    // ------------------------------------------------------------------ obrigatoriedade
 
     [Fact]
     public async Task Post_MenorSemResponsavel_Retorna400ComNomeEEmail_ENaoCria()
@@ -139,16 +136,12 @@ public sealed class UsuariosResponsavelTests(AlmiranteApiFactory factory) : ICla
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
         var hoje = HojeCivil();
 
-        // Completa 18 anos hoje: já é maior, o responsável não é exigido.
         var completaHoje = await PostAsync(client, new Dictionary<string, object?> { ["dataNascimento"] = Data(hoje.AddYears(-18)) });
         Assert.True(completaHoje.StatusCode == HttpStatusCode.Created, await completaHoje.Content.ReadAsStringAsync());
 
-        // Completa 18 anos amanhã: ainda é menor.
         var completaAmanha = await PostAsync(client, new Dictionary<string, object?> { ["dataNascimento"] = Data(hoje.AddYears(-18).AddDays(1)) });
         Assert.True((await ErrosAsync(completaAmanha)).ContainsKey("ResponsavelNome"));
     }
-
-    // ------------------------------------------------------------------ formato (mesmas regras dos campos do usuário)
 
     public static TheoryData<string, object, string> ResponsavelInvalido => new()
     {
@@ -187,12 +180,12 @@ public sealed class UsuariosResponsavelTests(AlmiranteApiFactory factory) : ICla
 
     public static TheoryData<string, string> DadoDoUsuarioInvalido => new()
     {
-        { "cpf", "529.982.247-26" },       // verificador errado
-        { "cpf", "111.111.111-11" },       // sequência
-        { "cpf", "5299822472" },           // 10 dígitos
-        { "telefone", "1111-1111" },       // sem DDD
-        { "telefone", "(23) 98765-4321" }, // DDD inexistente
-        { "telefone", "(11) 88765-4321" }, // celular sem o 9
+        { "cpf", "529.982.247-26" },
+        { "cpf", "111.111.111-11" },
+        { "cpf", "5299822472" },
+        { "telefone", "1111-1111" },
+        { "telefone", "(23) 98765-4321" },
+        { "telefone", "(11) 88765-4321" },
     };
 
     [Theory]

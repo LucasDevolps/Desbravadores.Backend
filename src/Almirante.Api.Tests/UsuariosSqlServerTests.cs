@@ -9,8 +9,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-// Escrita em /api/Usuarios contra SQL Server REAL: índice único de e-mail, trigger TR_Usuarios_Historico,
-// SESSION_CONTEXT, transação e exclusão lógica. O InMemory não comprova nenhum desses comportamentos.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture<EventosSqlFixture>
 {
@@ -18,8 +16,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
 
     private HttpClient Client => fx.Client;
     private SqlServerApiFactory Factory => fx.Factory;
-
-    // ------------------------------------------------------------------ apoio
 
     private Task<T> Db<T>(Func<AlmiranteDbContext, Task<T>> consulta) => TestHelpers.WithDbAsync(Factory, consulta);
 
@@ -29,7 +25,12 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
 
     private static string SenhaValida() => $"Forte-{Guid.NewGuid():N}";
 
-    private async Task<HttpResponseMessage> PostAsync(object corpo) => await Client.PostAsJsonAsync("/api/Usuarios", corpo);
+    private async Task<HttpResponseMessage> PostAsync(object corpo)
+    {
+        var json = System.Text.Json.JsonSerializer.SerializeToNode(corpo)!.AsObject();
+        json.TryAdd("cpf", TestHelpers.NovoCpf());
+        return await Client.PostAsJsonAsync("/api/Usuarios", json);
+    }
 
     private static Task<HttpResponseMessage> PutAsync(HttpClient client, Guid id, object corpo, string ip = IpTeste)
     {
@@ -63,8 +64,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         return await EventosTestKit.LerAsync(response);
     }
 
-    // A API só aceita cadastrar eventos a partir do primeiro dia do mês corrente; um evento passado é produzido
-    // cadastrando-o normalmente e movendo a data direto no banco (o trigger de eventos só age em Ativo 1 -> 0).
     private async Task MoverEventoParaAsync(Guid eventoId, DateOnly data)
     {
         await using var conexao = new SqlConnection(Factory.ConnectionString);
@@ -86,8 +85,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         return await comando.ExecuteNonQueryAsync();
     }
 
-    // ------------------------------------------------------------------ POST: inclusão e e-mail único
-
     [Fact]
     public async Task Post_EmailAindaNaoExiste_CriaUsuarioAtivoQueConsegueAutenticar()
     {
@@ -105,7 +102,7 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         var salvo = await UsuarioAsync(dto.Id);
         Assert.Equal(email.ToUpperInvariant(), salvo.EmailNormalizado);
         Assert.NotEqual(senha, salvo.SenhaHash);
-        Assert.Empty(await HistoricoAsync(dto.Id)); // inclusão não é alteração: nada no histórico
+        Assert.Empty(await HistoricoAsync(dto.Id));
 
         using var novo = Factory.CreateClient();
         await TestHelpers.AddCsrfAsync(novo);
@@ -143,7 +140,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         var email = NovoEmail("corrida");
         var cargoId = await CargoIdAsync("DS");
 
-        // Variações de caixa: todas normalizam para o mesmo valor e disputam o mesmo índice único.
         var respostas = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => PostAsync(new
         {
             nome = $"Corrida {i}", email = i % 2 == 0 ? email : email.ToUpperInvariant(), senha = SenhaValida(), cargoId,
@@ -173,8 +169,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         Assert.Contains(ex.Number, new[] { 2601, 2627 });
     }
 
-    // ------------------------------------------------------------------ PUT: alteração e histórico
-
     [Fact]
     public async Task Put_DadosValidos_AlteraUsuario()
     {
@@ -192,7 +186,7 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         Assert.Equal(novoEmail, salvo.Email);
         Assert.Equal(novoEmail.ToUpperInvariant(), salvo.EmailNormalizado);
         Assert.Equal("TES", salvo.Cargo!.Role);
-        Assert.Equal(alvo.SenhaHash, salvo.SenhaHash); // PUT não mexe na senha
+        Assert.Equal(alvo.SenhaHash, salvo.SenhaHash);
     }
 
     [Fact]
@@ -235,7 +229,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         var historico = await HistoricoAsync(alvo.Id);
         Assert.Equal(2, historico.Count);
 
-        // Cada linha guarda EXATAMENTE o estado anterior à respectiva alteração.
         Assert.Equal(alvo.Nome, historico[0].Nome);
         Assert.Equal(emailAntigo, historico[0].Email);
         Assert.Equal("Secretário", historico[0].CargoNome);
@@ -258,7 +251,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         var alvo = await MembroAsync();
         var inicio = DateTime.UtcNow.AddSeconds(-2);
 
-        // Campos de auditoria enviados no corpo são ignorados: responsável e IP vêm sempre do contexto da requisição.
         var response = await PutAsync(secretario, alvo.Id, new
         {
             nome = "Auditado", email = alvo.Email, cargoId = alvo.CargoId,
@@ -283,10 +275,8 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         var alvo = await MembroAsync();
         Assert.Equal(HttpStatusCode.NoContent, (await DeleteAsync(Client, alvo.Id)).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await PutAsync(Client, alvo.Id, corpo)).StatusCode);
-        Assert.Single(await HistoricoAsync(alvo.Id)); // só a exclusão
+        Assert.Single(await HistoricoAsync(alvo.Id));
     }
-
-    // ------------------------------------------------------------------ DELETE: exclusão lógica
 
     [Fact]
     public async Task Delete_UsuarioSomenteComEventosPassados_ExcluiLogicamente()
@@ -299,7 +289,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
 
         Assert.True(response.StatusCode == HttpStatusCode.NoContent, await response.Content.ReadAsStringAsync());
         Assert.False((await UsuarioAsync(alvo.Id)).Ativo);
-        // A participação no evento passado permanece intacta.
         Assert.True(await Db(db => db.EventosMembros.AnyAsync(m => m.MembroId == alvo.Id && m.EventoId == evento.Id && m.Ativo)));
     }
 
@@ -317,7 +306,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         Assert.Equal("Não é possível excluir o usuário, pois ele está vinculado ao evento \"Campori 2026\" " +
             $"({EventosTestKit.Hoje.AddDays(16):dd/MM/yyyy}).", (string)problema["detail"]!);
 
-        // Transação desfeita por inteiro: continua ativo, sessões preservadas e nenhuma linha de histórico.
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.True(salvo.Ativo);
         Assert.Equal(versaoAntes, salvo.SecurityVersion);
@@ -372,7 +360,7 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
 
         var linha = Assert.Single(await HistoricoAsync(alvo.Id));
         Assert.Equal(UsuarioHistorico.OperacaoDelete, linha.TipoOperacao);
-        Assert.True(linha.Ativo);                    // estado ANTERIOR: ainda ativo
+        Assert.True(linha.Ativo);
         Assert.Equal(alvo.Nome, linha.Nome);
         Assert.Equal(alvo.Email, linha.Email);
         Assert.Equal("Tesoureiro", linha.CargoNome);
@@ -387,7 +375,7 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
 
         Assert.Equal(HttpStatusCode.NoContent, (await DeleteAsync(Client, alvoId)).StatusCode);
 
-        var salvo = await UsuarioAsync(alvoId);          // nenhum DELETE físico
+        var salvo = await UsuarioAsync(alvoId);
         Assert.False(salvo.Ativo);
         Assert.Equal(alvo.SecurityVersion + 1, salvo.SecurityVersion);
 
@@ -401,7 +389,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         var todos = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios?includeInactive=true"))!;
         Assert.Contains(todos, u => u.Id == alvoId && !u.Ativo);
 
-        // Usuário inativo não pode ser incluído como participante de um novo evento.
         var evento = await EventosTestKit.PostAsync(Client, EventosTestKit.Corpo(alvoId));
         Assert.Equal(HttpStatusCode.BadRequest, evento.StatusCode);
     }
@@ -449,8 +436,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
             (await PutAsync(secretario, administrador.Id, new { nome = "X", email = administrador.Email, cargoId = administrador.CargoId })).StatusCode);
     }
 
-    // ------------------------------------------------------------------ trigger: garantias no banco
-
     [Fact]
     public async Task Trigger_AlteracaoCadastralSemContextoDeAuditoria_EhRecusada_EAlteracaoDeLoginNaoGeraHistorico()
     {
@@ -461,7 +446,6 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
         Assert.Equal(50021, ex.Number);
         Assert.Equal(alvo.Nome, (await UsuarioAsync(alvo.Id)).Nome);
 
-        // Colunas de login/bloqueio/senha não são cadastrais: passam sem contexto e sem histórico.
         Assert.Equal(1, await ExecSqlAsync("UPDATE dbo.Usuarios SET FalhasLoginConsecutivas = 1, SecurityVersion = SecurityVersion + 1 WHERE Id = @id", ("@id", alvo.Id)));
         Assert.Empty(await HistoricoAsync(alvo.Id));
     }

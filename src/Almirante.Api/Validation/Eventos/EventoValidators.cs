@@ -4,8 +4,6 @@ using FluentValidation;
 
 namespace Almirante.Api.Validation.Eventos;
 
-// Regras de conteúdo compartilhadas por POST e PUT. O campo "membros" já chega normalizado como lista
-// (MembrosJsonConverter), então estas regras valem igualmente para "GUID" e "GUID[]".
 public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T : EventoConteudoRequest
 {
     protected EventoConteudoValidator()
@@ -22,7 +20,6 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
         RuleFor(x => x.Transporte).NotNull().WithMessage("transporte é obrigatório (objeto com ehGratis e valor).");
         RuleFor(x => x.Transporte!.EhGratis).NotNull().WithMessage("transporte.ehGratis é obrigatório.").When(x => x.Transporte is not null);
         RuleFor(x => x.Transporte!.Valor).NotNull().WithMessage("transporte.valor é obrigatório (pode ser zero).").When(x => x.Transporte is not null);
-        // Valor ignorado por ehGratis=true não é validado como regra de negócio (é normalizado para zero).
         RuleFor(x => x.Transporte!.Valor!.Value).Must(EventoRegras.ValorValido).WithMessage(MensagemValor("transporte.valor")).OverridePropertyName("Transporte.Valor")
             .When(x => x.Transporte is { EhGratis: false, Valor: not null });
 
@@ -44,7 +41,6 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
             .WithMessage(m => "membros não pode conter GUIDs repetidos: " +
                 string.Join(", ", m.Membros!.GroupBy(id => id).Where(g => g.Count() > 1).Select(g => g.Key)) + ".");
 
-        // Overflow do total (valorPorMembro × quantidade) só faz sentido quando os componentes são válidos.
         RuleFor(x => x).Must(TotalCabeNoBanco).WithName("total").WithMessage("O total do evento excede o limite monetário suportado.")
             .When(ConteudoNumericoValido);
     }
@@ -71,9 +67,6 @@ public sealed class RegistrarEventoRequestValidator : EventoConteudoValidator<Re
 {
     public RegistrarEventoRequestValidator()
     {
-        // Só formato/presença/normalização. O limite de data (a partir do primeiro dia do mês atual, UTC) depende do
-        // relógio e vale apenas para uma operação NOVA: é verificado em EventosService.RegistrarAsync, depois de
-        // resolvido o replay, para que um reenvio legítimo não falhe só porque o mês virou.
         RuleFor(x => x.EventoReferenciaId).NotEqual(Guid.Empty).WithMessage("eventoReferenciaId não pode ser um GUID vazio.")
             .When(x => x.EventoReferenciaId.HasValue);
 
@@ -88,8 +81,6 @@ public sealed class UpdateEventoRequestValidator : EventoConteudoValidator<Updat
 {
     public UpdateEventoRequestValidator()
     {
-        // O limite de data do PUT só se aplica a uma data ALTERADA (a data original de um evento histórico é
-        // preservada); isso depende do estado atual e é verificado em EventosService.UpdateAsync.
         RuleFor(x => x.Versao)
             .Must(v => EventoRegras.TentarLerVersao(v, out _)).WithMessage("versao é obrigatória e deve ser a versão devolvida pela API.");
         RuleFor(x => x.Motivo)
@@ -122,7 +113,6 @@ public sealed class ListEventosQueryValidator : AbstractValidator<ListEventosQue
             .WithName("dataInicial").WithMessage("dataInicial não pode ser posterior a dataFinal.")
             .When(x => x.DataInicial.HasValue && x.DataFinal.HasValue);
 
-        // A listagem não é paginada: o período limita o volume de eventos, participantes e lançamentos devolvidos.
         RuleFor(x => x).Must(x => x.DataFinal!.Value.DayNumber - x.DataInicial!.Value.DayNumber < PeriodoMaximoDias)
             .WithName("dataFinal").WithMessage($"O período consultado não pode ultrapassar {PeriodoMaximoDias} dias.")
             .When(x => x.DataInicial.HasValue && x.DataFinal.HasValue && x.DataInicial.Value <= x.DataFinal.Value);

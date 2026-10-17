@@ -22,7 +22,6 @@ public static class DbSeeder
         }
         else
         {
-            // Test doubles (EF Core InMemory provider) do not support migrations.
             await db.Database.EnsureCreatedAsync(cancellationToken);
         }
 
@@ -31,11 +30,6 @@ public static class DbSeeder
         await SeedLancamentosAsync(db, cancellationToken);
     }
 
-    // SQL error 1801 = "Database '...' already exists". Under container restarts the database
-    // created by a previous run already exists (thanks to the persistent volume), but EF Core's
-    // existence check can occasionally race with SQL Server still settling right after a restart
-    // and attempt CREATE DATABASE again. Retrying once, now that the database is visible, makes
-    // startup idempotent instead of crashing the whole process on an unhandled SqlException.
     public static async Task MigrateWithRetryAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
     {
         try
@@ -66,8 +60,6 @@ public static class DbSeeder
                 $"SeedAdmin:Email deve ter no máximo {UsuariosService.EmailMaximo} caracteres ASCII (coluna Usuarios.Email varchar).");
         }
 
-        // Idempotente: um admin existente nunca tem a senha sobrescrita, e a senha configurada só é
-        // exigida/validada quando o bootstrap realmente vai criar o usuário.
         var exists = await db.Usuarios.AnyAsync(u => u.EmailNormalizado == emailNormalizado, cancellationToken);
         if (exists)
         {
@@ -77,7 +69,6 @@ public static class DbSeeder
         var erros = PasswordPolicy.Validate(seedOptions.Senha, seedOptions.Email);
         if (erros.Count > 0)
         {
-            // Nunca inclui o valor da senha na mensagem.
             throw new InvalidOperationException(
                 "SeedAdmin:Senha não atende à política de senha e o administrador inicial não foi criado. " +
                 "Defina-a fora do Git (dotnet user-secrets, variável de ambiente SeedAdmin__Senha/SEED_ADMIN_SENHA ou cofre). " +
@@ -121,8 +112,6 @@ public static class DbSeeder
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    // Cargos com base nas funções descritas no Manual Administrativo do Clube de
-    // Desbravadores (diretoria do clube e cargos exercidos dentro das unidades).
     private static async Task SeedCargosAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
     {
         if (await db.Cargos.AnyAsync(cancellationToken))

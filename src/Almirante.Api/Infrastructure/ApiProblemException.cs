@@ -3,10 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Infrastructure;
 
-// Falha de negócio com status HTTP explícito (404/409/400 por campo), lançada por serviços chamados a partir
-// de handlers do MediatR e convertida em ProblemDetails por ApiProblemExceptionHandler. Evita espalhar
-// "outcomes" pelo controller e mantém a resposta de erro centralizada (mesmo padrão do
-// ValidationExceptionHandler para FluentValidation).
 public sealed class ApiProblemException(int status, string title, string? detail = null,
     IReadOnlyDictionary<string, string[]>? errors = null, IReadOnlyDictionary<string, object?>? extensions = null)
     : Exception(title)
@@ -33,8 +29,6 @@ public sealed class ApiProblemExceptionHandler(ILogger<ApiProblemExceptionHandle
             return false;
         }
 
-        // Evento de segurança/negócio (ASVS 16.3): toda recusa fica registrada com quem, onde e por quê. Nada do corpo
-        // da requisição, tokens ou cookies entra no log; só método, rota, status, título e o usuário das claims.
         logger.LogWarning("Operação recusada {Status} {Titulo}: {Metodo} {Rota} (usuário {UsuarioId})",
             problem.Status, problem.Title, httpContext.Request.Method, httpContext.Request.Path.Value,
             httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "anônimo");

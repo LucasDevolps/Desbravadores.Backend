@@ -11,7 +11,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // Usuários existentes continuam ativos (mesma abordagem de Lancamentos.Ativo em AddLancamentoGeral).
             migrationBuilder.AddColumn<bool>(
                 name: "Ativo",
                 table: "Usuarios",
@@ -81,13 +80,6 @@ namespace Almirante.Api.Data.Migrations
                 table: "Usuarios");
         }
 
-        // Histórico de usuários: dispara em todo UPDATE de Usuarios, mas só age quando um campo CADASTRAL muda (Nome,
-        // Email, EmailNormalizado, CargoId, Ativo; comparação binária para pegar mudança só de maiúsculas/minúsculas).
-        // Login, bloqueio por falhas e reset de senha (SenhaHash, SecurityVersion, Falhas*) passam direto, sem exigir
-        // contexto. Para mudanças cadastrais, exige o SESSION_CONTEXT definido pela aplicação (mesmas chaves dos
-        // triggers de eventos/lançamentos) e grava o estado ANTERIOR (deleted) em _usuarios_hist, na mesma transação.
-        // TipoOperacao é derivado dos dados (Ativo 1 -> 0 = DELETE), nunca informado pelo cliente. O login do
-        // responsável é o e-mail dele antes desta instrução (vale também quando ele altera o próprio cadastro).
         private const string UsuariosTrigger = """
             CREATE TRIGGER [TR_Usuarios_Historico] ON [Usuarios] AFTER UPDATE AS
             BEGIN

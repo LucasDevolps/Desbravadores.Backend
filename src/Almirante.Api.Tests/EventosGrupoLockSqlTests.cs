@@ -8,9 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-// Coordenação de POST (com eventoReferenciaId), PUT, DELETE e pagamento por passeio (EventoGrupoId), contra SQL Server
-// real, com intercalamentos FORÇADOS: uma requisição é parada em um comando SQL exato enquanto a outra corre; a prova de
-// que a coordenação atuou é haver uma sessão esperando o applock do passeio (sys.dm_tran_locks), não um Task.Delay.
 [Trait("Category", "RequiresSqlServer")]
 public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
 {
@@ -62,7 +59,6 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
             """, ("@g", grupo)));
     }
 
-    // Referência a um cadastro do passeio: o original, ou (quando o original já foi excluído) um cadastro secundário.
     private async Task<EventoDto> PreparaReferenciaAsync(bool secundariaComOriginalInativo)
     {
         var m = await Membros(3);
@@ -72,10 +68,8 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         var b = await EventosSqlSupport.CriarAsync(_client, m[1], a.Id);
         var exclusao = await EventosTestKit.DeleteAsync(_client, a.Id, "original saiu", a.Versao);
         Assert.Equal(HttpStatusCode.NoContent, exclusao.StatusCode);
-        return b; // o passeio sobrevive: o grupo continua sendo o do original
+        return b;
     }
-
-    // ------------------------------------------------------------------ POST antes do PUT
 
     [Theory]
     [InlineData(false)]
@@ -85,12 +79,10 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         var referencia = await PreparaReferenciaAsync(secundariaComOriginalInativo);
         var novo = (await Membros(1))[0];
 
-        // POST valida a referência (mesma data/local) e para no INSERT do novo cadastro
         var pausa = _pausa.Armar(InsereEvento);
         var post = EventosTestKit.PostAsync(_client, EventosTestKit.Corpo(novo, referencia.DataEvento, referencia.Local, referencia: referencia.Id));
         await pausa.Atingida;
 
-        // PUT da referência altera data e local: a consulta "há outro cadastro ativo?" ainda não enxerga o novo
         var membrosDaReferencia = referencia.Membros;
         var put = EventosTestKit.PutAsync(_client, referencia.Id,
             EventosSqlSupport.Editar(referencia, membrosDaReferencia, local: "Parque Novo", data: referencia.DataEvento.AddDays(1)));
@@ -98,14 +90,11 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         pausa.Liberar();
         var respostas = await Task.WhenAll(post, put);
 
-        // com a coordenação, o PUT ficou esperando o passeio: o POST venceu e o PUT foi recusado (409) por haver 2 cadastros
         Assert.Equal(HttpStatusCode.Created, respostas[0].StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, respostas[1].StatusCode);
         await AssertPasseioCoerenteAsync(referencia.EventoGrupoId);
         Assert.Equal(referencia.DataEvento, (await AtivosDoGrupoAsync(referencia.EventoGrupoId)).Select(a => a.Data).Distinct().Single());
     }
-
-    // ------------------------------------------------------------------ PUT antes do POST
 
     [Theory]
     [InlineData(false)]
@@ -117,20 +106,17 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         var novaData = referencia.DataEvento.AddDays(1);
         var chave = Guid.NewGuid().ToString();
 
-        // PUT (único cadastro ativo do passeio) valida e para no UPDATE do cadastro
         var pausa = _pausa.Armar(AtualizaEventoPeloPut);
         var put = EventosTestKit.PutAsync(_client, referencia.Id,
             EventosSqlSupport.Editar(referencia, referencia.Membros, local: "Parque Novo", data: novaData));
         await pausa.Atingida;
 
-        // POST usando a data/local ANTIGOS da referência: sem coordenação leria o estado antigo e gravaria o divergente
         var post = EventosTestKit.PostAsync(_client, EventosTestKit.Corpo(novo, referencia.DataEvento, referencia.Local, referencia: referencia.Id), chave);
         await EventosSqlSupport.AguardarConclusaoOuBloqueioAsync(_factory, post);
         pausa.Liberar();
         var respostas = await Task.WhenAll(put, post);
 
         Assert.Equal(HttpStatusCode.OK, respostas[0].StatusCode);
-        // o POST releu a referência sob o lock: data/local agora divergem do que ele enviou → erro de negócio 400
         Assert.Equal(HttpStatusCode.BadRequest, respostas[1].StatusCode);
         var erros = JsonNode.Parse(await respostas[1].Content.ReadAsStringAsync())!["errors"]!.AsObject().Select(p => p.Key).ToList();
         Assert.Contains("DataEvento", erros);
@@ -140,8 +126,6 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         Assert.Equal(0, await Sql<int>("SELECT COUNT(*) FROM Lancamentos WHERE MembroId = @m", ("@m", novo)));
         Assert.Equal(0, await Sql<int>("SELECT COUNT(*) FROM eventos_operacoes WHERE IdempotencyKey = @k", ("@k", chave)));
     }
-
-    // ------------------------------------------------------------------ POST x DELETE da referência
 
     [Fact]
     public async Task PostComReferenciaPausado_DeleteDaReferenciaEsperaOLock_PostVenceEOGrupoSobrevive()
@@ -157,7 +141,6 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         pausa.Liberar();
         var respostas = await Task.WhenAll(post, delete);
 
-        // ordem válida: POST, depois DELETE. O novo cadastro existe, ativo, no mesmo passeio; o original foi excluído.
         Assert.Equal(HttpStatusCode.Created, respostas[0].StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, respostas[1].StatusCode);
         var criado = await EventosTestKit.LerAsync(respostas[0]);
@@ -182,15 +165,13 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
         var respostas = await Task.WhenAll(delete, post);
 
         Assert.Equal(HttpStatusCode.NoContent, respostas[0].StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, respostas[1].StatusCode);   // referência inativa não serve de referência
+        Assert.Equal(HttpStatusCode.NotFound, respostas[1].StatusCode);
         Assert.Empty(await AtivosDoGrupoAsync(a.EventoGrupoId));
         Assert.Equal(1, await Sql<int>("SELECT COUNT(*) FROM eventos WHERE EventoGrupoId = @g", ("@g", a.EventoGrupoId)));
         Assert.Equal(0, await Sql<int>("SELECT COUNT(*) FROM Lancamentos WHERE MembroId = @m", ("@m", novo)));
         Assert.Equal(0, await Sql<int>("SELECT COUNT(*) FROM evento_membros WHERE MembroId = @m", ("@m", novo)));
         Assert.Equal(0, await Sql<int>("SELECT COUNT(*) FROM eventos_operacoes WHERE IdempotencyKey = @k", ("@k", chave)));
     }
-
-    // ------------------------------------------------------------------ contenção limitada e liberação do lock
 
     [Fact]
     public async Task LockDoPasseioOcupado_RequisicaoDesistePorTimeout409_SemRegistros_ELockLiberadoDepois()
@@ -224,14 +205,11 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
             await tx.RollbackAsync();
         }
 
-        // sem o lock externo, as mesmas operações passam: nada ficou preso na API (locks liberados por commit/rollback)
         var ok = await EventosTestKit.PostAsync(_client, EventosTestKit.Corpo(novo, a.DataEvento, a.Local, referencia: a.Id));
         Assert.Equal(HttpStatusCode.Created, ok.StatusCode);
         Assert.Equal(0, await EventosSqlSupport.EsperasDeApplockAsync(_factory));
-        Assert.Equal(0, await EventosSqlSupport.ContarApplocksAsync(_factory, apenasEsperando: false));   // nenhum lock de passeio ficou preso
+        Assert.Equal(0, await EventosSqlSupport.ContarApplocksAsync(_factory, apenasEsperando: false));
     }
-
-    // ------------------------------------------------------------------ ausência de deadlock nas combinações
 
     [Fact]
     public async Task PagamentoPutPostEDeleteSimultaneosNoMesmoPasseio_NaoGeramDeadlockNemEstadoIncoerente()
@@ -250,7 +228,6 @@ public sealed class EventosGrupoLockSqlTests : IAsyncLifetime
 
             Assert.DoesNotContain(HttpStatusCode.InternalServerError, codigos);
             await AssertPasseioCoerenteAsync(a.EventoGrupoId);
-            // pagamento e exclusão são incompatíveis: se algum lançamento ficou pago, o cadastro continua ativo
             var pago = await Sql<int>("SELECT COUNT(*) FROM Lancamentos WHERE EventoId = @e AND Ativo = 1 AND Status <> 0", ("@e", a.Id));
             var ativo = await Sql<int>("SELECT CAST(Ativo AS int) FROM eventos WHERE Id = @e", ("@e", a.Id));
             Assert.False(pago > 0 && ativo == 0, "lançamento pago em cadastro excluído");

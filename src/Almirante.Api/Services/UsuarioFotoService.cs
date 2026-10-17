@@ -6,17 +6,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
 
-// Foto de perfil (issue #116). O banco guarda só o caminho relativo (Usuarios.FotoCaminho); o arquivo fica em IFileStorage.
-// Troca e remoção usam a mesma transação auditada do PUT de usuário (lock da linha + SESSION_CONTEXT): o trigger
-// TR_Usuarios_Historico registra quem trocou/removeu a foto. Ordem que nunca deixa o cadastro inconsistente:
-//   envio: grava o arquivo novo -> commit do novo caminho -> só então apaga o anterior; falha antes do commit apaga o
-//          novo e mantém o anterior intacto;
-//   exclusão: commit do caminho NULL -> apaga o arquivo.
-// Arquivo que não puder ser apagado vira órfão e sai na faxina diária (FotosCleanupService).
 public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService usuarios, IFileStorage armazenamento,
     ProcessadorFotos processador, TimeProvider clock, ILogger<UsuarioFotoService> logger)
 {
-    // Lock transitório do antivírus/indexador do Windows ao apagar: duas novas tentativas curtas antes de desistir.
     private static readonly TimeSpan[] EsperasExclusao = [TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(400)];
 
     private sealed record UsuarioAlvo(bool Ativo, string Role, string? FotoCaminho);
@@ -25,7 +17,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
     {
         ExigirSqlServer();
 
-        // Barato antes do caro: alvo inexistente, inativo ou sem permissão é recusado antes de decodificar a imagem.
         var alvo = await db.Usuarios.AsNoTracking().Where(u => u.Id == request.Id)
                        .Select(u => new UsuarioAlvo(u.Ativo, u.Cargo!.Role, u.FotoCaminho)).SingleOrDefaultAsync(ct)
                    ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
@@ -50,8 +41,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         }
         catch
         {
-            // Commit com resultado desconhecido (conexão caiu no meio): na dúvida o arquivo novo fica; se ficar órfão, a
-            // faxina remove. Nunca se apaga um arquivo que o banco já referencia.
             if (!await ReferenciadoAsync(request.Id, chave))
             {
                 await ExcluirArquivoAsync(chave);
@@ -78,7 +67,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
             return null;
         }
 
-        // Caminho gravado por outra via fora do formato ou da pasta do próprio usuário: nunca é servido.
         if (!FotoChave.PertenceA(chave, id))
         {
             logger.LogError("FotoCaminho inconsistente no usuário {UsuarioId}: a foto não é servida.", id);
@@ -99,8 +87,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
     {
         ExigirSqlServer();
 
-        // Também para usuário inativo: remover dado pessoal é sempre permitido. Permissão antes da existência da foto,
-        // para não revelar a quem não pode gerenciar o usuário se ele tem foto.
         var anterior = await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
             var atual = await TravarAsync(request.Id, ct);
@@ -115,8 +101,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         logger.LogInformation("Foto do usuário {UsuarioId} removida por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
     }
 
-    // ---------------------------------------------------------------- apoio
-
     private static void ExigirAlvoAlteravel(UsuarioAlvo alvo, bool solicitanteEhAdmin)
     {
         if (!alvo.Ativo)
@@ -127,8 +111,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         UsuariosService.ExigirPermissaoSobreCargo(alvo.Role, solicitanteEhAdmin);
     }
 
-    // Lock exclusivo da linha até o fim da transação: envios/exclusões concorrentes do mesmo usuário se serializam, e cada
-    // um apaga exatamente o arquivo que substituiu (o último vence; nenhum fica órfão).
     private async Task<UsuarioAlvo> TravarAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
@@ -163,8 +145,6 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         }
     }
 
-    // Melhor esforço: a resposta já está decidida (o banco foi alterado ou a operação falhou); um arquivo que não sair
-    // agora fica para a faxina diária.
     private async Task ExcluirArquivoAsync(string chave)
     {
         for (var tentativa = 0; ; tentativa++)

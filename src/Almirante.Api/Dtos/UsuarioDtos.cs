@@ -3,7 +3,6 @@ using MediatR;
 
 namespace Almirante.Api.Dtos;
 
-// Campos editáveis de um usuário, comuns a POST e PUT /api/Usuarios.
 public abstract class UsuarioConteudoRequest
 {
     /// <summary>Obrigatório, até 200 caracteres.</summary>
@@ -15,16 +14,15 @@ public abstract class UsuarioConteudoRequest
     /// <summary>Id de um cargo ativo (ver GET /api/Cargos).</summary>
     public Guid? CargoId { get; set; }
 
-    // Dados pessoais opcionais. Os setters só rodam quando a propriedade está no JSON (inclusive com null), o que
-    // distingue OMISSÃO (PUT preserva o valor atual) de LIMPEZA explícita (null ou "" -> NULL no banco).
     private string? _cpf;
     private DateOnly? _dataNascimento;
     private string? _telefone;
 
     /// <summary>
-    /// Opcional; único entre todos os usuários (inclusive inativos). Espaços externos, pontos e hífen são removidos antes de
-    /// salvar e comparar ("123.456.789-09" = "12345678909"); depois disso precisa ter 11 dígitos com dígitos verificadores
-    /// válidos. No PUT: omitido mantém o valor atual; null ou "" remove.
+    /// Obrigatório no cadastro (POST); único entre todos os usuários (inclusive inativos). Espaços externos, pontos e hífen são
+    /// removidos antes de salvar e comparar ("123.456.789-09" = "12345678909"); depois disso precisa ter 11 dígitos com dígitos
+    /// verificadores válidos. No PUT: omitido mantém o valor atual; null ou "" só é aceito para usuário antigo que ainda não tem CPF
+    /// (um CPF gravado não pode ser removido).
     /// </summary>
     public string? Cpf { get => _cpf; set { _cpf = value; CpfInformado = true; } }
 
@@ -37,8 +35,6 @@ public abstract class UsuarioConteudoRequest
     /// </summary>
     public string? Telefone { get => _telefone; set { _telefone = value; TelefoneInformado = true; } }
 
-    // Dados do responsável, com as mesmas regras de formato dos campos do usuário. Nome e e-mail são obrigatórios só para
-    // menor de 18 anos (data de nascimento informada ou, no PUT, a já gravada); CPF e telefone são sempre opcionais.
     private string? _responsavelNome;
     private string? _responsavelEmail;
     private string? _responsavelCpf;
@@ -56,7 +52,30 @@ public abstract class UsuarioConteudoRequest
     /// <summary>Mesmas regras de telefone. No PUT: omitido mantém; null ou "" remove.</summary>
     public string? ResponsavelTelefone { get => _responsavelTelefone; set { _responsavelTelefone = value; ResponsavelTelefoneInformado = true; } }
 
+    private string? _rg;
+    private string? _tipoSanguineo;
+    private string? _doencasAlergias;
+
+    /// <summary>
+    /// Opcional, até 20 caracteres: letras sem acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito; gravado como
+    /// informado (sem espaços externos), não é único. No PUT: omitido mantém; null ou "" remove.
+    /// </summary>
+    public string? Rg { get => _rg; set { _rg = value; RgInformado = true; } }
+
+    /// <summary>Opcional: A+, A-, B+, B-, AB+, AB-, O+ ou O- (maiúsculas ou minúsculas; gravado em maiúsculas). No PUT: omitido mantém; null ou "" remove.</summary>
+    public string? TipoSanguineo { get => _tipoSanguineo; set { _tipoSanguineo = value; TipoSanguineoInformado = true; } }
+
+    /// <summary>
+    /// Doenças/alergias: um único texto livre (várias linhas) com doenças, alergias e cuidados de saúde. Opcional, até 2000 caracteres
+    /// (espaços externos removidos), sem emojis nem caracteres fora do Latin1; acima do limite é recusado, nunca truncado. No PUT: omitido
+    /// mantém; null ou "" remove.
+    /// </summary>
+    public string? DoencasAlergias { get => _doencasAlergias; set { _doencasAlergias = value; DoencasAlergiasInformado = true; } }
+
     [JsonIgnore] public bool CpfInformado { get; private set; }
+    [JsonIgnore] public bool RgInformado { get; private set; }
+    [JsonIgnore] public bool TipoSanguineoInformado { get; private set; }
+    [JsonIgnore] public bool DoencasAlergiasInformado { get; private set; }
     [JsonIgnore] public bool DataNascimentoInformada { get; private set; }
     [JsonIgnore] public bool TelefoneInformado { get; private set; }
     [JsonIgnore] public bool ResponsavelNomeInformado { get; private set; }
@@ -64,7 +83,6 @@ public abstract class UsuarioConteudoRequest
     [JsonIgnore] public bool ResponsavelCpfInformado { get; private set; }
     [JsonIgnore] public bool ResponsavelTelefoneInformado { get; private set; }
 
-    // Preenchidos pelo controller a partir das claims validadas; nunca lidos do corpo.
     [JsonIgnore] public bool SolicitanteEhAdmin { get; set; }
 }
 
@@ -76,8 +94,8 @@ public sealed class RegistrarUsuarioRequest : UsuarioConteudoRequest, IRequest<U
 }
 
 /// <summary>
-/// PUT /api/Usuarios/{id}. nome, email e cargoId são sempre substituídos (obrigatórios); cpf, dataNascimento, telefone e os
-/// campos do responsável omitidos preservam o valor atual. Não altera senha, foto nem situação (ativo/inativo).
+/// PUT /api/Usuarios/{id}. nome, email e cargoId são sempre substituídos (obrigatórios); cpf, dataNascimento, telefone, rg,
+/// tipoSanguineo, doencasAlergias e os campos do responsável omitidos preservam o valor atual. Não altera senha, foto nem situação (ativo/inativo).
 /// </summary>
 public sealed class UpdateUsuarioRequest : UsuarioConteudoRequest, IRequest<UsuarioListItemDto>
 {

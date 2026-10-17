@@ -10,8 +10,6 @@ namespace Almirante.Api.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            // As constraints anteriores foram criadas por SQL e não constavam no snapshot.
-            // A conversão mantém IDs, valores, auditoria e hashes de idempotência intactos.
             migrationBuilder.DropCheckConstraint(
                 name: "CK_LancamentosOperacoes_TipoFluxo",
                 table: "LancamentosOperacoes");
@@ -276,7 +274,6 @@ namespace Almirante.Api.Data.Migrations
                 oldClrType: typeof(int),
                 oldType: "int");
 
-            // Restaura os textos esperados pela versão anterior da aplicação.
             migrationBuilder.Sql("""
                 UPDATE [LancamentosOperacoes] SET
                     [Categoria] = CASE [Categoria] WHEN N'0' THEN N'Evento' WHEN N'1' THEN N'Clube' END,
