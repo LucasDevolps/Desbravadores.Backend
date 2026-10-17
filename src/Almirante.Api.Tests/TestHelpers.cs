@@ -136,5 +136,7 @@ public static class TestHelpers
         }
     }
 
+    public const string RgFicticio = "12.345.678-9";
+
     public static string MascararCpf(string cpf) => $"{cpf[..3]}.{cpf[3..6]}.{cpf[6..9]}-{cpf[9..]}";
 }

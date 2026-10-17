@@ -29,6 +29,7 @@ public sealed class UsuariosSqlServerTests(EventosSqlFixture fx) : IClassFixture
     {
         var json = System.Text.Json.JsonSerializer.SerializeToNode(corpo)!.AsObject();
         json.TryAdd("cpf", TestHelpers.NovoCpf());
+        json.TryAdd("rg", TestHelpers.RgFicticio);
         return await Client.PostAsJsonAsync("/api/Usuarios", json);
     }
 

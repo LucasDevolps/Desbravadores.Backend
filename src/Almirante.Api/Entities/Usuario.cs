@@ -20,6 +20,25 @@ public class Usuario
     public string? TipoSanguineo { get; set; }
     public string? DoencasAlergias { get; set; }
 
+    public bool EhCin { get; set; }
+    public DateOnly? DataExpiracao { get; set; }
+
+    public string? EnderecoCep { get; set; }
+    public string? EnderecoLogradouro { get; set; }
+    public string? EnderecoNumero { get; set; }
+    public string? EnderecoComplemento { get; set; }
+    public string? EnderecoComplementoCep { get; set; }
+    public string? EnderecoUnidade { get; set; }
+    public string? EnderecoBairro { get; set; }
+    public string? EnderecoLocalidade { get; set; }
+    public string? EnderecoUf { get; set; }
+    public string? EnderecoEstado { get; set; }
+    public string? EnderecoRegiao { get; set; }
+    public string? EnderecoIbge { get; set; }
+    public string? EnderecoGia { get; set; }
+    public string? EnderecoDdd { get; set; }
+    public string? EnderecoSiafi { get; set; }
+
     public string? FotoCaminho { get; set; }
 
     public required string SenhaHash { get; set; }

@@ -57,8 +57,9 @@ public abstract class UsuarioConteudoRequest
     private string? _doencasAlergias;
 
     /// <summary>
-    /// Opcional, até 20 caracteres: letras sem acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito; gravado como
-    /// informado (sem espaços externos), não é único. No PUT: omitido mantém; null ou "" remove.
+    /// Obrigatório quando ehCin é false ou omitido; opcional com ehCin true (a CIN usa só o CPF). Até 20 caracteres: letras sem acento,
+    /// dígitos, ponto, hífen, barra e espaço, com ao menos um dígito; gravado como informado (sem espaços externos), não é único. No PUT:
+    /// omitido mantém; null ou "" remove, mas não sem CIN (ver ehCin).
     /// </summary>
     public string? Rg { get => _rg; set { _rg = value; RgInformado = true; } }
 
@@ -72,6 +73,29 @@ public abstract class UsuarioConteudoRequest
     /// </summary>
     public string? DoencasAlergias { get => _doencasAlergias; set { _doencasAlergias = value; DoencasAlergiasInformado = true; } }
 
+    private bool? _ehCin;
+    private DateOnly? _dataExpiracao;
+    private EnderecoRequest? _endereco;
+
+    /// <summary>
+    /// true quando o documento de identidade do usuário é a Carteira de Identidade Nacional (CIN). No POST: omitido grava false. No PUT:
+    /// omitido mantém o valor atual (false é um valor informado, não uma omissão). null é recusado (400). Decide se o rg é obrigatório:
+    /// false exige rg; true dispensa (só o CPF é exigido). Cadastro antigo sem RG e sem CIN continua editável enquanto não enviar rg/ehCin.
+    /// </summary>
+    public bool? EhCin { get => _ehCin; set { _ehCin = value; EhCinInformado = true; } }
+
+    /// <summary>Opcional: data de validade do documento de identidade, yyyy-MM-dd; pode estar no passado (documento vencido). No PUT: omitida mantém; null remove.</summary>
+    public DateOnly? DataExpiracao { get => _dataExpiracao; set { _dataExpiracao = value; DataExpiracaoInformada = true; } }
+
+    /// <summary>
+    /// Opcional: endereço a partir do CEP. A API consulta o ViaCEP e grava os dados oficiais do CEP com número e complemento informados.
+    /// No PUT: omitido mantém o endereço; null (ou cep null/"") remove o endereço inteiro.
+    /// </summary>
+    public EnderecoRequest? Endereco { get => _endereco; set { _endereco = value; EnderecoInformado = true; } }
+
+    [JsonIgnore] public bool EhCinInformado { get; private set; }
+    [JsonIgnore] public bool DataExpiracaoInformada { get; private set; }
+    [JsonIgnore] public bool EnderecoInformado { get; private set; }
     [JsonIgnore] public bool CpfInformado { get; private set; }
     [JsonIgnore] public bool RgInformado { get; private set; }
     [JsonIgnore] public bool TipoSanguineoInformado { get; private set; }
@@ -86,6 +110,56 @@ public abstract class UsuarioConteudoRequest
     [JsonIgnore] public bool SolicitanteEhAdmin { get; set; }
 }
 
+/// <summary>
+/// Endereço do usuário. Só cep, numero e complemento vêm do cliente; logradouro, bairro, cidade, UF e códigos vêm do ViaCEP (consulte
+/// antes por GET /api/Cep/{cep} para exibir no formulário).
+/// </summary>
+public sealed class EnderecoRequest
+{
+    private string? _cep;
+    private string? _numero;
+    private string? _complemento;
+
+    /// <summary>
+    /// 8 dígitos, com ou sem hífen ("04382-160" ou "04382160"); obrigatório no POST quando endereco é enviado. No PUT: omitido mantém o
+    /// CEP atual; null ou "" remove o endereço inteiro. Um CEP diferente do atual é consultado no ViaCEP e substitui todos os dados do CEP.
+    /// </summary>
+    public string? Cep { get => _cep; set { _cep = value; CepInformado = true; } }
+
+    /// <summary>Opcional, até 20 caracteres (ex.: "123", "S/N", "12-A"). No PUT: omitido mantém, exceto quando o CEP muda (fica vazio); null ou "" remove.</summary>
+    public string? Numero { get => _numero; set { _numero = value; NumeroInformado = true; } }
+
+    /// <summary>Complemento informado pelo usuário (ex.: "apto 12"), opcional, até 100 caracteres; não se confunde com o complemento do CEP. Omissão como em numero.</summary>
+    public string? Complemento { get => _complemento; set { _complemento = value; ComplementoInformado = true; } }
+
+    [JsonIgnore] public bool CepInformado { get; private set; }
+    [JsonIgnore] public bool NumeroInformado { get; private set; }
+    [JsonIgnore] public bool ComplementoInformado { get; private set; }
+}
+
+/// <summary>Endereço gravado do usuário: dados do CEP (ViaCEP, no momento em que o CEP foi informado) com número e complemento do usuário.</summary>
+public sealed class EnderecoDto
+{
+    /// <summary>8 dígitos, sem hífen.</summary>
+    public required string Cep { get; set; }
+    public string? Logradouro { get; set; }
+    public string? Numero { get; set; }
+    /// <summary>Complemento informado pelo usuário.</summary>
+    public string? Complemento { get; set; }
+    /// <summary>Complemento do CEP devolvido pelo ViaCEP (ex.: "lado ímpar").</summary>
+    public string? ComplementoCep { get; set; }
+    public string? Unidade { get; set; }
+    public string? Bairro { get; set; }
+    public required string Localidade { get; set; }
+    public required string Uf { get; set; }
+    public string? Estado { get; set; }
+    public string? Regiao { get; set; }
+    public string? Ibge { get; set; }
+    public string? Gia { get; set; }
+    public string? Ddd { get; set; }
+    public string? Siafi { get; set; }
+}
+
 /// <summary>POST /api/Usuarios.</summary>
 public sealed class RegistrarUsuarioRequest : UsuarioConteudoRequest, IRequest<UsuarioListItemDto>
 {
@@ -95,7 +169,8 @@ public sealed class RegistrarUsuarioRequest : UsuarioConteudoRequest, IRequest<U
 
 /// <summary>
 /// PUT /api/Usuarios/{id}. nome, email e cargoId são sempre substituídos (obrigatórios); cpf, dataNascimento, telefone, rg,
-/// tipoSanguineo, doencasAlergias e os campos do responsável omitidos preservam o valor atual. Não altera senha, foto nem situação (ativo/inativo).
+/// tipoSanguineo, doencasAlergias, ehCin, dataExpiracao, endereco e os campos do responsável omitidos preservam o valor atual. Não altera
+/// senha, foto nem situação (ativo/inativo).
 /// </summary>
 public sealed class UpdateUsuarioRequest : UsuarioConteudoRequest, IRequest<UsuarioListItemDto>
 {

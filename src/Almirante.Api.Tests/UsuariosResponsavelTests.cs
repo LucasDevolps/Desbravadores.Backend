@@ -26,6 +26,7 @@ public sealed class UsuariosResponsavelTests(AlmiranteApiFactory factory) : ICla
             ["senha"] = "Forte-Senha-9x2k",
             ["cargoId"] = await CargoIdAsync(),
             ["cpf"] = TestHelpers.NovoCpf(),
+            ["rg"] = TestHelpers.RgFicticio,
         };
         foreach (var (campo, valor) in extras) corpo[campo] = valor;
         return await client.PostAsJsonAsync("/api/Usuarios", corpo);

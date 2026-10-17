@@ -362,6 +362,7 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`) |
 | `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API) |
 | `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto |
+| `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (ADM, DIR, DIRA, SEC, TES; nada é gravado) |
 | `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC, TES) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
@@ -379,14 +380,53 @@ mantém o valor atual, e `null` (ou `""` em `cpf`/`telefone`) o remove (exceto o
 exclusão lógica gravam o estado anterior completo, incluindo esses campos, em `_usuarios_hist`, pela trigger
 `TR_Usuarios_Historico`, na mesma transação.
 
-**RG, tipo sanguíneo e doenças/alergias.** Os três são opcionais (`null` quando não informados ou em cadastros antigos;
-nenhum valor padrão é inventado) e seguem a mesma regra de omissão/limpeza no `PUT`. `rg`: até 20 caracteres (letras sem
+**RG, tipo sanguíneo e doenças/alergias.** Tipo sanguíneo e doenças/alergias são opcionais, e o RG depende de `ehCin` (abaixo)
+(`null` quando não informados ou em cadastros antigos; nenhum valor padrão é inventado); seguem a mesma regra de omissão/limpeza
+no `PUT`. `rg`: até 20 caracteres (letras sem
 acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito), gravado como informado e não único.
 `tipoSanguineo`: `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+` ou `O-` (aceita minúsculas, grava em maiúsculas; o banco
 também recusa outro valor pela CHECK `CK_Usuarios_TipoSanguineo`). `doencasAlergias`: **um único texto livre** (um
 `textarea` no frontend, com quebras de linha) com doenças, alergias e cuidados de saúde, até 2000 caracteres na página
 1252 (acentos sim, emojis não); acima do limite é recusado com `400`, nunca truncado. São dados sensíveis: saem só em
 `/api/Usuarios` (mesma autorização do CRUD), nunca em `/api/Auth/Me`, e não são registrados em log.
+
+**Documento: CIN e validade (issue #131).** `ehCin` é `true` quando o documento de identidade do usuário é a Carteira de
+Identidade Nacional; omitido no `POST` grava `false`, e cadastros antigos ficam `false`. `dataExpiracao` é a data de
+validade desse documento (`yyyy-MM-dd`, opcional, `null` em cadastros antigos, pode estar no passado); nada bloqueia login
+por validade nem a liga a `ehCin`. No `PUT`, omitidos mantêm o valor gravado; `ehCin: false` é gravado (não é omissão) e
+`ehCin: null` é recusado com `400`; `dataExpiracao: null` remove a data.
+
+`ehCin` decide se o **RG é obrigatório**: a CIN usa o CPF como número, então com `ehCin: true` só o CPF é exigido e o `rg` é
+opcional (pode ser informado e continua gravado); com `ehCin: false` (ou omitido no `POST`) o `rg` é obrigatório (`400` em
+`errors["Rg"]`). No `PUT` a regra usa os valores efetivos (corpo ou gravados) e segue o padrão do CPF: com `ehCin` false, um RG
+gravado não pode ser removido, sair da CIN exige RG e quem informa `rg` ou `ehCin` no corpo precisa ter RG; um cadastro antigo
+sem RG e sem CIN que não envia esses campos continua editável.
+
+**Endereço (issue #131).** O cliente envia `endereco: { cep, numero, complemento }` e a API consulta o
+[ViaCEP](https://viacep.com.br) e grava cada campo em sua coluna (`Usuarios.Endereco*`, `varchar`): `cep` (8 dígitos, sem
+hífen, zeros à esquerda preservados), `logradouro`, `complementoCep` (o complemento do próprio CEP, ex.: "lado ímpar"),
+`unidade`, `bairro`, `localidade`, `uf`, `estado`, `regiao`, `ibge`, `gia`, `ddd` e `siafi`, junto de `numero` (até 20) e
+`complemento` (o do usuário, até 100). Campos que o ViaCEP devolve vazios ficam `null`; nenhum valor é inventado. O CEP é
+aceito com ou sem hífen (`04382-160` ou `04382160`); outro formato é `400` sem chamar o ViaCEP. A resposta de
+`/api/Usuarios` traz o objeto `endereco` (`null` sem endereço) e, como os dados de saúde, ele não sai em `/api/Auth/Me` nem
+é registrado em log (o cliente do ViaCEP não usa o log padrão do `HttpClient`, que gravaria a URL com o CEP). Para preencher o formulário antes de salvar, use `GET /api/Cep/{cep}` (mesmos campos do
+ViaCEP, com `complemento` = complemento do CEP).
+
+No `PUT`, `endereco` omitido mantém tudo; `null` (ou `cep` `null`/`""`) remove o endereço inteiro; dentro do objeto, `cep`,
+`numero` e `complemento` omitidos mantêm o valor gravado. Só um CEP **diferente** do gravado é consultado; aí todos os dados
+do CEP são substituídos e `numero`/`complemento` omitidos ficam vazios (eram do endereço anterior). CEP inexistente retorna
+`400` (`errors["Endereco.Cep"]`); ViaCEP fora do ar, lento ou com resposta fora do contrato (CEP trocado, campo longo
+demais, caracteres fora da página 1252, código não numérico) retorna `503` — em todos esses casos **nada é gravado** e o
+endereço anterior fica intacto. A consulta do `PUT` é feita antes da transação, sem segurar o lock da linha. A CHECK
+`CK_Usuarios_Endereco` garante no banco que sem CEP não há nenhum campo de endereço e que, com CEP, há 8 dígitos, cidade e UF.
+`ehCin`, `dataExpiracao` e todos os campos do endereço entram no estado anterior gravado em `_usuarios_hist` pela trigger
+`TR_Usuarios_Historico`, inclusive quando só eles mudam (`ehCin` fica `null` nas linhas de histórico anteriores à migration
+`AddUsuariosCinExpiracaoEndereco`).
+
+| Configuração (`ViaCep`) | Padrão | O que controla |
+| --- | --- | --- |
+| `BaseUrl` | `https://viacep.com.br/ws/` | endereço do serviço (só `https`, terminado em `/`) |
+| `TimeoutMs` | `5000` | prazo total de uma consulta (200 a 30000), com uma nova tentativa rápida em falha transitória (5xx, 408, 429, rede) |
 
 **Responsável (issues #112 e #131).** `responsavelNome`, `responsavelEmail`, `responsavelCpf` e `responsavelTelefone`
 seguem as mesmas regras dos campos equivalentes do usuário (o CPF do responsável não é único e não pode ser igual ao

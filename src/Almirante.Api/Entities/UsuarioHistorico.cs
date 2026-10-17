@@ -25,6 +25,26 @@ public sealed class UsuarioHistorico
     public string? TipoSanguineo { get; set; }
     public string? DoencasAlergias { get; set; }
 
+    /// <summary>null nas linhas gravadas antes de o campo existir.</summary>
+    public bool? EhCin { get; set; }
+    public DateOnly? DataExpiracao { get; set; }
+
+    public string? EnderecoCep { get; set; }
+    public string? EnderecoLogradouro { get; set; }
+    public string? EnderecoNumero { get; set; }
+    public string? EnderecoComplemento { get; set; }
+    public string? EnderecoComplementoCep { get; set; }
+    public string? EnderecoUnidade { get; set; }
+    public string? EnderecoBairro { get; set; }
+    public string? EnderecoLocalidade { get; set; }
+    public string? EnderecoUf { get; set; }
+    public string? EnderecoEstado { get; set; }
+    public string? EnderecoRegiao { get; set; }
+    public string? EnderecoIbge { get; set; }
+    public string? EnderecoGia { get; set; }
+    public string? EnderecoDdd { get; set; }
+    public string? EnderecoSiafi { get; set; }
+
     public Guid CargoId { get; set; }
     public required string CargoNome { get; set; }
     public bool Ativo { get; set; }

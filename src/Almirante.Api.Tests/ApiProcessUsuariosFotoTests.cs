@@ -42,7 +42,7 @@ public class ApiProcessUsuariosFotoTests
         object Corpo(string nascimento, object? responsavel = null) => new
         {
             nome = $"E2E {Guid.NewGuid():N}", email = $"e2e-{Guid.NewGuid():N}@local.dev", senha = $"Forte-{Guid.NewGuid():N}", cargoId = cargoDs,
-            cpf = TestHelpers.MascararCpf(TestHelpers.NovoCpf()), telefone = "(11) 98765-4321", dataNascimento = nascimento,
+            cpf = TestHelpers.MascararCpf(TestHelpers.NovoCpf()), rg = TestHelpers.RgFicticio, telefone = "(11) 98765-4321", dataNascimento = nascimento,
             responsavelNome = responsavel is null ? null : "Responsável E2E", responsavelEmail = responsavel is null ? null : "responsavel.e2e@local.dev",
         };
         var menor = hoje.AddYears(-11).ToString("yyyy-MM-dd");
