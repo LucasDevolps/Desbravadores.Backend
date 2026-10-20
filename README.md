@@ -19,6 +19,8 @@ O backend está em fase de **MVP funcional** e possui:
 - sessões persistidas, refresh rotativo e logout com revogação efetiva;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
+- registro e correção do pagamento efetivo (data e valor liquidados) de cada lançamento;
+- dashboard administrativo com saldo realizado, entradas, saídas, desbravadores ativos e próximos eventos;
 - lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
   período, resumo financeiro (provisório) e exclusão lógica auditada por trigger;
 - paginação, busca e filtros na listagem de lançamentos;
@@ -483,7 +485,9 @@ O agregado financeiro possui um único fluxo de criação, protegido pelas roles
 | `GET` | `/api/Lancamentos` | Lista somente lançamentos ativos, com paginação e filtros |
 | `GET` | `/api/Lancamentos/{id}` | Consulta um lançamento ativo; destino do `Location` da criação individual |
 | `POST` | `/api/Lancamentos/Registrar` | Registra para um membro ou, atomicamente, para todos |
-| `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos |
+| `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos (não marca como `Pago`) |
+| `POST` | `/api/Lancamentos/{id}/Pagamento` | Registra o pagamento efetivo (data e valor liquidados) |
+| `PUT` | `/api/Lancamentos/{id}/Pagamento` | Corrige data e/ou valor de um pagamento já registrado |
 | `DELETE` | `/api/Lancamentos/{id}` | Exclusão lógica auditada, com motivo |
 
 O contrato canônico de criação é:
@@ -532,6 +536,56 @@ usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no J
 `LancamentosService` coordena consultas e alterações individuais. `LancamentoGeralService`
 cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
 contexto SQL de auditoria. `LancamentoMapping` centraliza a projeção das respostas.
+
+### Pagamentos (issue #129)
+
+Um lançamento só representa dinheiro efetivamente movimentado depois que o pagamento é
+**registrado** com a data e o valor reais. `Valor` continua sendo o valor previsto (original).
+
+| Campo da resposta | Significado |
+|---|---|
+| `dataPagamento` | Data efetiva da liquidação (`yyyy-MM-dd`); `null` sem pagamento registrado |
+| `valorPago` | Valor efetivamente pago/recebido; `null` sem pagamento registrado; nunca presumido a partir de `valor` |
+| `valorRestante` | Calculado, não persistido: `valor − valorPago` com pagamento; `valor` sem pagamento; `null` em "Pago" histórico sem dados |
+| `pagamentoRegistradoPorUsuarioId` / `pagamentoRegistradoEmUtc` | Quem registrou ou corrigiu por último o pagamento, e quando (UTC) |
+
+`POST /api/Lancamentos/{id}/Pagamento` registra e `PUT /api/Lancamentos/{id}/Pagamento` corrige,
+ambos com o corpo:
+
+```json
+{ "dataPagamento": "2026-10-15", "valorPago": 50.00 }
+```
+
+Regras:
+
+- `dataPagamento` é obrigatória e não pode ser futura (hoje no fuso do clube, `Clube:FusoHorario`);
+  pode ser diferente do vencimento.
+- `valorPago` é obrigatório, maior que zero, com até 2 casas decimais e **no máximo** o `valor` do
+  lançamento. Um valor menor quita o lançamento com abatimento (`valorRestante` mostra a diferença);
+  **não há pagamento parcial** com saldo em aberto.
+- O registro marca o lançamento como `Pago` e grava o responsável a partir do token (nunca do corpo),
+  além de `DataAtualizacao`/`AtualizadoPorUsuarioId`.
+- `POST` aceita lançamentos `Pendente`, `Atrasado` ou "Pago" histórico sem dados (regularização).
+  Repetir o `POST` depois de registrado retorna `409` (use o `PUT`); `PUT` sem pagamento registrado
+  também retorna `409`.
+- `PUT /api/Lancamentos/{id}` não marca mais como `Pago` (`409` orientando o endpoint dedicado). Em
+  lançamento com pagamento registrado, ele não altera `status`, `valor` nem `tipoFluxo` (`409`);
+  descrição, finalidade, categoria e vencimento continuam editáveis. Estorno (desfazer um pagamento)
+  não existe nesta versão; a exclusão lógica continua disponível e copia os dados de pagamento para
+  `lancamentos_deletados`.
+- Concorrência: `Valor`, `Status`, `DataPagamento` e `ValorPago` são tokens de concorrência do EF;
+  duas confirmações simultâneas resultam em um `200` e `409` para as demais, nunca em pagamento
+  duplicado. Lançamentos de evento seguem a mesma ordem de locks de `/api/Eventos` (linha do
+  evento antes do lançamento), com retentativa segura.
+- O banco garante a coerência com `CK_Lancamentos_Pagamento`: ou nenhum campo de pagamento, ou
+  status `Pago` com data, `0 < ValorPago <= Valor` e responsável.
+- Respostas: `200` com o lançamento, `400` validação, `401`/`403` autorização, `404` inexistente ou
+  excluído, `409` conflito.
+
+**Lançamentos antigos.** A migration `AddLancamentosPagamento` não inventa datas nem valores: os
+lançamentos já marcados como `Pago` ficam com `dataPagamento`/`valorPago` nulos, continuam `Pago` e
+**não entram no dashboard** até serem regularizados com `POST /api/Lancamentos/{id}/Pagamento`
+informando a data e o valor reais. `DataAtualizacao` nunca é usada como data de pagamento.
 
 ## Eventos
 
@@ -635,8 +689,9 @@ motivo e horário UTC do banco. A aplicação **nunca** insere nessa tabela (o u
 limpo no `finally` na mesma conexão física e, se a limpeza falhar, o pool dessa conexão é descartado.
 
 **Lançamentos vinculados a evento** (`EventoId != null`): `PUT /api/Lancamentos/{id}` só aceita mudar
-`status`/`descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
-`409` orientando o uso de `/api/Eventos`. As exceções de eventos (finalidade nula, valor zero, data
+`status` (exceto para `Pago`) e `descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
+`409` orientando o uso de `/api/Eventos`. O pagamento é registrado por `POST /api/Lancamentos/{id}/Pagamento`,
+que também atualiza a linha do evento (muda a `versao`). As exceções de eventos (finalidade nula, valor zero, data
 passada no mês) **não** se aplicam a `POST /api/Lancamentos/Registrar`. `Lancamento.Finalidade` e
 `lancamentos_deletados.Finalidade` agora aceitam `NULL`; ambos ganharam `EventoId`.
 
@@ -653,9 +708,61 @@ variável de ambiente, porta ou credencial nova.
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
 retentativas da mesma tentativa; aplique `dataMinimaCadastro` no seletor de data do cadastro.
 
+## Dashboard
+
+`GET /api/Dashboard[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` devolve, numa resposta só, os
+indicadores do clube. Mesma autorização dos lançamentos (policy `GestaoFinanceira`: `ADM`, `DIR`,
+`DIRA`, `SEC`, `TES`): sem token `401`, outro cargo `403`, filtros inválidos `400`.
+
+```json
+{
+  "periodo": { "dataInicial": "2026-10-01", "dataFinal": "2026-10-31" },
+  "financeiro": { "saldo": 1500.00, "entradas": 2500.00, "saidas": 1000.00 },
+  "desbravadores": { "quantidadeAtivos": 45 },
+  "proximosEventos": [
+    {
+      "eventoGrupoId": "6f0c…",
+      "eventoIds": ["6f0c…", "a91d…"],
+      "data": "2026-11-10",
+      "local": "Acampamento",
+      "quantidadeParticipantes": 30
+    }
+  ]
+}
+```
+
+**Período.** Sem parâmetros: o mês atual no fuso do clube (`Clube:FusoHorario`, a mesma referência
+de `DataCivil`). Com filtro, `dataInicial` e `dataFinal` são obrigatórias juntas, estritamente no
+formato `yyyy-MM-dd`, inclusivas, com `dataInicial <= dataFinal` e no máximo 366 dias (mesmo limite
+de `/api/Eventos`). O período afeta **somente** o financeiro.
+
+**Financeiro.** Soma, no banco, o `valorPago` dos lançamentos ativos com status `Pago` e
+`dataPagamento` dentro do período: `entradas` (`TipoFluxo = Entrada`), `saidas` (`Saida`) e
+`saldo = entradas − saidas`. Não entram pendentes, atrasados, "Pago" históricos sem dados de
+pagamento, lançamentos excluídos logicamente nem pagamentos fora do período. O valor previsto
+(`valor`) nunca é somado. Valores em `decimal(18,2)`, sem arredondamento. Índice filtrado
+`IX_Lancamentos_DataPagamento` atende a consulta.
+
+**Desbravadores.** Total atual de usuários **ativos** com o cargo Desbravador (`Cargos.Role = 'DS'`).
+Diretoria (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`), demais cargos (conselheiros, instrutores, cargos de
+unidade etc.) e usuários inativos não contam. Não depende do período.
+
+**Próximos eventos.** Até 5 passeios com data igual ou posterior a hoje (fuso do clube), em ordem de
+data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoReferenciaId`) aparecem
+uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
+participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
+Não depende do período.
+
 ## Banco de dados e migrations
 
-Migrations são aplicadas incrementalmente no startup. `UnifyLancamentosFlow` renomeia `Tipo` para
+Migrations são aplicadas incrementalmente no startup.
+
+`AddLancamentosPagamento` (issue #129) adiciona a `Lancamentos` e `lancamentos_deletados` as colunas
+nulas `DataPagamento` (`date`), `ValorPago` (`decimal(18,2)`), `PagamentoRegistradoPorUsuarioId`
+(FK restritiva para `Usuarios` em `Lancamentos`) e `PagamentoRegistradoEmUtc`, cria
+`CK_Lancamentos_Pagamento` e o índice filtrado `IX_Lancamentos_DataPagamento` e recria
+`TR_Lancamentos_AuditoriaExclusaoLogica` para copiar os novos campos. Nenhuma linha existente é
+alterada; `Down` remove as colunas e restaura o trigger anterior. Nenhuma variável de ambiente nova. `UnifyLancamentosFlow` renomeia `Tipo` para
 `Finalidade`, remove `MembroNome`/`Moeda`, cria a FK restritiva para `Usuarios`, atualiza índices e
 o trigger de auditoria sem apagar o histórico de migrations.
 

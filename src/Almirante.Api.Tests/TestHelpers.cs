@@ -14,6 +14,23 @@ public static class TestHelpers
 {
     public const string SenhaPadraoTeste = "senha123";
 
+    /// <summary>Ontem em UTC: nunca é futura no fuso do clube, qualquer que seja a hora da execução.</summary>
+    public static DateOnly DataPagamentoPassada => DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+
+    public static Task<HttpResponseMessage> RegistrarPagamentoAsync(HttpClient client, Guid lancamentoId, decimal valorPago, DateOnly? dataPagamento = null) =>
+        client.PostAsJsonAsync($"/api/Lancamentos/{lancamentoId}/Pagamento",
+            new { dataPagamento = (dataPagamento ?? DataPagamentoPassada).ToString("yyyy-MM-dd"), valorPago });
+
+    /// <summary>Registra o pagamento integral (valorPago = valor atual); lançamento inexistente/inativo chega à API e recebe 404.</summary>
+    public static async Task<HttpResponseMessage> PagarAsync(HttpClient client, Guid lancamentoId)
+    {
+        using var atual = await client.GetAsync($"/api/Lancamentos/{lancamentoId}");
+        var valor = atual.IsSuccessStatusCode
+            ? (await atual.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("valor").GetDecimal()
+            : 0.01m;
+        return await RegistrarPagamentoAsync(client, lancamentoId, valor);
+    }
+
     public static async Task<string> LoginAsAdminAsync(HttpClient client)
     {
         await AddCsrfAsync(client);

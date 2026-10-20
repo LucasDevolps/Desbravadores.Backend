@@ -379,6 +379,10 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateOnly?>("DataPagamento")
+                        .IsConcurrencyToken()
+                        .HasColumnType("date");
+
                     b.Property<string>("Descricao")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
@@ -396,13 +400,25 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("PagamentoRegistradoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("PagamentoRegistradoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("Status")
+                        .IsConcurrencyToken()
                         .HasColumnType("int");
 
                     b.Property<int>("TipoFluxo")
                         .HasColumnType("int");
 
                     b.Property<decimal>("Valor")
+                        .IsConcurrencyToken()
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("ValorPago")
+                        .IsConcurrencyToken()
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateOnly>("Vencimento")
@@ -414,6 +430,11 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("AtualizadoPorUsuarioId");
 
+                    b.HasIndex("DataPagamento")
+                        .HasFilter("[DataPagamento] IS NOT NULL");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("DataPagamento"), new[] { "TipoFluxo", "ValorPago", "Status", "Ativo" });
+
                     b.HasIndex("EventoId");
 
                     b.HasIndex("Finalidade");
@@ -422,6 +443,8 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("OperacaoId");
 
+                    b.HasIndex("PagamentoRegistradoPorUsuarioId");
+
                     b.HasIndex("Status");
 
                     b.HasIndex("Vencimento");
@@ -429,6 +452,8 @@ namespace Almirante.Api.Data.Migrations
                     b.ToTable("Lancamentos", null, t =>
                         {
                             t.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_Lancamentos_Pagamento", "([DataPagamento] IS NULL AND [ValorPago] IS NULL AND [PagamentoRegistradoPorUsuarioId] IS NULL AND [PagamentoRegistradoEmUtc] IS NULL) OR ([Status] = 1 AND [DataPagamento] IS NOT NULL AND [ValorPago] > 0 AND [ValorPago] <= [Valor] AND [PagamentoRegistradoPorUsuarioId] IS NOT NULL AND [PagamentoRegistradoEmUtc] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
 
@@ -449,6 +474,9 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<DateTime>("DataCriacaoOriginal")
                         .HasColumnType("datetime2");
+
+                    b.Property<DateOnly?>("DataPagamento")
+                        .HasColumnType("date");
 
                     b.Property<Guid?>("EventoId")
                         .HasColumnType("uniqueidentifier");
@@ -479,6 +507,12 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("PagamentoRegistradoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("PagamentoRegistradoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
@@ -489,6 +523,9 @@ namespace Almirante.Api.Data.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<decimal>("Valor")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("ValorPago")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateOnly>("Vencimento")
@@ -1126,6 +1163,11 @@ namespace Almirante.Api.Data.Migrations
                     b.HasOne("Almirante.Api.Entities.Usuario", "Membro")
                         .WithMany("Lancamentos")
                         .HasForeignKey("MembroId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("PagamentoRegistradoPorUsuarioId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Membro");

@@ -87,7 +87,7 @@ public sealed class LancamentosAuditMigrationTests
         var (client, atorId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
 
         var forjado = Guid.NewGuid();
-        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{lancamentoId}", new { status = "Pago", usuarioResponsavelId = forjado });
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{lancamentoId}", new { status = "Atrasado", usuarioResponsavelId = forjado });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var atualizado = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.AsNoTracking().SingleAsync(l => l.Id == lancamentoId));

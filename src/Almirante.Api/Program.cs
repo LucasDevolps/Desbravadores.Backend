@@ -99,6 +99,7 @@ builder.Services.AddScoped<LancamentoExclusaoService>();
 builder.Services.AddSingleton(new EventosLockOptions());
 builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
+builder.Services.AddScoped<DashboardService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
 builder.Services.AddOptions<ClubeOptions>().Bind(builder.Configuration.GetSection(ClubeOptions.SectionName)).ValidateOnStart();

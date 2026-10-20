@@ -15,6 +15,17 @@ public sealed class Lancamento
     public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
     public DateTime? DataAtualizacao { get; set; }
     public Guid? AtualizadoPorUsuarioId { get; set; }
+
+    /// <summary>Data efetiva da liquidação. Nula enquanto nenhum pagamento foi registrado (inclusive nos "Pago" históricos).</summary>
+    public DateOnly? DataPagamento { get; set; }
+
+    /// <summary>Valor efetivamente pago ou recebido; nunca presumido a partir de <see cref="Valor"/>.</summary>
+    public decimal? ValorPago { get; set; }
+
+    /// <summary>Usuário que registrou ou corrigiu por último os dados de pagamento.</summary>
+    public Guid? PagamentoRegistradoPorUsuarioId { get; set; }
+    public DateTime? PagamentoRegistradoEmUtc { get; set; }
+
     public bool Ativo { get; set; } = true;
     public Guid? OperacaoId { get; set; }
 

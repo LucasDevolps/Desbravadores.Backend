@@ -84,7 +84,7 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
         var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
 
-        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago" });
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Atrasado" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var entity = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.SingleAsync(l => l.Id == created.Id));
@@ -100,7 +100,7 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         var created = await (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).Content.ReadFromJsonAsync<LancamentoDto>();
 
         var forjado = Guid.NewGuid();
-        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago", usuarioResponsavelId = forjado });
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Atrasado", usuarioResponsavelId = forjado });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var entity = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.SingleAsync(l => l.Id == created.Id));
@@ -112,7 +112,7 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
     public async Task Update_RetornaNotFound_ParaLancamentoInexistente()
     {
         var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
-        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{Guid.NewGuid()}", new { status = "Pago" });
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{Guid.NewGuid()}", new { status = "Atrasado" });
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
@@ -134,7 +134,7 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         var list = await (await client.GetAsync("/api/Lancamentos?search=Historico")).Content.ReadFromJsonAsync<LancamentosResponse>();
         Assert.Single(list!.Items);
 
-        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Pago" });
+        var response = await client.PutAsJsonAsync($"/api/Lancamentos/{created!.Id}", new { status = "Atrasado" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var entityAtualizado = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.SingleAsync(l => l.Id == created.Id));
         Assert.Equal(usuarioId, entityAtualizado.AtualizadoPorUsuarioId);
