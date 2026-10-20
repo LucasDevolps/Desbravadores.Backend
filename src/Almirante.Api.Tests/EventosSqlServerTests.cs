@@ -71,7 +71,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
     private async Task PagarAsync(Guid lancamentoId, string status = "Pago")
     {
-        var response = await Client.PutAsJsonAsync($"/api/Lancamentos/{lancamentoId}", new { status });
+        var response = await EventosSqlSupport.PagarAsync(Client, lancamentoId, status);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -911,7 +911,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             var dto = await CriarAsync(m);
             var lancamento = dto.Lancamentos[0].Id;
 
-            var pagar = Client.PutAsJsonAsync($"/api/Lancamentos/{lancamento}", new { status = "Pago" });
+            var pagar = TestHelpers.PagarAsync(Client, lancamento);
             var excluir = EventosTestKit.DeleteAsync(Client, dto.Id, "corrida", dto.Versao);
             await Task.WhenAll(pagar, excluir);
 
@@ -948,7 +948,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             var dto = await CriarAsync(m);
             var lancamento = dto.Lancamentos[0].Id;
 
-            var pagar = Client.PutAsJsonAsync($"/api/Lancamentos/{lancamento}", new { status = "Pago" });
+            var pagar = TestHelpers.PagarAsync(Client, lancamento);
             var editar = EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 77m));
             await Task.WhenAll(pagar, editar);
 
@@ -991,10 +991,10 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal((20m, true, dto.DataEvento, CategoriaLancamento.Evento, (string?)null), (lanc.Valor, lanc.Ativo, lanc.Vencimento, lanc.Categoria, lanc.Finalidade));
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.LancamentoId == id)));
 
-        var status = await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status = "Pago", valor = 20m });
+        var status = await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status = "Atrasado", valor = 20m });
         Assert.Equal(HttpStatusCode.OK, status.StatusCode);
         var lido = await status.Content.ReadFromJsonAsync<LancamentoDto>();
-        Assert.Equal((StatusLancamento.Pago, dto.Id, (string?)null), (lido!.Status, lido.EventoId, lido.Finalidade));
+        Assert.Equal((StatusLancamento.Atrasado, dto.Id, (string?)null), (lido!.Status, lido.EventoId, lido.Finalidade));
     }
 
     [Fact]
@@ -1262,7 +1262,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             var dto = await CriarAsync(m);
             var removido = dto.Lancamentos.Single(l => l.MembroId == m[1]).Id;
 
-            var pagar = Client.PutAsJsonAsync($"/api/Lancamentos/{removido}", new { status = "Pago" });
+            var pagar = TestHelpers.PagarAsync(Client, removido);
             var remover = EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m[0], motivo: "corrida"));
             await Task.WhenAll(pagar, remover);
 

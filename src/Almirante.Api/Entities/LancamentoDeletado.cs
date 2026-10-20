@@ -23,4 +23,8 @@ public sealed class LancamentoDeletado
     public Guid? OperacaoId { get; set; }
     public DateTime DataCriacaoOriginal { get; set; }
     public Guid? EventoId { get; set; }
+    public DateOnly? DataPagamento { get; set; }
+    public decimal? ValorPago { get; set; }
+    public Guid? PagamentoRegistradoPorUsuarioId { get; set; }
+    public DateTime? PagamentoRegistradoEmUtc { get; set; }
 }

@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Linq.Expressions;
 using Almirante.Api.Data;
 using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
@@ -79,20 +81,77 @@ public sealed class LancamentosService(
             ExigirSemAlteracaoDeEvento(entity, request);
         }
 
+        ExigirSemAlteracaoDePagamento(entity, request);
+
         var statusMudou = request.Status.HasValue && request.Status.Value != entity.Status;
         if (entity.EventoId is { } eventoId && statusMudou && db.Database.IsRelational())
         {
-            return await AtualizarStatusDeEventoAsync(id, eventoId, request, ct);
+            var status = request.Status!.Value;
+            return await AtualizarComTravaDoEventoAsync(id, eventoId, request.UsuarioResponsavelId, (lancamento, _) =>
+            {
+                ExigirSemAlteracaoDeEvento(lancamento, request);
+                ExigirSemAlteracaoDePagamento(lancamento, request);
+                AplicarAlteracoes(lancamento, request);
+            }, l => l.Status == status, ct);
         }
 
         AplicarAlteracoes(entity, request);
         entity.DataAtualizacao = clock.GetUtcNow().UtcDateTime;
         entity.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
-        await db.SaveChangesAsync(ct);
+        await SalvarAsync(ct);
         return LancamentoMapping.ToDto(entity);
     }
 
-    private async Task<LancamentoDto> AtualizarStatusDeEventoAsync(Guid lancamentoId, Guid eventoId, UpdateLancamentoRequest request, CancellationToken ct)
+    public Task<LancamentoDto?> RegistrarPagamentoAsync(RegistrarPagamentoRequest request, CancellationToken ct) =>
+        AplicarPagamentoAsync(request, registro: true, ct);
+
+    public Task<LancamentoDto?> AtualizarPagamentoAsync(AtualizarPagamentoRequest request, CancellationToken ct) =>
+        AplicarPagamentoAsync(request, registro: false, ct);
+
+    private async Task<LancamentoDto?> AplicarPagamentoAsync(PagamentoLancamentoRequest request, bool registro, CancellationToken ct)
+    {
+        var entity = await db.Lancamentos.Include(l => l.Membro).SingleOrDefaultAsync(l => l.Id == request.Id && l.Ativo, ct);
+        if (entity is null)
+        {
+            return null;
+        }
+
+        var dataPagamento = request.DataPagamento!.Value;
+        var valorPago = request.ValorPago!.Value;
+        var usuarioId = request.UsuarioResponsavelId;
+        ValidarPagamento(entity, valorPago, registro);
+
+        void Aplicar(Lancamento lancamento, DateTime agora)
+        {
+            ValidarPagamento(lancamento, valorPago, registro);
+            lancamento.Status = StatusLancamento.Pago;
+            lancamento.DataPagamento = dataPagamento;
+            lancamento.ValorPago = valorPago;
+            lancamento.PagamentoRegistradoPorUsuarioId = usuarioId;
+            lancamento.PagamentoRegistradoEmUtc = agora;
+        }
+
+        if (entity.EventoId is { } eventoId && db.Database.IsRelational())
+        {
+            return await AtualizarComTravaDoEventoAsync(entity.Id, eventoId, usuarioId, Aplicar,
+                l => l.Status == StatusLancamento.Pago && l.DataPagamento == dataPagamento && l.ValorPago == valorPago
+                    && l.PagamentoRegistradoPorUsuarioId == usuarioId, ct);
+        }
+
+        var agora = clock.GetUtcNow().UtcDateTime;
+        Aplicar(entity, agora);
+        entity.DataAtualizacao = agora;
+        entity.AtualizadoPorUsuarioId = usuarioId;
+        await SalvarAsync(ct);
+        return LancamentoMapping.ToDto(entity);
+    }
+
+    /// <summary>
+    /// Altera um lançamento de evento depois de travar a linha do evento (mesma ordem de locks de /api/Eventos),
+    /// com retentativa segura: se o commit ficou incerto, devolve o estado gravado em vez de repetir.
+    /// </summary>
+    private async Task<LancamentoDto> AtualizarComTravaDoEventoAsync(Guid lancamentoId, Guid eventoId, Guid usuarioId,
+        Action<Lancamento, DateTime> alterar, Expression<Func<Lancamento, bool>> jaEfetivado, CancellationToken ct)
     {
         var agora = clock.GetUtcNow().UtcDateTime;
         var commitIncerto = false;
@@ -104,10 +163,14 @@ public sealed class LancamentosService(
 
             if (commitIncerto)
             {
-                var efetivado = await LerSeEfetivadoAsync(lancamentoId, eventoId, request, agora, ct);
+                var efetivado = await db.Lancamentos.AsNoTracking().Include(l => l.Membro)
+                    .Where(l => l.Id == lancamentoId && l.EventoId == eventoId && l.Ativo
+                        && l.DataAtualizacao == agora && l.AtualizadoPorUsuarioId == usuarioId)
+                    .Where(jaEfetivado)
+                    .SingleOrDefaultAsync(ct);
                 if (efetivado is not null)
                 {
-                    return efetivado;
+                    return LancamentoMapping.ToDto(efetivado);
                 }
 
                 commitIncerto = false;
@@ -129,11 +192,10 @@ public sealed class LancamentosService(
                 throw ApiProblemException.NotFound("Lançamento não encontrado.");
             }
 
-            ExigirSemAlteracaoDeEvento(entity, request);
-            AplicarAlteracoes(entity, request);
+            alterar(entity, agora);
             entity.DataAtualizacao = agora;
-            entity.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
-            await db.SaveChangesAsync(ct);
+            entity.AtualizadoPorUsuarioId = usuarioId;
+            await SalvarAsync(ct);
 
             var dto = LancamentoMapping.ToDto(entity);
             commitIncerto = true;
@@ -143,14 +205,59 @@ public sealed class LancamentosService(
         });
     }
 
-    private async Task<LancamentoDto?> LerSeEfetivadoAsync(Guid lancamentoId, Guid eventoId, UpdateLancamentoRequest request, DateTime agora, CancellationToken ct)
+    private async Task SalvarAsync(CancellationToken ct)
     {
-        var status = request.Status!.Value;
-        var entity = await db.Lancamentos.AsNoTracking().Include(l => l.Membro)
-            .SingleOrDefaultAsync(l => l.Id == lancamentoId && l.EventoId == eventoId && l.Ativo && l.Status == status
-                && l.DataAtualizacao == agora && l.AtualizadoPorUsuarioId == request.UsuarioResponsavelId, ct);
-        return entity is null ? null : LancamentoMapping.ToDto(entity);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw ApiProblemException.Conflict("Lançamento alterado por outra operação.",
+                "Status, valor ou pagamento deste lançamento mudaram durante a requisição. Consulte o lançamento e tente novamente.");
+        }
     }
+
+    private static void ValidarPagamento(Lancamento lancamento, decimal valorPago, bool registro)
+    {
+        if (registro && lancamento.DataPagamento is not null)
+        {
+            throw ApiProblemException.Conflict("Pagamento já registrado.",
+                "Este lançamento já possui pagamento registrado. Para corrigir data ou valor, use PUT /api/Lancamentos/{id}/Pagamento.");
+        }
+
+        if (!registro && lancamento.DataPagamento is null)
+        {
+            throw ApiProblemException.Conflict("Pagamento não registrado.",
+                "Este lançamento ainda não possui pagamento registrado. Use POST /api/Lancamentos/{id}/Pagamento.");
+        }
+
+        if (valorPago > lancamento.Valor)
+        {
+            throw ApiProblemException.Invalid("valorPago",
+                $"valorPago não pode ser maior que o valor do lançamento ({lancamento.Valor.ToString("F2", CultureInfo.InvariantCulture)}).");
+        }
+    }
+
+    private static void ExigirSemAlteracaoDePagamento(Lancamento entity, UpdateLancamentoRequest request)
+    {
+        var statusMudou = request.Status.HasValue && request.Status.Value != entity.Status;
+        if (statusMudou && request.Status!.Value == StatusLancamento.Pago)
+        {
+            throw ApiProblemException.Conflict("Pagamento deve ser registrado pelo endpoint dedicado.",
+                "Para marcar como Pago, use POST /api/Lancamentos/{id}/Pagamento informando dataPagamento e valorPago.");
+        }
+
+        var alteraPagamento = statusMudou
+            || (request.Valor.HasValue && request.Valor.Value != entity.Valor)
+            || (request.TipoFluxo.HasValue && request.TipoFluxo.Value != entity.TipoFluxo);
+        if (entity.DataPagamento is not null && alteraPagamento)
+        {
+            throw ApiProblemException.Conflict("Lançamento com pagamento registrado.",
+                "Status, valor e tipo de fluxo de um lançamento com pagamento registrado não mudam por este endpoint. Para corrigir o pagamento, use PUT /api/Lancamentos/{id}/Pagamento.");
+        }
+    }
+
 
     private static void ExigirSemAlteracaoDeEvento(Lancamento entity, UpdateLancamentoRequest request)
     {

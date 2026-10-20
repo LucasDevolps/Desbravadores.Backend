@@ -180,8 +180,9 @@ public static class EventosSqlSupport
         throw new TimeoutException("Nenhuma requisição ficou esperando o lock do passeio.");
     }
 
-    public static Task<HttpResponseMessage> PagarAsync(HttpClient client, Guid lancamentoId, string status = "Pago") =>
-        client.PutAsJsonAsync($"/api/Lancamentos/{lancamentoId}", new { status });
+    public static Task<HttpResponseMessage> PagarAsync(HttpClient client, Guid lancamentoId, string status = "Pago") => status == "Pago"
+        ? TestHelpers.PagarAsync(client, lancamentoId)
+        : client.PutAsJsonAsync($"/api/Lancamentos/{lancamentoId}", new { status });
 
     public static SqlServerApiFactory FabricaComRetry(Action<DbContextOptionsBuilder>? configureDb = null, Action<IServiceCollection>? services = null,
         IDictionary<string, string?>? overrides = null) =>

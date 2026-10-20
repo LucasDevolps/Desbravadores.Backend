@@ -82,7 +82,7 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
         Assert.Equal(1, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
 
         var repetido = await EventosSqlSupport.PagarAsync(_client, alvo);
-        Assert.Equal(HttpStatusCode.OK, repetido.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, repetido.StatusCode);
         Assert.Equal(1, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", alvo)));
     }
 

@@ -39,6 +39,15 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
         " OR ([EnderecoCep] IS NOT NULL AND DATALENGTH([EnderecoCep]) = 8 AND [EnderecoCep] COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9]%'" +
         " AND [EnderecoLocalidade] IS NOT NULL AND [EnderecoUf] IS NOT NULL AND [EnderecoUf] COLLATE Latin1_General_BIN2 LIKE '[A-Z][A-Z]')";
 
+    /// <summary>
+    /// Sem pagamento registrado, nenhum campo de pagamento (vale para os "Pago" históricos);
+    /// com pagamento, status Pago, data, 0 &lt; ValorPago &lt;= Valor e o responsável pelo registro.
+    /// </summary>
+    public const string CheckPagamento =
+        "([DataPagamento] IS NULL AND [ValorPago] IS NULL AND [PagamentoRegistradoPorUsuarioId] IS NULL AND [PagamentoRegistradoEmUtc] IS NULL)" +
+        " OR ([Status] = 1 AND [DataPagamento] IS NOT NULL AND [ValorPago] > 0 AND [ValorPago] <= [Valor]" +
+        " AND [PagamentoRegistradoPorUsuarioId] IS NOT NULL AND [PagamentoRegistradoEmUtc] IS NOT NULL)";
+
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
     public DbSet<Cargo> Cargos => Set<Cargo>();
@@ -131,15 +140,22 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
                 table.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
                 table.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+                table.HasCheckConstraint("CK_Lancamentos_Pagamento", CheckPagamento);
             });
             entity.HasKey(l => l.Id);
             entity.Property(l => l.Finalidade).HasMaxLength(50);
             entity.Property(l => l.Descricao).HasMaxLength(500);
             entity.Property(l => l.Categoria).HasConversion<int>().IsRequired();
             entity.Property(l => l.TipoFluxo).HasConversion<int>().IsRequired();
-            entity.Property(l => l.Valor).HasColumnType("decimal(18,2)");
-            entity.Property(l => l.Status).HasConversion<int>().IsRequired();
+            entity.Property(l => l.Valor).HasColumnType("decimal(18,2)").IsConcurrencyToken();
+            entity.Property(l => l.Status).HasConversion<int>().IsRequired().IsConcurrencyToken();
             entity.Property(l => l.Ativo).IsRequired();
+            entity.Property(l => l.DataPagamento).HasColumnType("date").IsConcurrencyToken();
+            entity.Property(l => l.ValorPago).HasColumnType("decimal(18,2)").IsConcurrencyToken();
+
+            entity.HasIndex(l => l.DataPagamento)
+                .HasFilter("[DataPagamento] IS NOT NULL")
+                .IncludeProperties(l => new { l.TipoFluxo, l.ValorPago, l.Status, l.Ativo });
 
             entity.HasIndex(l => l.Status);
             entity.HasIndex(l => l.Finalidade);
@@ -154,6 +170,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasOne<Usuario>()
                 .WithMany()
                 .HasForeignKey(l => l.AtualizadoPorUsuarioId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<Usuario>()
+                .WithMany()
+                .HasForeignKey(l => l.PagamentoRegistradoPorUsuarioId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -197,6 +218,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(d => d.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(d => d.Valor).HasColumnType("decimal(18,2)");
             entity.Property(d => d.Status).HasConversion<int>().IsRequired();
+            entity.Property(d => d.DataPagamento).HasColumnType("date");
+            entity.Property(d => d.ValorPago).HasColumnType("decimal(18,2)");
 
             entity.HasIndex(d => d.LancamentoId);
 

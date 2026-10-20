@@ -184,10 +184,10 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         Assert.Equal((a.Versao, b.Versao), ((await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{a.Id}"))!.Versao, (await Client.GetFromJsonAsync<EventoDto>($"/api/Eventos/{b.Id}"))!.Versao));
 
         var lancB = b.Lancamentos[0].Id;
-        var forjar = await Client.PutAsJsonAsync($"/api/Lancamentos/{lancB}", new { status = "Pago", membroId = a.Membros[0], eventoId = a.Id });
+        var forjar = await Client.PutAsJsonAsync($"/api/Lancamentos/{lancB}", new { status = "Atrasado", membroId = a.Membros[0], eventoId = a.Id });
         Assert.Equal(HttpStatusCode.OK, forjar.StatusCode);
         var lanc = await Db(db => db.Lancamentos.AsNoTracking().SingleAsync(l => l.Id == lancB));
-        Assert.Equal((b.Membros[0], b.Id, StatusLancamento.Pago), (lanc.MembroId!.Value, lanc.EventoId!.Value, lanc.Status));
+        Assert.Equal((b.Membros[0], b.Id, StatusLancamento.Atrasado), (lanc.MembroId!.Value, lanc.EventoId!.Value, lanc.Status));
     }
 
     [Fact]
@@ -379,7 +379,7 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         for (var i = 0; i < eventos; i++)
         {
             var (e, idx) = (dtos[i], i);
-            tarefas.Add(Task.Run(async () => (idx, "pagar", (await Client.PutAsJsonAsync($"/api/Lancamentos/{e.Lancamentos[0].Id}", new { status = "Pago" })).StatusCode)));
+            tarefas.Add(Task.Run(async () => (idx, "pagar", (await TestHelpers.PagarAsync(Client, e.Lancamentos[0].Id)).StatusCode)));
             tarefas.Add(Task.Run(async () => (idx, "editar", (await EventosTestKit.PutAsync(Client, e.Id,
                 EventosTestKit.Corpo(e.Membros, e.DataEvento, e.Local, 50m, versao: e.Versao))).StatusCode)));
             if (i % 2 == 0)
@@ -438,7 +438,7 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
 
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "contorno" }) };
         Assert.Equal(HttpStatusCode.Conflict, (await Client.SendAsync(delete)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status = "Pago" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.PagarAsync(Client, id)).StatusCode);
         var delete2 = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "contorno" }) };
         Assert.Equal(HttpStatusCode.Conflict, (await Client.SendAsync(delete2)).StatusCode);
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.LancamentoId == id)));

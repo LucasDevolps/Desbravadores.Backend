@@ -17,7 +17,38 @@ public sealed record LancamentoDto
     public DateOnly Vencimento { get; init; }
     public required StatusLancamento Status { get; init; }
     public Guid? EventoId { get; init; }
+
+    /// <summary>Data efetiva da liquidação; nula sem pagamento registrado.</summary>
+    public DateOnly? DataPagamento { get; init; }
+
+    /// <summary>Valor efetivamente pago/recebido; nulo sem pagamento registrado.</summary>
+    public decimal? ValorPago { get; init; }
+
+    /// <summary>Calculado: valor − valorPago com pagamento registrado; valor sem pagamento; nulo em "Pago" histórico sem dados.</summary>
+    public decimal? ValorRestante { get; init; }
+
+    public Guid? PagamentoRegistradoPorUsuarioId { get; init; }
+    public DateTime? PagamentoRegistradoEmUtc { get; init; }
 }
+
+/// <summary>Corpo de POST/PUT /api/Lancamentos/{id}/Pagamento.</summary>
+public abstract class PagamentoLancamentoRequest : IRequest<LancamentoDto?>
+{
+    /// <summary>Data efetiva do pagamento/recebimento (yyyy-MM-dd), até hoje no fuso do clube.</summary>
+    public DateOnly? DataPagamento { get; set; }
+
+    /// <summary>Valor efetivamente pago/recebido: maior que zero, até 2 casas decimais e no máximo o valor do lançamento.</summary>
+    public decimal? ValorPago { get; set; }
+
+    [JsonIgnore] public Guid Id { get; set; }
+    [JsonIgnore] public Guid UsuarioResponsavelId { get; set; }
+}
+
+/// <summary>Registra o pagamento de um lançamento Pendente, Atrasado ou "Pago" histórico sem dados de liquidação.</summary>
+public sealed class RegistrarPagamentoRequest : PagamentoLancamentoRequest;
+
+/// <summary>Corrige data e/ou valor de um pagamento já registrado.</summary>
+public sealed class AtualizarPagamentoRequest : PagamentoLancamentoRequest;
 
 public sealed record LancamentosResponse
 {
