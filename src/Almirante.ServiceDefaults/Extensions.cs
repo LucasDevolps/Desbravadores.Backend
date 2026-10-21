@@ -14,6 +14,7 @@ public static class Extensions
 {
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
+    private const string HubsPathPrefix = "/hubs";
 
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
@@ -55,6 +56,8 @@ public static class Extensions
                         tracing.Filter = context =>
                             !context.Request.Path.StartsWithSegments(HealthEndpointPath)
                             && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
+                            // Conexões SignalR são longas e o handshake do navegador leva access_token na query.
+                            && !context.Request.Path.StartsWithSegments(HubsPathPrefix)
                     )
                     .AddHttpClientInstrumentation();
             });

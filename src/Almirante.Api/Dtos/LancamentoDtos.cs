@@ -64,7 +64,10 @@ public sealed record GetLancamentoQuery(Guid Id) : IRequest<LancamentoDto?>;
 public sealed record ListLancamentosQuery(int Page, int PageSize, string? Search, string? Status,
     string? Finalidade, DateOnly? Vencimento) : IRequest<LancamentosResponse>;
 
-public enum RegistrarLancamentoOutcome { LancamentoUnicoCriado, GeralCriado, GeralReutilizado, GeralConflitoIdempotencia, MembroNaoEncontrado }
+public enum RegistrarLancamentoOutcome
+{
+    LancamentoUnicoCriado, GeralCriado, GeralReutilizado, GeralConflitoIdempotencia, MembroNaoEncontrado, LancamentoUnicoReutilizado,
+}
 
 public sealed record RegistrarLancamentoResult(RegistrarLancamentoOutcome Outcome, LancamentoDto? Lancamento,
     LancamentoGeralResponse? Geral);

@@ -41,6 +41,12 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpPost("Registrar")]
+    [EndpointSummary("Registra um lançamento para um membro ou, atomicamente, para todos.")]
+    [EndpointDescription("Modo geral (aplicarATodosOsMembros: true): Idempotency-Key obrigatório; 200 com a operação (criada ou reenviada). " +
+        "Modo individual: 201 com o lançamento. Idempotency-Key é opcional no modo individual: sem ele, cada POST cria uma nova cobrança " +
+        "(nada é deduplicado por conteúdo); com ele, reenviar a mesma chave e os mesmos dados devolve 200 com o lançamento já criado, " +
+        "e a mesma chave com dados diferentes (inclusive outro membro ou o outro modo) devolve 409. " +
+        "Lançamentos de Entrada atribuídos a um membro (débitos) geram uma notificação para esse membro na mesma transação; Saída não notifica.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<LancamentoGeralResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -64,12 +70,13 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         return resultado.Outcome switch
         {
             RegistrarLancamentoOutcome.LancamentoUnicoCriado => CreatedAtAction(nameof(GetById), new { id = resultado.Lancamento!.Id }, resultado.Lancamento),
+            RegistrarLancamentoOutcome.LancamentoUnicoReutilizado => Ok(resultado.Lancamento),
             RegistrarLancamentoOutcome.GeralCriado => Ok(resultado.Geral),
             RegistrarLancamentoOutcome.GeralReutilizado => Ok(resultado.Geral),
             RegistrarLancamentoOutcome.GeralConflitoIdempotencia => Conflict(new ProblemDetails
             {
                 Title = "Chave de idempotência já usada com dados diferentes.",
-                Detail = "O header Idempotency-Key informado já foi usado em uma operação anterior com finalidade, descrição, categoria, tipo de fluxo, valor ou vencimento diferentes.",
+                Detail = "O header Idempotency-Key informado já foi usado em uma operação anterior com finalidade, descrição, categoria, tipo de fluxo, valor, vencimento, membro ou modo diferentes.",
                 Status = StatusCodes.Status409Conflict,
             }),
             RegistrarLancamentoOutcome.MembroNaoEncontrado => NotFound(new ProblemDetails

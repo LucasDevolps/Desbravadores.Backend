@@ -12,7 +12,8 @@ public sealed class LancamentosService(
     AlmiranteDbContext db,
     TimeProvider clock,
     LancamentoGeralService lancamentoGeral,
-    LancamentoExclusaoService exclusao)
+    LancamentoExclusaoService exclusao,
+    SinalAvisosNotificacoes sinal)
 {
     public async Task<LancamentosResponse> ListAsync(int page, int pageSize, string? search, string? status,
         string? finalidade, DateOnly? vencimento, CancellationToken ct)
@@ -52,6 +53,15 @@ public sealed class LancamentosService(
             return await lancamentoGeral.RegistrarAsync(request, ct);
         }
 
+        // Idempotency-Key é opcional aqui: sem ela, cada POST é uma nova cobrança legítima (nada é deduplicado por conteúdo);
+        // com ela, o reenvio da mesma solicitação devolve o lançamento já criado.
+        var chave = string.IsNullOrWhiteSpace(request.IdempotencyKey) ? null : request.IdempotencyKey.Trim();
+        var hash = chave is null ? null : LancamentoGeralService.CalcularHash(request);
+        if (chave is not null && await LerOperacaoAsync(chave, ct) is { } registrada)
+        {
+            return await ReutilizarAsync(registrada, hash!, null, ct);
+        }
+
         var membro = await db.Usuarios.AsNoTracking()
             .Where(u => u.Id == request.MembroId)
             .Select(u => new { u.Id, u.Nome })
@@ -61,11 +71,69 @@ public sealed class LancamentosService(
             return new(RegistrarLancamentoOutcome.MembroNaoEncontrado, null, null);
         }
 
-        var entity = LancamentoMapping.Criar(request, membro.Id, null, clock.GetUtcNow().UtcDateTime);
+        var agora = clock.GetUtcNow().UtcDateTime;
+        var operacaoId = chave is null ? (Guid?)null : Guid.NewGuid();
+        var entity = LancamentoMapping.Criar(request, membro.Id, operacaoId, agora);
         db.Lancamentos.Add(entity);
-        await db.SaveChangesAsync(ct);
+        if (operacaoId is { } id)
+        {
+            db.LancamentosOperacoes.Add(LancamentoGeralService.NovaOperacao(request, id, chave!, hash!, 1, 1, agora));
+        }
+
+        var notificacoes = NotificacoesFabrica.ParaDebitos([entity], agora);
+        db.Notificacoes.AddRange(notificacoes);
+        var notificar = notificacoes.Count > 0;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            db.ChangeTracker.Clear();
+            if (chave is not null && await LerOperacaoAsync(chave, ct) is { } concorrente)
+            {
+                return await ReutilizarAsync(concorrente, hash!, operacaoId, ct);
+            }
+
+            // Commit efetivado com a confirmação perdida: a retentativa da execution strategy esbarra no próprio lançamento.
+            if (!await db.Lancamentos.AsNoTracking().AnyAsync(l => l.Id == entity.Id, ct))
+            {
+                throw;
+            }
+        }
+
+        if (notificar)
+        {
+            sinal.Sinalizar();
+        }
+
         var response = LancamentoMapping.ToDto(entity) with { MembroNome = membro.Nome };
         return new(RegistrarLancamentoOutcome.LancamentoUnicoCriado, response, null);
+    }
+
+    private Task<LancamentoOperacao?> LerOperacaoAsync(string chave, CancellationToken ct) =>
+        db.LancamentosOperacoes.AsNoTracking().SingleOrDefaultAsync(o => o.IdempotencyKey == chave, ct);
+
+    /// <summary>Reenvio com a mesma chave: mesmos dados devolvem o lançamento da operação (201 se for a própria tentativa).</summary>
+    private async Task<RegistrarLancamentoResult> ReutilizarAsync(LancamentoOperacao operacao, string hash, Guid? propriaOperacaoId, CancellationToken ct)
+    {
+        if (!string.Equals(operacao.RequestHash, hash, StringComparison.Ordinal))
+        {
+            return new(RegistrarLancamentoOutcome.GeralConflitoIdempotencia, null, null);
+        }
+
+        var lancamento = await db.Lancamentos.AsNoTracking().Where(l => l.OperacaoId == operacao.Id)
+            .Select(LancamentoMapping.Projection).SingleAsync(ct);
+        if (!await db.Lancamentos.AsNoTracking().AnyAsync(l => l.Id == lancamento.Id && l.Ativo, ct))
+        {
+            throw ApiProblemException.Conflict("Lançamento da operação já foi excluído.",
+                "Esta operação idempotente já criou um lançamento que depois foi excluído; use uma nova Idempotency-Key para cadastrar novamente.");
+        }
+
+        return operacao.Id == propriaOperacaoId
+            ? new(RegistrarLancamentoOutcome.LancamentoUnicoCriado, lancamento, null)
+            : new(RegistrarLancamentoOutcome.LancamentoUnicoReutilizado, lancamento, null);
     }
 
     public async Task<LancamentoDto?> UpdateAsync(Guid id, UpdateLancamentoRequest request, CancellationToken ct)
