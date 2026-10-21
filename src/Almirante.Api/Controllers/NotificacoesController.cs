@@ -3,6 +3,7 @@ using Almirante.Api.Hubs;
 using Almirante.Api.Security;
 using Almirante.Api.Services;
 using MediatR;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -38,6 +39,7 @@ public sealed class NotificacoesController(ISender mediator) : ControllerBase
     }
 
     [HttpPost("{id:guid}/Leitura")]
+    [ValidateAntiForgeryToken]
     [EndpointSummary("Marca uma notificação do usuário autenticado como lida.")]
     [EndpointDescription("Chame somente quando o usuário abrir a notificação. Grava a data/hora (UTC) da primeira leitura e devolve a notificação " +
         "e o novo total de não lidas; o 200 só é enviado depois da gravação. Idempotente: repetir devolve 200 com a mesma lidaEmUtc original. " +
