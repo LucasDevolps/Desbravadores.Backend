@@ -14,7 +14,9 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
         RuleFor(x => x.Nome)
             .Must(nome => !string.IsNullOrWhiteSpace(nome)).WithMessage("nome é obrigatório.")
             .Must(nome => nome!.Trim().Length <= UsuariosService.NomeMaximo)
-            .WithMessage($"nome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.");
+            .WithMessage($"nome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.")
+            .Must(nome => TextoVarchar.CabeNaPagina1252(nome!.Trim()))
+            .WithMessage("nome contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).");
 
         RuleFor(x => x.Email)
             .Must(email => !string.IsNullOrWhiteSpace(email)).WithMessage("email é obrigatório.")
