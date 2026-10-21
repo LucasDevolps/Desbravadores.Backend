@@ -111,8 +111,11 @@ jobs:
         env:
           FILES: ${{ steps.compose-mode.outputs.files }}
         run: |
+          # --pull: sempre a última imagem base aspnet:10.0 (com os patches de segurança, ex.: CVE-2026-70159 no SignalR,
+          # corrigida no 10.0.13), em vez da que estiver em cache no host. Se o pull falhar, o deploy para antes de trocar
+          # os containers, e a versão em execução continua no ar.
           # shellcheck disable=SC2086
-          docker compose $FILES build api
+          docker compose $FILES build --pull api
           # shellcheck disable=SC2086
           docker compose $FILES run --rm -T --no-deps --user root --cap-add CHOWN --entrypoint chown api app:app /var/lib/almirante/fotos
           if docker volume inspect almirante-fotos > /dev/null 2>&1; then
@@ -308,6 +311,55 @@ jobs:
             Write-Host "Media__Storage__Path definido no app pool '$pool': $pasta"
           }
           Write-Host "Pasta de fotos conferida: $pasta"
+
+      # No IIS a API usa o runtime compartilhado instalado na máquina (Hosting Bundle), não o da imagem Docker. 10.0.13 é o
+      # mínimo: corrige a CVE-2026-70159 (negação de serviço no SignalR, usado pelo hub de notificações). Roda antes de tirar
+      # o site do ar; sem o runtime, o deploy para e a versão em execução continua no ar.
+      - name: Conferir runtime mínimo do ASP.NET Core
+        shell: pwsh
+        run: |
+          $minimo = [version]'10.0.13'
+          $instalados = dotnet --list-runtimes | Where-Object { $_ -match '^Microsoft\.AspNetCore\.App (10\.\d+\.\d+) ' } |
+            ForEach-Object { [version]($_ -replace '^Microsoft\.AspNetCore\.App (\S+) .*$', '$1') }
+          $maior = $instalados | Sort-Object -Descending | Select-Object -First 1
+          if (-not $maior -or $maior -lt $minimo) {
+            Write-Error "ASP.NET Core Runtime 10.0 instalado: $(if ($maior) { $maior } else { 'nenhum' }); mínimo $minimo. Instale o Hosting Bundle mais recente do .NET 10 (https://dotnet.microsoft.com/download/dotnet/10.0) e rode o deploy de novo. O site não foi alterado."
+            exit 1
+          }
+          Write-Host "ASP.NET Core Runtime $maior (mínimo $minimo)."
+
+      # Hub SignalR de notificações (issue #130, docs/notificacoes.md). O transporte WebSocket passa pelo IIS só com o
+      # recurso "WebSocket Protocol"; sem ele o cliente cai para long polling. O handshake WebSocket do navegador leva o
+      # access_token na query, então o log W3C do site não grava a query (UriQuery). Idempotente. O pool só é reiniciado
+      # quando o recurso acabou de ser instalado, e sempre parando antes de iniciar (nunca dois workers ao mesmo tempo:
+      # cada inicialização rotaciona a senha SQL de runtime).
+      - name: Garantir WebSocket no IIS e log sem query string
+        shell: pwsh
+        run: |
+          Import-Module WebAdministration -ErrorAction Stop
+          $site = Get-Website | Where-Object { $_.PhysicalPath.TrimEnd('\') -eq "${{ env.SITE_PATH }}".TrimEnd('\') } | Select-Object -First 1
+          $instalado = $false
+          if ((Get-WindowsOptionalFeature -Online -FeatureName IIS-WebSockets).State -ne 'Enabled') {
+            Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebSockets -All -NoRestart | Out-Null
+            $instalado = $true
+            Write-Host "Recurso IIS-WebSockets instalado."
+          }
+          $filtro = "system.applicationHost/sites/site[@name='$($site.name)']/logFile"
+          $campos = "$(Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name logExtFileFlags)"
+          $semQuery = ($campos -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'UriQuery' }) -join ','
+          if ($semQuery -ne $campos) {
+            Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name logExtFileFlags -Value $semQuery
+            Write-Host "UriQuery removido do log W3C do site $($site.name)."
+          }
+          if ($instalado) {
+            $pool = $site.applicationPool
+            if ((Get-WebAppPoolState -Name $pool).Value -ne 'Stopped') { Stop-WebAppPool -Name $pool }
+            $limite = (Get-Date).AddSeconds(60)
+            while ((Get-WebAppPoolState -Name $pool).Value -ne 'Stopped' -and (Get-Date) -lt $limite) { Start-Sleep -Milliseconds 500 }
+            Start-WebAppPool -Name $pool
+            Write-Host "App pool '$pool' reiniciado para carregar o módulo de WebSocket."
+          }
+          Write-Host "WebSocket do IIS e log sem query conferidos."
 
       # ANCM observa o app_offline.htm e derruba o processo em execução,
       # liberando os locks de arquivo, sem precisar de direitos de admin do

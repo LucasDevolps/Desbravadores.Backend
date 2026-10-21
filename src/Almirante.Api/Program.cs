@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Almirante.Api.Cli;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
+using Almirante.Api.Hubs;
 using Almirante.Api.Infrastructure;
 using Almirante.Api.Options;
 using Almirante.Api.Security;
@@ -11,11 +12,14 @@ using Almirante.Api.Validation;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Primitives;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -100,7 +104,28 @@ builder.Services.AddSingleton(new EventosLockOptions());
 builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddScoped<DashboardService>();
+builder.Services.AddScoped<NotificacoesService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
+
+builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))
+    .ValidateDataAnnotations().ValidateOnStart();
+builder.Services.AddSingleton<SinalAvisosNotificacoes>();
+builder.Services.AddSingleton<ConexoesNotificacoes>();
+builder.Services.AddSingleton<IEmissorAvisosNotificacoes, EmissorAvisosHub>();
+builder.Services.AddSingleton<IUserIdProvider, UsuarioIdProvider>();
+builder.Services.AddHostedService<PublicadorAvisosNotificacoes>();
+builder.Services.AddSingleton<MonitorSessoesNotificacoes>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MonitorSessoesNotificacoes>());
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = false;
+    // O hub é só de saída: o cliente envia apenas handshake e pings.
+    options.MaximumReceiveMessageSize = 4 * 1024;
+});
+
+// O log de requisição do ASP.NET Core inclui a query string, e o hub aceita access_token na query (WebSocket do navegador
+// não envia cabeçalho). Esta categoria nunca passa de Warning, mesmo que a configuração peça Information.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
 
 builder.Services.AddOptions<ClubeOptions>().Bind(builder.Configuration.GetSection(ClubeOptions.SectionName)).ValidateOnStart();
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<ClubeOptions>, ClubeOptionsValidator>();
@@ -218,6 +243,20 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         };
         bearerOptions.Events = new JwtBearerEvents
         {
+            // Só para o handshake GET do hub (WebSocket do navegador não envia Authorization). Negotiate (POST), long polling
+            // e todo o resto da API continuam exigindo o cabeçalho; query string nunca autentica fora do hub.
+            OnMessageReceived = context =>
+            {
+                var request = context.HttpContext.Request;
+                if (HttpMethods.IsGet(request.Method) && request.Path.StartsWithSegments(NotificacoesHub.Caminho)
+                    && StringValues.IsNullOrEmpty(request.Headers.Authorization)
+                    && request.Query.TryGetValue("access_token", out var accessToken) && accessToken.Count == 1)
+                {
+                    context.Token = accessToken.ToString();
+                }
+
+                return Task.CompletedTask;
+            },
             OnTokenValidated = async context =>
             {
                 var principal = context.Principal!;
@@ -234,9 +273,9 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
                 identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, uid.ToString()));
                 var db = context.HttpContext.RequestServices.GetRequiredService<AlmiranteDbContext>();
                 var now = nowOffset.UtcDateTime;
-                var valid = await db.AuthSessions.AsNoTracking().AnyAsync(x => x.Id == sid && x.UsuarioId == uid && x.RevokedAtUtc == null &&
-                    x.AbsoluteExpiresAtUtc > now && x.Usuario != null && x.Usuario.SecurityVersion == x.SecurityVersion && x.Usuario.Cargo != null &&
-                    x.Usuario.Cargo.Ativo && x.Usuario.Cargo.Role == principal.FindFirstValue("role"), context.HttpContext.RequestAborted);
+                var role = principal.FindFirstValue("role");
+                var valid = await db.AuthSessions.AsNoTracking().Where(SessoesAutenticacao.Vigente(now))
+                    .AnyAsync(x => x.Id == sid && x.UsuarioId == uid && x.Usuario!.Cargo!.Role == role, context.HttpContext.RequestAborted);
                 if (!valid) context.Fail("Sessão inválida.");
             }
         };
@@ -361,6 +400,12 @@ app.UseStatusCodePages();
 
 app.UseHttpsRedirection();
 
+// CORS não se aplica ao handshake WebSocket: o hub recusa (403) navegadores de origem fora de Cors:AllowedOrigins.
+// Clientes sem Origin (não navegadores) seguem dependendo só do token.
+var webSocketOptions = new Microsoft.AspNetCore.Builder.WebSocketOptions();
+foreach (var origin in allowedOrigins) webSocketOptions.AllowedOrigins.Add(origin);
+app.UseWebSockets(webSocketOptions);
+
 app.UseCors(LocalCorsPolicy);
 
 app.UseRateLimiter();
@@ -369,6 +414,12 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<NotificacoesHub>(NotificacoesHub.Caminho, options =>
+{
+    // Sem Server-Sent Events: além do WebSocket, só long polling, que envia o token no cabeçalho.
+    options.Transports = HttpTransportType.WebSockets | HttpTransportType.LongPolling;
+    options.CloseOnAuthenticationExpiration = true;
+});
 
 using (var scope = app.Services.CreateScope())
 {

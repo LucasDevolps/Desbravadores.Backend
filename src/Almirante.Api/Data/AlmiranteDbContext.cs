@@ -1,4 +1,5 @@
 using Almirante.Api.Entities;
+using Almirante.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Data;
@@ -63,6 +64,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
     public DbSet<HistoricoEvento> HistoricoEventos => Set<HistoricoEvento>();
 
     public DbSet<UsuarioHistorico> UsuariosHistorico => Set<UsuarioHistorico>();
+
+    public DbSet<Notificacao> Notificacoes => Set<Notificacao>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -350,6 +353,48 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasIndex(h => h.UsuarioId);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioResponsavelId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Notificacao>(entity =>
+        {
+            entity.ToTable("notificacoes", table =>
+            {
+                table.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2)");
+                table.HasCheckConstraint("CK_notificacoes_Aviso",
+                    "([AvisoPendente] IS NULL AND [AvisoProximaTentativaEmUtc] IS NULL)" +
+                    " OR ([AvisoPendente] IN (1, 2) AND [AvisoProximaTentativaEmUtc] IS NOT NULL)");
+                table.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
+            });
+            entity.HasKey(n => n.Id);
+            entity.Property(n => n.Tipo).HasConversion<int>().IsRequired();
+            entity.Property(n => n.Titulo).HasColumnType($"varchar({NotificacoesFabrica.TituloMaximo})")
+                .HasMaxLength(NotificacoesFabrica.TituloMaximo).IsUnicode(false).IsRequired();
+            entity.Property(n => n.Mensagem).HasColumnType($"varchar({NotificacoesFabrica.MensagemMaximo})")
+                .HasMaxLength(NotificacoesFabrica.MensagemMaximo).IsUnicode(false).IsRequired();
+            entity.Property(n => n.ChaveOrigem).HasColumnType($"varchar({NotificacoesFabrica.ChaveOrigemMaximo})")
+                .HasMaxLength(NotificacoesFabrica.ChaveOrigemMaximo).IsUnicode(false).IsRequired();
+            entity.Property(n => n.CriadaEmUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+            entity.Property(n => n.LidaEmUtc).IsConcurrencyToken()
+                .HasConversion(v => v, v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v);
+            entity.Property(n => n.AvisoPendente).HasConversion<int?>();
+
+            entity.HasIndex(n => new { n.DestinatarioId, n.ChaveOrigem })
+                .IsUnique()
+                .HasDatabaseName("UX_notificacoes_destinatario_origem");
+            entity.HasIndex(n => new { n.DestinatarioId, n.CriadaEmUtc, n.Id })
+                .IsDescending(false, true, true)
+                .HasDatabaseName("IX_notificacoes_pendentes")
+                .HasFilter("[LidaEmUtc] IS NULL");
+            entity.HasIndex(n => n.AvisoProximaTentativaEmUtc)
+                .HasDatabaseName("IX_notificacoes_aviso_pendente")
+                .HasFilter("[AvisoPendente] IS NOT NULL")
+                .IncludeProperties(n => new { n.AvisoPendente, n.AvisoTentativas });
+            entity.HasIndex(n => n.EventoId);
+            entity.HasIndex(n => n.LancamentoId);
+
+            entity.HasOne<Usuario>().WithMany().HasForeignKey(n => n.DestinatarioId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Evento>().WithMany().HasForeignKey(n => n.EventoId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Lancamento>().WithMany().HasForeignKey(n => n.LancamentoId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Cargo>(entity =>

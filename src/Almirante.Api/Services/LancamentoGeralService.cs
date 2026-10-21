@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
 
-public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider clock)
+public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider clock, SinalAvisosNotificacoes sinal)
 {
     public async Task<RegistrarLancamentoResult> RegistrarAsync(RegistrarLancamentoRequest request, CancellationToken ct)
     {
@@ -24,24 +24,12 @@ public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider c
         var now = clock.GetUtcNow().UtcDateTime;
         var operationId = Guid.NewGuid();
         var entities = membros.Select(id => LancamentoMapping.Criar(request, id, operationId, now)).ToList();
-        var operation = new LancamentoOperacao
-        {
-            Id = operationId,
-            IdempotencyKey = key,
-            RequestHash = hash,
-            Finalidade = request.Finalidade,
-            Descricao = request.Descricao,
-            Categoria = request.Categoria,
-            TipoFluxo = request.TipoFluxo,
-            Valor = request.Valor,
-            Vencimento = request.Vencimento,
-            UsuariosProcessados = membros.Count,
-            LancamentosCriados = entities.Count,
-            CriadoPorUsuarioId = request.UsuarioSolicitanteId,
-            CriadoEmUtc = now,
-        };
+        var operation = NovaOperacao(request, operationId, key, hash, membros.Count, entities.Count, now);
         db.LancamentosOperacoes.Add(operation);
         db.Lancamentos.AddRange(entities);
+        // Cada membro contemplado recebe a própria notificação, ligada ao lançamento dele, no mesmo SaveChanges (atômico).
+        var notificacoes = NotificacoesFabrica.ParaDebitos(entities, now);
+        db.Notificacoes.AddRange(notificacoes);
         try
         {
             await db.SaveChangesAsync(ct);
@@ -57,10 +45,20 @@ public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider c
 
             return ResultadoExistente(existing, hash);
         }
+
+        if (notificacoes.Count > 0)
+        {
+            sinal.Sinalizar();
+        }
+
         return new(RegistrarLancamentoOutcome.GeralCriado, null, CriarResposta(operation));
     }
 
-    private static string CalcularHash(RegistrarLancamentoRequest request)
+    /// <summary>
+    /// Hash da operação idempotente. O do modo geral não mudou (operações antigas continuam reconhecidas); o individual inclui
+    /// o membro, então a mesma chave usada no outro modo, ou para outro membro, é conflito.
+    /// </summary>
+    public static string CalcularHash(RegistrarLancamentoRequest request)
     {
         var canonical = string.Join('|',
             request.Finalidade,
@@ -69,8 +67,31 @@ public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider c
             request.TipoFluxo == TipoFluxoLancamento.Saida ? "Despesa" : "Entrada",
             request.Valor.ToString("F2", CultureInfo.InvariantCulture),
             request.Vencimento.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        if (!request.AplicarATodosOsMembros)
+        {
+            canonical = $"individual|{request.MembroId:D}|{canonical}";
+        }
+
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
+
+    internal static LancamentoOperacao NovaOperacao(RegistrarLancamentoRequest request, Guid id, string key, string hash,
+        int usuariosProcessados, int lancamentosCriados, DateTime now) => new()
+    {
+        Id = id,
+        IdempotencyKey = key,
+        RequestHash = hash,
+        Finalidade = request.Finalidade,
+        Descricao = request.Descricao,
+        Categoria = request.Categoria,
+        TipoFluxo = request.TipoFluxo,
+        Valor = request.Valor,
+        Vencimento = request.Vencimento,
+        UsuariosProcessados = usuariosProcessados,
+        LancamentosCriados = lancamentosCriados,
+        CriadoPorUsuarioId = request.UsuarioSolicitanteId,
+        CriadoEmUtc = now,
+    };
 
     private static RegistrarLancamentoResult ResultadoExistente(LancamentoOperacao op, string hash) => op.RequestHash == hash
         ? new(RegistrarLancamentoOutcome.GeralReutilizado, null, CriarResposta(op))

@@ -12,7 +12,8 @@ namespace Almirante.Api.Services;
 
 public sealed record EventosLockOptions(int TimeoutMs = 10_000);
 
-public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, ILogger<EventosService> logger, EventosLockOptions lockOptions)
+public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, ILogger<EventosService> logger, EventosLockOptions lockOptions,
+    SinalAvisosNotificacoes sinal)
 {
     public static string RecursoDoGrupo(Guid grupoId) => $"evento-grupo:{grupoId:D}";
 
@@ -94,7 +95,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
         try
         {
-            return await ExecutarAsync(async _ =>
+            var criado = await ExecutarAsync(async _ =>
             {
                 var grupoId = Guid.NewGuid();
                 var eventoId = grupoId;
@@ -145,6 +146,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
                 db.Lancamentos.AddRange(lancamentos);
                 db.EventosMembros.AddRange(participantes);
+                // Uma notificação por participante deste cadastro, na mesma transação; o lançamento interno não gera outra de débito.
+                db.Notificacoes.AddRange(NotificacoesFabrica.ParaEvento(evento, lancamentos, agora));
                 var operacao = new EventoOperacao
                 {
                     Id = Guid.NewGuid(),
@@ -169,6 +172,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     eventoId, grupoId, usuarioId, lancamentos.Count, evento.ValorPorMembro);
                 return new RegistrarEventoResult(dto, true);
             }, ct);
+            sinal.Sinalizar();
+            return criado;
         }
         catch (ViolacaoUnicidadeException)
         {

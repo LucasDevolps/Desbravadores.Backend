@@ -611,6 +611,89 @@ namespace Almirante.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.Notificacao", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("AvisoPendente")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("AvisoProximaTentativaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("AvisoTentativas")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ChaveOrigem")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<DateTime>("CriadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("DestinatarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("EventoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("LancamentoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("LidaEmUtc")
+                        .IsConcurrencyToken()
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Mensagem")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<int>("Tipo")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Titulo")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AvisoProximaTentativaEmUtc")
+                        .HasDatabaseName("IX_notificacoes_aviso_pendente")
+                        .HasFilter("[AvisoPendente] IS NOT NULL");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("AvisoProximaTentativaEmUtc"), new[] { "AvisoPendente", "AvisoTentativas" });
+
+                    b.HasIndex("EventoId");
+
+                    b.HasIndex("LancamentoId");
+
+                    b.HasIndex("DestinatarioId", "ChaveOrigem")
+                        .IsUnique()
+                        .HasDatabaseName("UX_notificacoes_destinatario_origem");
+
+                    b.HasIndex("DestinatarioId", "CriadaEmUtc", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("IX_notificacoes_pendentes")
+                        .HasFilter("[LidaEmUtc] IS NULL");
+
+                    b.ToTable("notificacoes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_notificacoes_Aviso", "([AvisoPendente] IS NULL AND [AvisoProximaTentativaEmUtc] IS NULL) OR ([AvisoPendente] IN (1, 2) AND [AvisoProximaTentativaEmUtc] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
+
+                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2)");
+                        });
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1195,6 +1278,25 @@ namespace Almirante.Api.Data.Migrations
                         .HasForeignKey("CriadoPorUsuarioId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Notificacao", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("DestinatarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Evento", null)
+                        .WithMany()
+                        .HasForeignKey("EventoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Lancamento", null)
+                        .WithMany()
+                        .HasForeignKey("LancamentoId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>

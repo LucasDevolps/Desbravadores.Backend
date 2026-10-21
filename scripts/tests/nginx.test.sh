@@ -22,6 +22,10 @@ server {
   location = /api/Auth/refresh { default_type application/json; return 401 '{"s":401}'; }
   location ~* ^/api/usuarios/[^/]+/foto$ { default_type application/json; return 200 '{"foto":"recebida"}'; }
   location = /health { return 200 "ok"; }
+  location ~* ^/hubs/notificacoes {
+    add_header X-Seen-Upgrade "$http_upgrade" always; add_header X-Seen-Connection "$http_connection" always;
+    add_header X-Seen-Host $host always; add_header X-Seen-Proto "$http_x_forwarded_proto" always; return 200 "hub";
+  }
   location / { add_header X-Seen-Host $host always; return 404; }
 }
 EOF
@@ -48,6 +52,24 @@ check() { if [ "$2" = "$3" ]; then echo "ok   - $1"; else echo "FAIL - $1 :: esp
 H() { curl -s -o /dev/null -D - "$@"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 R="--resolve api.exemplo.test:$HTTPS_PORT:127.0.0.1 --cacert $W/certs/fullchain.pem"
+
+# Hub SignalR (issue #130): upgrade WebSocket repassado, headers de proxy repetidos no location do hub e o access_token
+# da query fora dos logs do nginx. Uso: hub_checks <rótulo> <container> <proto esperado> <url base> [opções do curl].
+hub_checks() {
+  local rotulo=$1 container=$2 proto=$3 base=$4 hdr
+  shift 4
+  hdr=$(curl -s -o /dev/null -D - "$@" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    "$base/hubs/notificacoes?id=conexao-teste&access_token=SEGREDO-HUB-NAO-LOGAR" | tr -d '\r')
+  echo "$hdr" | grep -qi '^x-seen-upgrade: websocket' && echo "ok   - $rotulo hub repassa Upgrade" || { echo "FAIL - $rotulo hub sem Upgrade"; fail=1; }
+  echo "$hdr" | grep -qi '^x-seen-connection: upgrade' && echo "ok   - $rotulo hub repassa Connection: upgrade" || { echo "FAIL - $rotulo hub sem Connection: upgrade"; fail=1; }
+  echo "$hdr" | grep -qi "^x-seen-proto: $proto" && echo "ok   - $rotulo hub mantém X-Forwarded-Proto" || { echo "FAIL - $rotulo hub sem X-Forwarded-Proto"; fail=1; }
+  hdr=$(curl -s -o /dev/null -D - "$@" -X POST "$base/hubs/notificacoes/negotiate?negotiateVersion=1" | tr -d '\r')
+  if echo "$hdr" | grep -qi '^x-seen-connection: .'; then echo "FAIL - $rotulo negotiate recebeu Connection"; fail=1; else echo "ok   - $rotulo negotiate sem Connection (keepalive)"; fi
+  sleep 1
+  check "$rotulo token do hub fora dos logs" "$(docker logs "$container" 2>&1 | grep -c 'SEGREDO-HUB-NAO-LOGAR')" 0
+  check "$rotulo access log do hub grava só o caminho" \
+    "$(docker logs "$container" 2>&1 | grep -q '"GET /hubs/notificacoes HTTP/1.1" 200' && echo sim || echo nao)" sim
+}
 
 echo "== nginx.tls.conf"
 check "HTTP host permitido -> 308" "$(code -H 'Host: api.exemplo.test' "http://127.0.0.1:$HTTP_PORT/x?q=1")" 308
@@ -93,6 +115,10 @@ done
 grep -q '"status":413' "$W/body" && echo "ok   - foto 413 corpo problem+json" || { echo "FAIL - foto 413 corpo"; fail=1; }
 check "2 MB fora da rota da foto -> 413 (padrão 1 MB)" "$(code $R -X POST --data-binary @"$W/outro-2m.bin" https://api.exemplo.test:$HTTPS_PORT/api/Usuarios)" 413
 
+hub_checks "tls" ${P}-tls https "https://api.exemplo.test:$HTTPS_PORT" $R
+seen=$(curl -s -o /dev/null -D - $R https://api.exemplo.test:$HTTPS_PORT/hubs/notificacoes | grep -i '^x-seen-host' | tr -d '\r')
+check "hub recebe Host canônico" "$seen" "X-Seen-Host: api.exemplo.test"
+
 for path in login refresh; do
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     out=$(curl -s -o "$W/body" -D "$W/hdr" -w '%{http_code}' $R -X POST https://api.exemplo.test:$HTTPS_PORT/api/Auth/$path)
@@ -106,7 +132,7 @@ for path in login refresh; do
 done
 
 echo "== nginx.conf / nginx.windows.conf (sintaxe + 429 do refresh)"
-sed 's/__IIS_PORT__/8080/; s/127.0.0.1:8090/80/' "$REPO/nginx/nginx.windows.conf" | sed 's/server 127.0.0.1:8080/server api:8080/' > "$W/win.conf"
+sed 's/__IIS_PORT__/8080/; s/127.0.0.1:8090/80/; s#logs/access.log#/var/log/nginx/access.log#; s#logs/error.log#/var/log/nginx/error.log#' "$REPO/nginx/nginx.windows.conf" | sed 's/server 127.0.0.1:8080/server api:8080/' > "$W/win.conf"
 for conf in "$REPO/nginx/nginx.conf" "$W/win.conf"; do
   docker rm -f ${P}-plain >/dev/null 2>&1
   docker run -d --name ${P}-plain --network ${P}-net -p 127.0.0.1::80 -v "$conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.27-alpine >/dev/null
@@ -124,6 +150,7 @@ for conf in "$REPO/nginx/nginx.conf" "$W/win.conf"; do
   grep -qi '^content-type: application/problem+json' "$W/hdr" && grep -q '"status":413' "$W/body" \
     && echo "ok   - $(basename $conf) foto 413 problem+json" || { echo "FAIL - $(basename $conf) foto 413 corpo"; fail=1; }
   check "$(basename $conf) 2 MB fora da rota da foto -> 413" "$(code -X POST --data-binary @"$W/outro-2m.bin" http://127.0.0.1:$PLAIN_PORT/api/Usuarios)" 413
+  hub_checks "$(basename $conf)" ${P}-plain http "http://127.0.0.1:$PLAIN_PORT"
 done
 
 echo "RESULT fail=$fail"

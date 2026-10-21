@@ -15,6 +15,16 @@ RUN dotnet publish Almirante.Api/Almirante.Api.csproj -c Release -a "$TARGETARCH
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
+# Runtime mínimo do ASP.NET Core: 10.0.13 corrige a CVE-2026-70159 (negação de serviço no SignalR, usado pelo hub de
+# notificações). A tag "10.0" sempre recebe o patch mais novo, mas um build sem --pull reaproveita a imagem base em cache
+# no host. Aqui o build falha antes de trocar qualquer container, em vez de publicar um runtime vulnerável.
+ARG ASPNETCORE_RUNTIME_MINIMO=10.0.13
+RUN versao="$(ls /usr/share/dotnet/shared/Microsoft.AspNetCore.App | sort -V | tail -n 1)" \
+    && if [ "$(printf '%s\n%s\n' "$ASPNETCORE_RUNTIME_MINIMO" "$versao" | sort -V | head -n 1)" != "$ASPNETCORE_RUNTIME_MINIMO" ]; then \
+         echo "Imagem base com ASP.NET Core $versao, abaixo do mínimo $ASPNETCORE_RUNTIME_MINIMO: refaça o build com --pull." >&2; exit 1; \
+       fi \
+    && echo "ASP.NET Core $versao (mínimo $ASPNETCORE_RUNTIME_MINIMO)"
+
 # curl is only used by the container HEALTHCHECK/compose healthcheck to probe /health.
 # The base image already ships a non-root "app" user, so it is reused instead of creating a new one.
 # apt-get upgrade applies Ubuntu security fixes published after the last rebuild of the aspnet image

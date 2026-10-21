@@ -21,6 +21,7 @@ O backend está em fase de **MVP funcional** e possui:
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
 - registro e correção do pagamento efetivo (data e valor liquidados) de cada lançamento;
 - dashboard administrativo com saldo realizado, entradas, saídas, desbravadores ativos e próximos eventos;
+- notificações de débito e de evento por destinatário, com leitura individual e avisos em tempo real por SignalR;
 - lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
   período, resumo financeiro (provisório) e exclusão lógica auditada por trigger;
 - paginação, busca e filtros na listagem de lançamentos;
@@ -83,6 +84,9 @@ O backend está em fase de **MVP funcional** e possui:
 ```
 
 ## Executar com Docker Compose
+
+Passo a passo completo para uma máquina Ubuntu/Pop!_OS, da instalação do Docker ao backup:
+[`docs/instalacao-ubuntu.md`](docs/instalacao-ubuntu.md).
 
 ### Pré-requisitos
 
@@ -265,6 +269,19 @@ Diferenças em relação ao Docker Compose:
   Add-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Name '.' `
     -Filter "system.applicationHost/applicationPools/add[@name='Almirante']/environmentVariables" `
     -Value @{ name = 'Media__Storage__Path'; value = 'C:\desbravadores\fotos' }
+  ```
+
+- o hub SignalR de notificações (issue #130) precisa do recurso **WebSocket Protocol** do IIS; sem ele, o cliente
+  cai para long polling. O handshake WebSocket do navegador leva o `access_token` na query, então o log W3C do site
+  não pode gravar `UriQuery`. O deploy garante as duas coisas antes de tirar o site do ar (passo "Garantir WebSocket
+  no IIS e log sem query string"). O equivalente manual, como administrador (depois, pare e inicie o pool):
+
+  ```powershell
+  Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebSockets -All -NoRestart
+  $filtro = "system.applicationHost/sites/site[@name='Almirante.Api']/logFile"
+  $campos = "$(Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name logExtFileFlags)"
+  Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name logExtFileFlags `
+    -Value (($campos -split ',' | Where-Object { $_.Trim() -ne 'UriQuery' }) -join ',')
   ```
 
 O `.NET Aspire` (seção abaixo) continua executando a API diretamente, sem Nginx, em desenvolvimento
@@ -515,6 +532,12 @@ operação carrega os IDs elegíveis, insere o lote com `AddRange`/`SaveChanges`
 `OperacaoId`. Repetir chave e payload devolve a operação existente; mudar o payload resulta em
 `409 Conflict`. O hash inclui finalidade, descrição, categoria, fluxo, valor e vencimento.
 
+No modo individual, `Idempotency-Key` é opcional (issue #130). Sem a chave, nada muda: cada `POST`
+é uma nova cobrança, mesmo com conteúdo igual. Com a chave, reenviar a mesma chave e os mesmos dados
+devolve `200` com o lançamento já criado, sem duplicar o lançamento nem a notificação. A mesma chave
+com outro conteúdo, outro membro ou usada no outro modo devolve `409`. A operação fica em
+`LancamentosOperacoes`, com `OperacaoId` no lançamento.
+
 `DELETE` recebe `{ "motivo": "..." }`, apenas muda `Ativo` para `false` e mantém a auditoria por
 trigger/`SESSION_CONTEXT`. Listagens projetam o nome com JOIN, sem armazená-lo em `Lancamentos` e
 sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Saida) é a
@@ -752,6 +775,33 @@ data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoRefe
 uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
 participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
 Não depende do período.
+
+## Notificações (issue #130)
+
+Cada usuário autenticado (inclusive desbravadores) consulta e marca como lidas **as próprias**
+notificações. A leitura é individual e fica gravada no banco. Avisos em tempo real chegam pelo hub
+SignalR `/hubs/notificacoes`. O contrato completo para o frontend (rotas, payloads, sequência de
+conexão e reconexão, deduplicação) está em [`docs/notificacoes.md`](docs/notificacoes.md).
+
+| Método | Rota | Resultado |
+|---|---|---|
+| `GET` | `/api/Notificacoes/Pendentes?pageSize=20&cursor=...` | `200` `{ items, naoLidas, pageSize, proximoCursor }`, só não lidas, da mais recente para a mais antiga |
+| `POST` | `/api/Notificacoes/{id}/Leitura` | `200` `{ notificacao, naoLidas }`, idempotente (preserva a 1ª data); `404` se não for do usuário |
+
+Gatilhos desta versão, gravados na mesma transação do cadastro:
+
+- débito individual (`POST /api/Lancamentos/Registrar`, `Entrada`) notifica o membro do lançamento;
+- débito geral (`aplicarATodosOsMembros`, `Entrada`) notifica cada usuário que recebeu um lançamento,
+  cada um com a própria notificação;
+- novo cadastro de evento (`POST /api/Eventos`) notifica cada participante uma vez, com o valor do
+  lançamento do evento (sem uma segunda notificação de débito).
+
+`Saida` não é cobrança ao membro e não notifica. Reenvios idempotentes e concorrência não duplicam
+notificações (índice único `UX_notificacoes_destinatario_origem`). O aviso em tempo real é gravado na
+própria linha da notificação (outbox) e emitido depois do commit pelo `PublicadorAvisosNotificacoes`,
+com nova tentativa e retomada após reinício. A API REST é a fonte da verdade. Limitações (uma instância,
+IIS) e o runtime mínimo (ASP.NET Core 10.0.13, garantido pelo `Dockerfile` e pelo deploy Windows) estão
+no documento.
 
 ## Banco de dados e migrations
 
