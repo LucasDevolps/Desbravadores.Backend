@@ -48,7 +48,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var response = await PostAsync(new
         {
             nome = $"Pessoal {Guid.NewGuid():N}", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync(role),
-            cpf = cpf ?? NovoCpf(), dataNascimento = nascimento, telefone,
+            cpf = cpf ?? NovoCpf(), rg = TestHelpers.RgFicticio, dataNascimento = nascimento, telefone,
         });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
@@ -106,7 +106,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var response = await PostAsync(new
         {
             nome = "Completo", email, senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync("DS"),
-            cpf = $"  {Mascarar(cpf)}  ", dataNascimento = "2001-05-17", telefone = "  (11) 98765-4321  ",
+            cpf = $"  {Mascarar(cpf)}  ", rg = TestHelpers.RgFicticio, dataNascimento = "2001-05-17", telefone = "  (11) 98765-4321  ",
         });
 
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
@@ -319,7 +319,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         {
             var response = await PostAsync(new
             {
-                nome = "Duplicado", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync("DS"), cpf = variante,
+                nome = "Duplicado", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync("DS"), cpf = variante, rg = TestHelpers.RgFicticio,
             });
 
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -367,7 +367,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var inativo = await CriarAsync(cpf);
         Assert.Equal(HttpStatusCode.NoContent, (await DeleteAsync(Client, inativo.Id)).StatusCode);
 
-        var post = await PostAsync(new { nome = "Reuso", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync("DS"), cpf = Mascarar(cpf) });
+        var post = await PostAsync(new { nome = "Reuso", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync("DS"), cpf = Mascarar(cpf), rg = TestHelpers.RgFicticio });
         Assert.Equal(HttpStatusCode.Conflict, post.StatusCode);
 
         var alvo = await CriarAsync();
@@ -403,7 +403,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var respostas = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => PostAsync(new
         {
             nome = $"Corrida CPF {i}", email = NovoEmail($"corrida{i}"), senha = $"Forte-{Guid.NewGuid():N}", cargoId,
-            cpf = i % 2 == 0 ? cpf : Mascarar(cpf),
+            cpf = i % 2 == 0 ? cpf : Mascarar(cpf), rg = TestHelpers.RgFicticio,
         })));
 
         Assert.Single(respostas, r => r.StatusCode == HttpStatusCode.Created);
@@ -486,7 +486,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     private static async Task<UsuarioListItemDto> CriarNaFabricaAsync(SqlServerApiFactory fabrica, HttpClient cliente)
     {
         var cargoId = await TestHelpers.WithDbAsync(fabrica, db => db.Cargos.Where(c => c.Role == "DS").Select(c => c.Id).SingleAsync());
-        var response = await cliente.PostAsJsonAsync("/api/Usuarios", new { nome = "Local", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId, cpf = NovoCpf() });
+        var response = await cliente.PostAsJsonAsync("/api/Usuarios", new { nome = "Local", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId, cpf = NovoCpf(), rg = TestHelpers.RgFicticio });
         Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
     }
@@ -634,7 +634,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
     {
         var email = NovoEmail("Login.Pessoal");
         var senha = $"Forte-{Guid.NewGuid():N}";
-        var post = await PostAsync(new { nome = "Login", email, senha, cargoId = await CargoIdAsync("DS"), cpf = NovoCpf(), dataNascimento = "2002-02-02" });
+        var post = await PostAsync(new { nome = "Login", email, senha, cargoId = await CargoIdAsync("DS"), cpf = NovoCpf(), rg = TestHelpers.RgFicticio, dataNascimento = "2002-02-02" });
         Assert.Equal(HttpStatusCode.Created, post.StatusCode);
         var criado = (await post.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
         Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, criado.Id, CorpoPut(criado, c => c["telefone"] = "(12) 3456-7890"))).StatusCode);

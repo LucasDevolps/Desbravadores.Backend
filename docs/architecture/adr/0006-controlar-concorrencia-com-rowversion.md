@@ -52,8 +52,12 @@ Server como token de concorrência otimista.
 
 - `Usuarios` usa `SecurityVersion` (`long`, `IsConcurrencyToken`), e não `rowversion`, para ordenar
   login e reset de senha ([ADR-0001](0001-usar-jwt-com-sessoes-persistidas-e-refresh-rotativo.md)).
-- Lançamentos avulsos não têm token de concorrência. `PUT /api/Lancamentos/{id}` não recebe versão, e
-  a última gravação prevalece.
+- Lançamentos não têm `rowversion` e `PUT /api/Lancamentos/{id}` não recebe versão. Desde a issue #129,
+  `Valor`, `Status`, `DataPagamento` e `ValorPago` são tokens de concorrência do EF (`IsConcurrencyToken`):
+  uma gravação que encontre esses campos alterados desde a leitura recebe `409`, o que impede confirmação
+  de pagamento duplicada. Nos demais campos a última gravação prevalece. O pagamento de lançamento de
+  evento (`POST`/`PUT /api/Lancamentos/{id}/Pagamento`) atualiza antes a linha do evento, como a mudança
+  de status.
 - `Cargos` e `Usuarios` não têm endpoints de escrita.
 
 ## Consequências

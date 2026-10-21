@@ -19,6 +19,9 @@ O backend está em fase de **MVP funcional** e possui:
 - sessões persistidas, refresh rotativo e logout com revogação efetiva;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
+- registro e correção do pagamento efetivo (data e valor liquidados) de cada lançamento;
+- dashboard administrativo com saldo realizado, entradas, saídas, desbravadores ativos e próximos eventos;
+- notificações de débito e de evento por destinatário, com leitura individual e avisos em tempo real por SignalR;
 - lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
   período, resumo financeiro (provisório) e exclusão lógica auditada por trigger;
 - paginação, busca e filtros na listagem de lançamentos;
@@ -81,6 +84,9 @@ O backend está em fase de **MVP funcional** e possui:
 ```
 
 ## Executar com Docker Compose
+
+Passo a passo completo para uma máquina Ubuntu/Pop!_OS, da instalação do Docker ao backup:
+[`docs/instalacao-ubuntu.md`](docs/instalacao-ubuntu.md).
 
 ### Pré-requisitos
 
@@ -265,6 +271,19 @@ Diferenças em relação ao Docker Compose:
     -Value @{ name = 'Media__Storage__Path'; value = 'C:\desbravadores\fotos' }
   ```
 
+- o hub SignalR de notificações (issue #130) precisa do recurso **WebSocket Protocol** do IIS; sem ele, o cliente
+  cai para long polling. O handshake WebSocket do navegador leva o `access_token` na query, então o log W3C do site
+  não pode gravar `UriQuery`. O deploy garante as duas coisas antes de tirar o site do ar (passo "Garantir WebSocket
+  no IIS e log sem query string"). O equivalente manual, como administrador (depois, pare e inicie o pool):
+
+  ```powershell
+  Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebSockets -All -NoRestart
+  $filtro = "system.applicationHost/sites/site[@name='Almirante.Api']/logFile"
+  $campos = "$(Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name logExtFileFlags)"
+  Set-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name logExtFileFlags `
+    -Value (($campos -split ',' | Where-Object { $_.Trim() -ne 'UriQuery' }) -join ',')
+  ```
+
 O `.NET Aspire` (seção abaixo) continua executando a API diretamente, sem Nginx, em desenvolvimento
 local — a proteção de rate limit só se aplica aos dois caminhos de deploy (Docker Compose e IIS).
 
@@ -362,6 +381,7 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`) |
 | `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API) |
 | `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto |
+| `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (ADM, DIR, DIRA, SEC, TES; nada é gravado) |
 | `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC, TES) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
@@ -379,14 +399,53 @@ mantém o valor atual, e `null` (ou `""` em `cpf`/`telefone`) o remove (exceto o
 exclusão lógica gravam o estado anterior completo, incluindo esses campos, em `_usuarios_hist`, pela trigger
 `TR_Usuarios_Historico`, na mesma transação.
 
-**RG, tipo sanguíneo e doenças/alergias.** Os três são opcionais (`null` quando não informados ou em cadastros antigos;
-nenhum valor padrão é inventado) e seguem a mesma regra de omissão/limpeza no `PUT`. `rg`: até 20 caracteres (letras sem
+**RG, tipo sanguíneo e doenças/alergias.** Tipo sanguíneo e doenças/alergias são opcionais, e o RG depende de `ehCin` (abaixo)
+(`null` quando não informados ou em cadastros antigos; nenhum valor padrão é inventado); seguem a mesma regra de omissão/limpeza
+no `PUT`. `rg`: até 20 caracteres (letras sem
 acento, dígitos, ponto, hífen, barra e espaço, com ao menos um dígito), gravado como informado e não único.
 `tipoSanguineo`: `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+` ou `O-` (aceita minúsculas, grava em maiúsculas; o banco
 também recusa outro valor pela CHECK `CK_Usuarios_TipoSanguineo`). `doencasAlergias`: **um único texto livre** (um
 `textarea` no frontend, com quebras de linha) com doenças, alergias e cuidados de saúde, até 2000 caracteres na página
 1252 (acentos sim, emojis não); acima do limite é recusado com `400`, nunca truncado. São dados sensíveis: saem só em
 `/api/Usuarios` (mesma autorização do CRUD), nunca em `/api/Auth/Me`, e não são registrados em log.
+
+**Documento: CIN e validade (issue #131).** `ehCin` é `true` quando o documento de identidade do usuário é a Carteira de
+Identidade Nacional; omitido no `POST` grava `false`, e cadastros antigos ficam `false`. `dataExpiracao` é a data de
+validade desse documento (`yyyy-MM-dd`, opcional, `null` em cadastros antigos, pode estar no passado); nada bloqueia login
+por validade nem a liga a `ehCin`. No `PUT`, omitidos mantêm o valor gravado; `ehCin: false` é gravado (não é omissão) e
+`ehCin: null` é recusado com `400`; `dataExpiracao: null` remove a data.
+
+`ehCin` decide se o **RG é obrigatório**: a CIN usa o CPF como número, então com `ehCin: true` só o CPF é exigido e o `rg` é
+opcional (pode ser informado e continua gravado); com `ehCin: false` (ou omitido no `POST`) o `rg` é obrigatório (`400` em
+`errors["Rg"]`). No `PUT` a regra usa os valores efetivos (corpo ou gravados) e segue o padrão do CPF: com `ehCin` false, um RG
+gravado não pode ser removido, sair da CIN exige RG e quem informa `rg` ou `ehCin` no corpo precisa ter RG; um cadastro antigo
+sem RG e sem CIN que não envia esses campos continua editável.
+
+**Endereço (issue #131).** O cliente envia `endereco: { cep, numero, complemento }` e a API consulta o
+[ViaCEP](https://viacep.com.br) e grava cada campo em sua coluna (`Usuarios.Endereco*`, `varchar`): `cep` (8 dígitos, sem
+hífen, zeros à esquerda preservados), `logradouro`, `complementoCep` (o complemento do próprio CEP, ex.: "lado ímpar"),
+`unidade`, `bairro`, `localidade`, `uf`, `estado`, `regiao`, `ibge`, `gia`, `ddd` e `siafi`, junto de `numero` (até 20) e
+`complemento` (o do usuário, até 100). Campos que o ViaCEP devolve vazios ficam `null`; nenhum valor é inventado. O CEP é
+aceito com ou sem hífen (`04382-160` ou `04382160`); outro formato é `400` sem chamar o ViaCEP. A resposta de
+`/api/Usuarios` traz o objeto `endereco` (`null` sem endereço) e, como os dados de saúde, ele não sai em `/api/Auth/Me` nem
+é registrado em log (o cliente do ViaCEP não usa o log padrão do `HttpClient`, que gravaria a URL com o CEP). Para preencher o formulário antes de salvar, use `GET /api/Cep/{cep}` (mesmos campos do
+ViaCEP, com `complemento` = complemento do CEP).
+
+No `PUT`, `endereco` omitido mantém tudo; `null` (ou `cep` `null`/`""`) remove o endereço inteiro; dentro do objeto, `cep`,
+`numero` e `complemento` omitidos mantêm o valor gravado. Só um CEP **diferente** do gravado é consultado; aí todos os dados
+do CEP são substituídos e `numero`/`complemento` omitidos ficam vazios (eram do endereço anterior). CEP inexistente retorna
+`400` (`errors["Endereco.Cep"]`); ViaCEP fora do ar, lento ou com resposta fora do contrato (CEP trocado, campo longo
+demais, caracteres fora da página 1252, código não numérico) retorna `503` — em todos esses casos **nada é gravado** e o
+endereço anterior fica intacto. A consulta do `PUT` é feita antes da transação, sem segurar o lock da linha. A CHECK
+`CK_Usuarios_Endereco` garante no banco que sem CEP não há nenhum campo de endereço e que, com CEP, há 8 dígitos, cidade e UF.
+`ehCin`, `dataExpiracao` e todos os campos do endereço entram no estado anterior gravado em `_usuarios_hist` pela trigger
+`TR_Usuarios_Historico`, inclusive quando só eles mudam (`ehCin` fica `null` nas linhas de histórico anteriores à migration
+`AddUsuariosCinExpiracaoEndereco`).
+
+| Configuração (`ViaCep`) | Padrão | O que controla |
+| --- | --- | --- |
+| `BaseUrl` | `https://viacep.com.br/ws/` | endereço do serviço (só `https`, terminado em `/`) |
+| `TimeoutMs` | `5000` | prazo total de uma consulta (200 a 30000), com uma nova tentativa rápida em falha transitória (5xx, 408, 429, rede) |
 
 **Responsável (issues #112 e #131).** `responsavelNome`, `responsavelEmail`, `responsavelCpf` e `responsavelTelefone`
 seguem as mesmas regras dos campos equivalentes do usuário (o CPF do responsável não é único e não pode ser igual ao
@@ -443,7 +502,9 @@ O agregado financeiro possui um único fluxo de criação, protegido pelas roles
 | `GET` | `/api/Lancamentos` | Lista somente lançamentos ativos, com paginação e filtros |
 | `GET` | `/api/Lancamentos/{id}` | Consulta um lançamento ativo; destino do `Location` da criação individual |
 | `POST` | `/api/Lancamentos/Registrar` | Registra para um membro ou, atomicamente, para todos |
-| `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos |
+| `PUT` | `/api/Lancamentos/{id}` | Atualiza campos permitidos (não marca como `Pago`) |
+| `POST` | `/api/Lancamentos/{id}/Pagamento` | Registra o pagamento efetivo (data e valor liquidados) |
+| `PUT` | `/api/Lancamentos/{id}/Pagamento` | Corrige data e/ou valor de um pagamento já registrado |
 | `DELETE` | `/api/Lancamentos/{id}` | Exclusão lógica auditada, com motivo |
 
 O contrato canônico de criação é:
@@ -471,6 +532,12 @@ operação carrega os IDs elegíveis, insere o lote com `AddRange`/`SaveChanges`
 `OperacaoId`. Repetir chave e payload devolve a operação existente; mudar o payload resulta em
 `409 Conflict`. O hash inclui finalidade, descrição, categoria, fluxo, valor e vencimento.
 
+No modo individual, `Idempotency-Key` é opcional (issue #130). Sem a chave, nada muda: cada `POST`
+é uma nova cobrança, mesmo com conteúdo igual. Com a chave, reenviar a mesma chave e os mesmos dados
+devolve `200` com o lançamento já criado, sem duplicar o lançamento nem a notificação. A mesma chave
+com outro conteúdo, outro membro ou usada no outro modo devolve `409`. A operação fica em
+`LancamentosOperacoes`, com `OperacaoId` no lançamento.
+
 `DELETE` recebe `{ "motivo": "..." }`, apenas muda `Ativo` para `false` e mantém a auditoria por
 trigger/`SESSION_CONTEXT`. Listagens projetam o nome com JOIN, sem armazená-lo em `Lancamentos` e
 sem N+1. `Finalidade` (Mensalidade, Campori etc.) é a natureza; `TipoFluxo` (Entrada/Saida) é a
@@ -492,6 +559,56 @@ usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no J
 `LancamentosService` coordena consultas e alterações individuais. `LancamentoGeralService`
 cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
 contexto SQL de auditoria. `LancamentoMapping` centraliza a projeção das respostas.
+
+### Pagamentos (issue #129)
+
+Um lançamento só representa dinheiro efetivamente movimentado depois que o pagamento é
+**registrado** com a data e o valor reais. `Valor` continua sendo o valor previsto (original).
+
+| Campo da resposta | Significado |
+|---|---|
+| `dataPagamento` | Data efetiva da liquidação (`yyyy-MM-dd`); `null` sem pagamento registrado |
+| `valorPago` | Valor efetivamente pago/recebido; `null` sem pagamento registrado; nunca presumido a partir de `valor` |
+| `valorRestante` | Calculado, não persistido: `valor − valorPago` com pagamento; `valor` sem pagamento; `null` em "Pago" histórico sem dados |
+| `pagamentoRegistradoPorUsuarioId` / `pagamentoRegistradoEmUtc` | Quem registrou ou corrigiu por último o pagamento, e quando (UTC) |
+
+`POST /api/Lancamentos/{id}/Pagamento` registra e `PUT /api/Lancamentos/{id}/Pagamento` corrige,
+ambos com o corpo:
+
+```json
+{ "dataPagamento": "2026-10-15", "valorPago": 50.00 }
+```
+
+Regras:
+
+- `dataPagamento` é obrigatória e não pode ser futura (hoje no fuso do clube, `Clube:FusoHorario`);
+  pode ser diferente do vencimento.
+- `valorPago` é obrigatório, maior que zero, com até 2 casas decimais e **no máximo** o `valor` do
+  lançamento. Um valor menor quita o lançamento com abatimento (`valorRestante` mostra a diferença);
+  **não há pagamento parcial** com saldo em aberto.
+- O registro marca o lançamento como `Pago` e grava o responsável a partir do token (nunca do corpo),
+  além de `DataAtualizacao`/`AtualizadoPorUsuarioId`.
+- `POST` aceita lançamentos `Pendente`, `Atrasado` ou "Pago" histórico sem dados (regularização).
+  Repetir o `POST` depois de registrado retorna `409` (use o `PUT`); `PUT` sem pagamento registrado
+  também retorna `409`.
+- `PUT /api/Lancamentos/{id}` não marca mais como `Pago` (`409` orientando o endpoint dedicado). Em
+  lançamento com pagamento registrado, ele não altera `status`, `valor` nem `tipoFluxo` (`409`);
+  descrição, finalidade, categoria e vencimento continuam editáveis. Estorno (desfazer um pagamento)
+  não existe nesta versão; a exclusão lógica continua disponível e copia os dados de pagamento para
+  `lancamentos_deletados`.
+- Concorrência: `Valor`, `Status`, `DataPagamento` e `ValorPago` são tokens de concorrência do EF;
+  duas confirmações simultâneas resultam em um `200` e `409` para as demais, nunca em pagamento
+  duplicado. Lançamentos de evento seguem a mesma ordem de locks de `/api/Eventos` (linha do
+  evento antes do lançamento), com retentativa segura.
+- O banco garante a coerência com `CK_Lancamentos_Pagamento`: ou nenhum campo de pagamento, ou
+  status `Pago` com data, `0 < ValorPago <= Valor` e responsável.
+- Respostas: `200` com o lançamento, `400` validação, `401`/`403` autorização, `404` inexistente ou
+  excluído, `409` conflito.
+
+**Lançamentos antigos.** A migration `AddLancamentosPagamento` não inventa datas nem valores: os
+lançamentos já marcados como `Pago` ficam com `dataPagamento`/`valorPago` nulos, continuam `Pago` e
+**não entram no dashboard** até serem regularizados com `POST /api/Lancamentos/{id}/Pagamento`
+informando a data e o valor reais. `DataAtualizacao` nunca é usada como data de pagamento.
 
 ## Eventos
 
@@ -595,8 +712,9 @@ motivo e horário UTC do banco. A aplicação **nunca** insere nessa tabela (o u
 limpo no `finally` na mesma conexão física e, se a limpeza falhar, o pool dessa conexão é descartado.
 
 **Lançamentos vinculados a evento** (`EventoId != null`): `PUT /api/Lancamentos/{id}` só aceita mudar
-`status`/`descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
-`409` orientando o uso de `/api/Eventos`. As exceções de eventos (finalidade nula, valor zero, data
+`status` (exceto para `Pago`) e `descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
+`409` orientando o uso de `/api/Eventos`. O pagamento é registrado por `POST /api/Lancamentos/{id}/Pagamento`,
+que também atualiza a linha do evento (muda a `versao`). As exceções de eventos (finalidade nula, valor zero, data
 passada no mês) **não** se aplicam a `POST /api/Lancamentos/Registrar`. `Lancamento.Finalidade` e
 `lancamentos_deletados.Finalidade` agora aceitam `NULL`; ambos ganharam `EventoId`.
 
@@ -613,9 +731,88 @@ variável de ambiente, porta ou credencial nova.
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
 retentativas da mesma tentativa; aplique `dataMinimaCadastro` no seletor de data do cadastro.
 
+## Dashboard
+
+`GET /api/Dashboard[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` devolve, numa resposta só, os
+indicadores do clube. Mesma autorização dos lançamentos (policy `GestaoFinanceira`: `ADM`, `DIR`,
+`DIRA`, `SEC`, `TES`): sem token `401`, outro cargo `403`, filtros inválidos `400`.
+
+```json
+{
+  "periodo": { "dataInicial": "2026-10-01", "dataFinal": "2026-10-31" },
+  "financeiro": { "saldo": 1500.00, "entradas": 2500.00, "saidas": 1000.00 },
+  "desbravadores": { "quantidadeAtivos": 45 },
+  "proximosEventos": [
+    {
+      "eventoGrupoId": "6f0c…",
+      "eventoIds": ["6f0c…", "a91d…"],
+      "data": "2026-11-10",
+      "local": "Acampamento",
+      "quantidadeParticipantes": 30
+    }
+  ]
+}
+```
+
+**Período.** Sem parâmetros: o mês atual no fuso do clube (`Clube:FusoHorario`, a mesma referência
+de `DataCivil`). Com filtro, `dataInicial` e `dataFinal` são obrigatórias juntas, estritamente no
+formato `yyyy-MM-dd`, inclusivas, com `dataInicial <= dataFinal` e no máximo 366 dias (mesmo limite
+de `/api/Eventos`). O período afeta **somente** o financeiro.
+
+**Financeiro.** Soma, no banco, o `valorPago` dos lançamentos ativos com status `Pago` e
+`dataPagamento` dentro do período: `entradas` (`TipoFluxo = Entrada`), `saidas` (`Saida`) e
+`saldo = entradas − saidas`. Não entram pendentes, atrasados, "Pago" históricos sem dados de
+pagamento, lançamentos excluídos logicamente nem pagamentos fora do período. O valor previsto
+(`valor`) nunca é somado. Valores em `decimal(18,2)`, sem arredondamento. Índice filtrado
+`IX_Lancamentos_DataPagamento` atende a consulta.
+
+**Desbravadores.** Total atual de usuários **ativos** com o cargo Desbravador (`Cargos.Role = 'DS'`).
+Diretoria (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`), demais cargos (conselheiros, instrutores, cargos de
+unidade etc.) e usuários inativos não contam. Não depende do período.
+
+**Próximos eventos.** Até 5 passeios com data igual ou posterior a hoje (fuso do clube), em ordem de
+data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoReferenciaId`) aparecem
+uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
+participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
+Não depende do período.
+
+## Notificações (issue #130)
+
+Cada usuário autenticado (inclusive desbravadores) consulta e marca como lidas **as próprias**
+notificações. A leitura é individual e fica gravada no banco. Avisos em tempo real chegam pelo hub
+SignalR `/hubs/notificacoes`. O contrato completo para o frontend (rotas, payloads, sequência de
+conexão e reconexão, deduplicação) está em [`docs/notificacoes.md`](docs/notificacoes.md).
+
+| Método | Rota | Resultado |
+|---|---|---|
+| `GET` | `/api/Notificacoes/Pendentes?pageSize=20&cursor=...` | `200` `{ items, naoLidas, pageSize, proximoCursor }`, só não lidas, da mais recente para a mais antiga |
+| `POST` | `/api/Notificacoes/{id}/Leitura` | `200` `{ notificacao, naoLidas }`, idempotente (preserva a 1ª data); `404` se não for do usuário |
+
+Gatilhos desta versão, gravados na mesma transação do cadastro:
+
+- débito individual (`POST /api/Lancamentos/Registrar`, `Entrada`) notifica o membro do lançamento;
+- débito geral (`aplicarATodosOsMembros`, `Entrada`) notifica cada usuário que recebeu um lançamento,
+  cada um com a própria notificação;
+- novo cadastro de evento (`POST /api/Eventos`) notifica cada participante uma vez, com o valor do
+  lançamento do evento (sem uma segunda notificação de débito).
+
+`Saida` não é cobrança ao membro e não notifica. Reenvios idempotentes e concorrência não duplicam
+notificações (índice único `UX_notificacoes_destinatario_origem`). O aviso em tempo real é gravado na
+própria linha da notificação (outbox) e emitido depois do commit pelo `PublicadorAvisosNotificacoes`,
+com nova tentativa e retomada após reinício. A API REST é a fonte da verdade. Limitações (uma instância,
+IIS) e o runtime mínimo (ASP.NET Core 10.0.13, garantido pelo `Dockerfile` e pelo deploy Windows) estão
+no documento.
+
 ## Banco de dados e migrations
 
-Migrations são aplicadas incrementalmente no startup. `UnifyLancamentosFlow` renomeia `Tipo` para
+Migrations são aplicadas incrementalmente no startup.
+
+`AddLancamentosPagamento` (issue #129) adiciona a `Lancamentos` e `lancamentos_deletados` as colunas
+nulas `DataPagamento` (`date`), `ValorPago` (`decimal(18,2)`), `PagamentoRegistradoPorUsuarioId`
+(FK restritiva para `Usuarios` em `Lancamentos`) e `PagamentoRegistradoEmUtc`, cria
+`CK_Lancamentos_Pagamento` e o índice filtrado `IX_Lancamentos_DataPagamento` e recria
+`TR_Lancamentos_AuditoriaExclusaoLogica` para copiar os novos campos. Nenhuma linha existente é
+alterada; `Down` remove as colunas e restaura o trigger anterior. Nenhuma variável de ambiente nova. `UnifyLancamentosFlow` renomeia `Tipo` para
 `Finalidade`, remove `MembroNome`/`Moeda`, cria a FK restritiva para `Usuarios`, atualiza índices e
 o trigger de auditoria sem apagar o histórico de migrations.
 

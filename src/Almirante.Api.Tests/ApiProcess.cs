@@ -156,7 +156,7 @@ public sealed class ApiProcess : IAsyncDisposable
         Assert.Equal(System.Net.HttpStatusCode.Created, registrar.StatusCode);
         var id = (await registrar.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
 
-        Assert.Equal(System.Net.HttpStatusCode.OK, (await client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status = "Pago" })).StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(client, id, 12.5m)).StatusCode);
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "teste de operacao normal" }) };
         Assert.Equal(System.Net.HttpStatusCode.NoContent, (await client.SendAsync(delete)).StatusCode);
 

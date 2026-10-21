@@ -15,7 +15,7 @@ public sealed class UsuariosDadosPessoaisTests(AlmiranteApiFactory factory) : IC
 
     private async Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string extras, string? email = null)
     {
-        var json = $$"""{"nome":"Fulano","email":"{{email ?? $"f-{Guid.NewGuid():N}@local.dev"}}","senha":"Forte-Senha-9x2k","cargoId":"{{await CargoIdAsync()}}"{{extras}}}""";
+        var json = $$"""{"nome":"Fulano","email":"{{email ?? $"f-{Guid.NewGuid():N}@local.dev"}}","senha":"Forte-Senha-9x2k","cargoId":"{{await CargoIdAsync()}}","rg":"{{TestHelpers.RgFicticio}}"{{extras}}}""";
         return await client.PostAsync("/api/Usuarios", new StringContent(json, Encoding.UTF8, "application/json"));
     }
 

@@ -27,6 +27,9 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         "GET /api/Lancamentos/{id}" => new(HttpMethod.Get, $"/api/Lancamentos/{Guid.NewGuid()}"),
         "POST /api/Lancamentos/Registrar" => new(HttpMethod.Post, "/api/Lancamentos/Registrar") { Content = JsonContent.Create(NovoLancamento(Guid.NewGuid())) },
         "PUT /api/Lancamentos/{id}" => new(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { status = "Pago" }) },
+        "POST /api/Lancamentos/{id}/Pagamento" => new(HttpMethod.Post, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento") { Content = JsonContent.Create(new { dataPagamento = "2026-10-01", valorPago = 10m }) },
+        "PUT /api/Lancamentos/{id}/Pagamento" => new(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento") { Content = JsonContent.Create(new { dataPagamento = "2026-10-01", valorPago = 10m }) },
+        "GET /api/Dashboard" => new(HttpMethod.Get, "/api/Dashboard"),
         "DELETE /api/Lancamentos/{id}" => new(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { motivo = "rbac" }) },
         "GET /api/Eventos" => new(HttpMethod.Get, "/api/Eventos"),
         "POST /api/Eventos" => new(HttpMethod.Post, "/api/Eventos") { Content = JsonContent.Create(EventosTestKit.Corpo(Guid.NewGuid())) },
@@ -38,7 +41,8 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
     public static TheoryData<string> EndpointsAdministrativos => new()
     {
         "GET /api/Usuarios", "POST /api/Usuarios", "PUT /api/Usuarios/{id}", "DELETE /api/Usuarios/{id}", "GET /api/Cargos", "GET /api/Lancamentos", "GET /api/Lancamentos/{id}", "POST /api/Lancamentos/Registrar",
-        "PUT /api/Lancamentos/{id}", "DELETE /api/Lancamentos/{id}",
+        "PUT /api/Lancamentos/{id}", "POST /api/Lancamentos/{id}/Pagamento", "PUT /api/Lancamentos/{id}/Pagamento", "DELETE /api/Lancamentos/{id}",
+        "GET /api/Dashboard",
         "GET /api/Eventos", "POST /api/Eventos", "PUT /api/Eventos/{id}", "DELETE /api/Eventos/{id}",
     };
 
@@ -97,7 +101,9 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         var criado = await client.PostAsJsonAsync("/api/Lancamentos/Registrar", NovoLancamento(membro.Id));
         Assert.Equal(HttpStatusCode.Created, criado.StatusCode);
         var dto = await criado.Content.ReadFromJsonAsync<LancamentoDto>();
-        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync($"/api/Lancamentos/{dto!.Id}", new { status = "Pago" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync($"/api/Lancamentos/{dto!.Id}", new { status = "Atrasado" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(client, dto.Id, dto.Valor)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Dashboard")).StatusCode);
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{dto.Id}") { Content = JsonContent.Create(new { motivo = "rbac" }) };
         Assert.Equal(HttpStatusCode.NoContent, (await client.SendAsync(delete)).StatusCode);
 

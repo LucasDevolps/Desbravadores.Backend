@@ -24,7 +24,9 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [HttpGet]
     [EndpointSummary("Lista os usuários; por padrão, somente os ativos.")]
     [EndpointDescription("includeInactive=true inclui os usuários excluídos logicamente. funcao traz o nome do cargo (ex.: \"Diretor\"). " +
-        "cpf (normalizado), dataNascimento (yyyy-MM-dd), telefone, rg, tipoSanguineo, doencasAlergias e os dados do responsável vêm null quando não cadastrados; " +
+        "cpf (normalizado), dataNascimento (yyyy-MM-dd), telefone, rg, tipoSanguineo, doencasAlergias, dataExpiracao e os dados do responsável vêm null quando não cadastrados; " +
+        "ehCin é false em cadastros antigos; endereco é null sem endereço ou traz cep (8 dígitos), numero e complemento do usuário e os campos do ViaCEP " +
+        "(logradouro, complementoCep, unidade, bairro, localidade, uf, estado, regiao, ibge, gia, ddd, siafi; vazios como null); " +
         "fotoUrl é a rota autenticada da foto (null sem foto).")]
     [ProducesResponseType<IReadOnlyList<UsuarioListItemDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<UsuarioListItemDto>>> List(
@@ -39,15 +41,21 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [EndpointSummary("Cadastra um usuário.")]
     [EndpointDescription("E-mail único sem diferenciar maiúsculas/minúsculas (409 se já existir, inclusive entre inativos). " +
         "cpf é obrigatório: um CPF válido (11 dígitos, com ou sem pontos e hífen), único entre todos os usuários (409 se já existir). " +
-        "dataNascimento (yyyy-MM-dd, não futura), telefone, rg, tipoSanguineo e doencasAlergias são opcionais; telefone é fixo ou celular " +
+        "rg é obrigatório quando ehCin é false ou omitido (400) e opcional com ehCin true (a CIN usa só o CPF). " +
+        "dataNascimento (yyyy-MM-dd, não futura), telefone, tipoSanguineo e doencasAlergias são opcionais; telefone é fixo ou celular " +
         "brasileiro com DDD, gravado só com dígitos; rg tem até 20 caracteres (letras, dígitos, ponto, hífen, barra, espaço) e não é único; " +
         "tipoSanguineo é A+, A-, B+, B-, AB+, AB-, O+ ou O-; doencasAlergias é um texto livre de até 2000 caracteres (recusado acima disso, nunca truncado). " +
         "responsavelNome e responsavelEmail são obrigatórios quando dataNascimento indica menos de 18 anos na data de hoje; " +
         "responsavelCpf e responsavelTelefone seguem as mesmas regras de cpf e telefone (sem unicidade). " +
+        "ehCin (true quando o documento é a Carteira de Identidade Nacional; omitido = false) e dataExpiracao (validade do documento, yyyy-MM-dd, " +
+        "pode ser passada) são opcionais. endereco é opcional: { cep (8 dígitos, com ou sem hífen, obrigatório no objeto), numero " +
+        "(até 20), complemento (até 100) }; a API consulta o ViaCEP e grava os dados oficiais do CEP (400 CEP mal formado ou inexistente, " +
+        "503 ViaCEP indisponível, lento ou com resposta inválida — nada é gravado). " +
         "cargoId deve ser um cargo ativo; somente um Administrador cadastra outro Administrador (403).")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Registrar([FromBody] RegistrarUsuarioRequest request, CancellationToken cancellationToken)
     {
         request.SolicitanteEhAdmin = User.IsInRole(Roles.Admin);
@@ -56,9 +64,15 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpPut("{id:guid}")]
-    [EndpointSummary("Altera nome, e-mail, cargo, dados pessoais e do responsável de um usuário ativo (estado anterior completo auditado em _usuarios_hist).")]
-    [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone, rg, tipoSanguineo, doencasAlergias e " +
-        "os campos do responsável omitidos mantêm o valor atual; null (ou \"\" nos textos) remove, exceto o cpf já gravado, que não pode ser removido (400). " +
+    [EndpointSummary("Altera nome, e-mail, cargo, dados pessoais, documento, endereço e responsável de um usuário ativo (estado anterior completo auditado em _usuarios_hist).")]
+    [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone, rg, tipoSanguineo, doencasAlergias, " +
+        "ehCin, dataExpiracao, endereco e os campos do responsável omitidos mantêm o valor atual; null (ou \"\" nos textos) remove, exceto o cpf já " +
+        "gravado, que não pode ser removido (400), e ehCin, que só aceita true ou false (false é gravado, não é omissão). " +
+        "Com ehCin efetivo false, o rg é exigido (400) de quem já tinha RG ou era CIN e de quem envia rg ou ehCin; com ehCin true o rg é opcional; " +
+        "um cadastro antigo sem RG e sem CIN que não envia esses campos continua editável. " +
+        "endereco: omitido mantém; null ou cep null/\"\" remove o endereço inteiro; dentro do objeto, cep, numero e complemento omitidos mantêm o atual. " +
+        "Só um CEP diferente do gravado é consultado no ViaCEP, e então todos os dados do CEP são substituídos e numero/complemento omitidos ficam vazios. " +
+        "Se a consulta falhar (400 CEP inexistente, 503 ViaCEP indisponível/lento/resposta inválida), nada é alterado. " +
         "A obrigatoriedade do responsável usa a data de nascimento informada ou, se omitida, " +
         "a já gravada (400 se o menor de 18 anos ficar sem nome ou e-mail do responsável). " +
         "409 se o e-mail ou o CPF pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente.")]
@@ -66,6 +80,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUsuarioRequest request, CancellationToken cancellationToken)
     {
         if (!User.TentarObterUsuarioId(out var usuarioId))

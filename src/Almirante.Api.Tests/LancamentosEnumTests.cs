@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Almirante.Api.Dtos;
+using Almirante.Api.Entities;
 
 namespace Almirante.Api.Tests;
 
@@ -71,6 +72,12 @@ public sealed class LancamentosEnumTests(AlmiranteApiFactory factory) : IClassFi
         var id = json.RootElement.GetProperty("id").GetGuid();
 
         var updated = await client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { status });
+        if (status == (int)StatusLancamento.Pago)
+        {
+            Assert.Equal(HttpStatusCode.Conflict, updated.StatusCode);
+            updated = await TestHelpers.PagarAsync(client, id);
+        }
+
         Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
         using var updatedJson = JsonDocument.Parse(await updated.Content.ReadAsStringAsync());
         Assert.Equal(nomeStatus, updatedJson.RootElement.GetProperty("status").GetString());

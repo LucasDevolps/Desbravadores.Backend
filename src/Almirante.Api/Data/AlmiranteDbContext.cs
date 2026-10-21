@@ -1,4 +1,5 @@
 using Almirante.Api.Entities;
+using Almirante.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Data;
@@ -12,6 +13,41 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
     public const string CheckTipoSanguineo =
         "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')";
+
+    /// <summary>Colunas varchar do endereço, iguais em Usuarios e _usuarios_hist (EnderecoCep primeiro).</summary>
+    public static readonly (string Coluna, int Tamanho)[] ColunasEndereco =
+    [
+        (nameof(Usuario.EnderecoCep), Validation.Usuarios.Cep.Digitos),
+        (nameof(Usuario.EnderecoLogradouro), Validation.Usuarios.Endereco.LogradouroMaximo),
+        (nameof(Usuario.EnderecoNumero), Validation.Usuarios.Endereco.NumeroMaximo),
+        (nameof(Usuario.EnderecoComplemento), Validation.Usuarios.Endereco.ComplementoMaximo),
+        (nameof(Usuario.EnderecoComplementoCep), Validation.Usuarios.Endereco.ComplementoCepMaximo),
+        (nameof(Usuario.EnderecoUnidade), Validation.Usuarios.Endereco.UnidadeMaximo),
+        (nameof(Usuario.EnderecoBairro), Validation.Usuarios.Endereco.BairroMaximo),
+        (nameof(Usuario.EnderecoLocalidade), Validation.Usuarios.Endereco.LocalidadeMaximo),
+        (nameof(Usuario.EnderecoUf), Validation.Usuarios.Endereco.UfTamanho),
+        (nameof(Usuario.EnderecoEstado), Validation.Usuarios.Endereco.EstadoMaximo),
+        (nameof(Usuario.EnderecoRegiao), Validation.Usuarios.Endereco.RegiaoMaximo),
+        (nameof(Usuario.EnderecoIbge), Validation.Usuarios.Endereco.IbgeMaximo),
+        (nameof(Usuario.EnderecoGia), Validation.Usuarios.Endereco.GiaMaximo),
+        (nameof(Usuario.EnderecoDdd), Validation.Usuarios.Endereco.DddMaximo),
+        (nameof(Usuario.EnderecoSiafi), Validation.Usuarios.Endereco.SiafiMaximo),
+    ];
+
+    /// <summary>Sem CEP, nenhum campo de endereço; com CEP, 8 dígitos, cidade e UF (duas letras maiúsculas).</summary>
+    public static readonly string CheckEndereco =
+        "(" + string.Join(" AND ", ColunasEndereco.Select(c => $"[{c.Coluna}] IS NULL")) + ")" +
+        " OR ([EnderecoCep] IS NOT NULL AND DATALENGTH([EnderecoCep]) = 8 AND [EnderecoCep] COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9]%'" +
+        " AND [EnderecoLocalidade] IS NOT NULL AND [EnderecoUf] IS NOT NULL AND [EnderecoUf] COLLATE Latin1_General_BIN2 LIKE '[A-Z][A-Z]')";
+
+    /// <summary>
+    /// Sem pagamento registrado, nenhum campo de pagamento (vale para os "Pago" históricos);
+    /// com pagamento, status Pago, data, 0 &lt; ValorPago &lt;= Valor e o responsável pelo registro.
+    /// </summary>
+    public const string CheckPagamento =
+        "([DataPagamento] IS NULL AND [ValorPago] IS NULL AND [PagamentoRegistradoPorUsuarioId] IS NULL AND [PagamentoRegistradoEmUtc] IS NULL)" +
+        " OR ([Status] = 1 AND [DataPagamento] IS NOT NULL AND [ValorPago] > 0 AND [ValorPago] <= [Valor]" +
+        " AND [PagamentoRegistradoPorUsuarioId] IS NOT NULL AND [PagamentoRegistradoEmUtc] IS NOT NULL)";
 
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
@@ -29,6 +65,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
     public DbSet<UsuarioHistorico> UsuariosHistorico => Set<UsuarioHistorico>();
 
+    public DbSet<Notificacao> Notificacoes => Set<Notificacao>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Usuario>(entity =>
@@ -38,6 +76,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.UseSqlOutputClause(false);
                 table.HasCheckConstraint("CK_Usuarios_FotoCaminho", CheckFotoCaminho);
                 table.HasCheckConstraint("CK_Usuarios_TipoSanguineo", CheckTipoSanguineo);
+                table.HasCheckConstraint("CK_Usuarios_Endereco", CheckEndereco);
             });
             entity.HasKey(u => u.Id);
             entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
@@ -54,6 +93,12 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(u => u.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(u => u.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
             entity.Property(u => u.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
+            entity.Property(u => u.EhCin).IsRequired();
+            entity.Property(u => u.DataExpiracao).HasColumnType("date");
+            foreach (var (coluna, tamanho) in ColunasEndereco)
+            {
+                entity.Property<string?>(coluna).HasColumnType($"varchar({tamanho})").HasMaxLength(tamanho).IsUnicode(false);
+            }
             entity.Property(u => u.SenhaHash).IsRequired();
             entity.Property(u => u.SecurityVersion).IsConcurrencyToken();
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
@@ -98,15 +143,22 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
                 table.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
                 table.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+                table.HasCheckConstraint("CK_Lancamentos_Pagamento", CheckPagamento);
             });
             entity.HasKey(l => l.Id);
             entity.Property(l => l.Finalidade).HasMaxLength(50);
             entity.Property(l => l.Descricao).HasMaxLength(500);
             entity.Property(l => l.Categoria).HasConversion<int>().IsRequired();
             entity.Property(l => l.TipoFluxo).HasConversion<int>().IsRequired();
-            entity.Property(l => l.Valor).HasColumnType("decimal(18,2)");
-            entity.Property(l => l.Status).HasConversion<int>().IsRequired();
+            entity.Property(l => l.Valor).HasColumnType("decimal(18,2)").IsConcurrencyToken();
+            entity.Property(l => l.Status).HasConversion<int>().IsRequired().IsConcurrencyToken();
             entity.Property(l => l.Ativo).IsRequired();
+            entity.Property(l => l.DataPagamento).HasColumnType("date").IsConcurrencyToken();
+            entity.Property(l => l.ValorPago).HasColumnType("decimal(18,2)").IsConcurrencyToken();
+
+            entity.HasIndex(l => l.DataPagamento)
+                .HasFilter("[DataPagamento] IS NOT NULL")
+                .IncludeProperties(l => new { l.TipoFluxo, l.ValorPago, l.Status, l.Ativo });
 
             entity.HasIndex(l => l.Status);
             entity.HasIndex(l => l.Finalidade);
@@ -121,6 +173,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasOne<Usuario>()
                 .WithMany()
                 .HasForeignKey(l => l.AtualizadoPorUsuarioId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne<Usuario>()
+                .WithMany()
+                .HasForeignKey(l => l.PagamentoRegistradoPorUsuarioId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -164,6 +221,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(d => d.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(d => d.Valor).HasColumnType("decimal(18,2)");
             entity.Property(d => d.Status).HasConversion<int>().IsRequired();
+            entity.Property(d => d.DataPagamento).HasColumnType("date");
+            entity.Property(d => d.ValorPago).HasColumnType("decimal(18,2)");
 
             entity.HasIndex(d => d.LancamentoId);
 
@@ -282,6 +341,11 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.Property(h => h.Rg).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(h => h.TipoSanguineo).HasColumnType("varchar(3)").HasMaxLength(3).IsUnicode(false);
             entity.Property(h => h.DoencasAlergias).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
+            entity.Property(h => h.DataExpiracao).HasColumnType("date");
+            foreach (var (coluna, tamanho) in ColunasEndereco)
+            {
+                entity.Property<string?>(coluna).HasColumnType($"varchar({tamanho})").HasMaxLength(tamanho).IsUnicode(false);
+            }
             entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
             entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();
@@ -289,6 +353,48 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.HasIndex(h => h.UsuarioId);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioResponsavelId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Notificacao>(entity =>
+        {
+            entity.ToTable("notificacoes", table =>
+            {
+                table.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2)");
+                table.HasCheckConstraint("CK_notificacoes_Aviso",
+                    "([AvisoPendente] IS NULL AND [AvisoProximaTentativaEmUtc] IS NULL)" +
+                    " OR ([AvisoPendente] IN (1, 2) AND [AvisoProximaTentativaEmUtc] IS NOT NULL)");
+                table.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
+            });
+            entity.HasKey(n => n.Id);
+            entity.Property(n => n.Tipo).HasConversion<int>().IsRequired();
+            entity.Property(n => n.Titulo).HasColumnType($"varchar({NotificacoesFabrica.TituloMaximo})")
+                .HasMaxLength(NotificacoesFabrica.TituloMaximo).IsUnicode(false).IsRequired();
+            entity.Property(n => n.Mensagem).HasColumnType($"varchar({NotificacoesFabrica.MensagemMaximo})")
+                .HasMaxLength(NotificacoesFabrica.MensagemMaximo).IsUnicode(false).IsRequired();
+            entity.Property(n => n.ChaveOrigem).HasColumnType($"varchar({NotificacoesFabrica.ChaveOrigemMaximo})")
+                .HasMaxLength(NotificacoesFabrica.ChaveOrigemMaximo).IsUnicode(false).IsRequired();
+            entity.Property(n => n.CriadaEmUtc).HasConversion(v => v, v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+            entity.Property(n => n.LidaEmUtc).IsConcurrencyToken()
+                .HasConversion(v => v, v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v);
+            entity.Property(n => n.AvisoPendente).HasConversion<int?>();
+
+            entity.HasIndex(n => new { n.DestinatarioId, n.ChaveOrigem })
+                .IsUnique()
+                .HasDatabaseName("UX_notificacoes_destinatario_origem");
+            entity.HasIndex(n => new { n.DestinatarioId, n.CriadaEmUtc, n.Id })
+                .IsDescending(false, true, true)
+                .HasDatabaseName("IX_notificacoes_pendentes")
+                .HasFilter("[LidaEmUtc] IS NULL");
+            entity.HasIndex(n => n.AvisoProximaTentativaEmUtc)
+                .HasDatabaseName("IX_notificacoes_aviso_pendente")
+                .HasFilter("[AvisoPendente] IS NOT NULL")
+                .IncludeProperties(n => new { n.AvisoPendente, n.AvisoTentativas });
+            entity.HasIndex(n => n.EventoId);
+            entity.HasIndex(n => n.LancamentoId);
+
+            entity.HasOne<Usuario>().WithMany().HasForeignKey(n => n.DestinatarioId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Evento>().WithMany().HasForeignKey(n => n.EventoId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Lancamento>().WithMany().HasForeignKey(n => n.LancamentoId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Cargo>(entity =>

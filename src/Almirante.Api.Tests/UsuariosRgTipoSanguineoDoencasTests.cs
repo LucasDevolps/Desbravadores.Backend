@@ -21,6 +21,7 @@ public sealed class UsuariosRgTipoSanguineoDoencasTests(AlmiranteApiFactory fact
             ["senha"] = "Forte-Senha-9x2k",
             ["cargoId"] = (await CargoIdAsync()).ToString(),
             ["cpf"] = TestHelpers.NovoCpf(),
+            ["ehCin"] = true,
         };
         extras?.Invoke(corpo);
         return (await client.PostAsJsonAsync("/api/Usuarios", corpo), email);

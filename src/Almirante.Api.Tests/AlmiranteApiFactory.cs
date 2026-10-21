@@ -29,6 +29,8 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     public TestLogSink Logs { get; } = new();
 
+    public ViaCepFalso ViaCep { get; } = new();
+
     public string FotosPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N"));
 
     protected virtual string EnvironmentName => "Development";
@@ -56,6 +58,7 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
                 ["LoginProtection:RateLimit:PermitLimit"] = "10000",
                 ["LoginProtection:Lockout:MaxFailedAttempts"] = "1000",
                 ["Media:Storage:Path"] = FotosPath,
+                ["ViaCep:TimeoutMs"] = "600",
             };
             ConfigureSettings(settings);
             config.AddInMemoryCollection(settings);
@@ -81,6 +84,7 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
             ConfigureDatabase(services);
             services.AddSingleton<IStartupFilter, TestEndpointsStartupFilter>();
+            services.AddHttpClient(Almirante.Api.Services.ViaCepClient.NomeHttpClient).ConfigurePrimaryHttpMessageHandler(() => ViaCep);
             ConfigureTestServices(services);
         });
     }

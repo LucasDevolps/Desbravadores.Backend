@@ -379,6 +379,10 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateOnly?>("DataPagamento")
+                        .IsConcurrencyToken()
+                        .HasColumnType("date");
+
                     b.Property<string>("Descricao")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
@@ -396,13 +400,25 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("PagamentoRegistradoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("PagamentoRegistradoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("Status")
+                        .IsConcurrencyToken()
                         .HasColumnType("int");
 
                     b.Property<int>("TipoFluxo")
                         .HasColumnType("int");
 
                     b.Property<decimal>("Valor")
+                        .IsConcurrencyToken()
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("ValorPago")
+                        .IsConcurrencyToken()
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateOnly>("Vencimento")
@@ -414,6 +430,11 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("AtualizadoPorUsuarioId");
 
+                    b.HasIndex("DataPagamento")
+                        .HasFilter("[DataPagamento] IS NOT NULL");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("DataPagamento"), new[] { "TipoFluxo", "ValorPago", "Status", "Ativo" });
+
                     b.HasIndex("EventoId");
 
                     b.HasIndex("Finalidade");
@@ -422,6 +443,8 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("OperacaoId");
 
+                    b.HasIndex("PagamentoRegistradoPorUsuarioId");
+
                     b.HasIndex("Status");
 
                     b.HasIndex("Vencimento");
@@ -429,6 +452,8 @@ namespace Almirante.Api.Data.Migrations
                     b.ToTable("Lancamentos", null, t =>
                         {
                             t.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_Lancamentos_Pagamento", "([DataPagamento] IS NULL AND [ValorPago] IS NULL AND [PagamentoRegistradoPorUsuarioId] IS NULL AND [PagamentoRegistradoEmUtc] IS NULL) OR ([Status] = 1 AND [DataPagamento] IS NOT NULL AND [ValorPago] > 0 AND [ValorPago] <= [Valor] AND [PagamentoRegistradoPorUsuarioId] IS NOT NULL AND [PagamentoRegistradoEmUtc] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
 
@@ -449,6 +474,9 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<DateTime>("DataCriacaoOriginal")
                         .HasColumnType("datetime2");
+
+                    b.Property<DateOnly?>("DataPagamento")
+                        .HasColumnType("date");
 
                     b.Property<Guid?>("EventoId")
                         .HasColumnType("uniqueidentifier");
@@ -479,6 +507,12 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime?>("PagamentoRegistradoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("PagamentoRegistradoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
@@ -489,6 +523,9 @@ namespace Almirante.Api.Data.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<decimal>("Valor")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("ValorPago")
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateOnly>("Vencimento")
@@ -574,6 +611,89 @@ namespace Almirante.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.Notificacao", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("AvisoPendente")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("AvisoProximaTentativaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("AvisoTentativas")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ChaveOrigem")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<DateTime>("CriadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("DestinatarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("EventoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("LancamentoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("LidaEmUtc")
+                        .IsConcurrencyToken()
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Mensagem")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<int>("Tipo")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Titulo")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AvisoProximaTentativaEmUtc")
+                        .HasDatabaseName("IX_notificacoes_aviso_pendente")
+                        .HasFilter("[AvisoPendente] IS NOT NULL");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("AvisoProximaTentativaEmUtc"), new[] { "AvisoPendente", "AvisoTentativas" });
+
+                    b.HasIndex("EventoId");
+
+                    b.HasIndex("LancamentoId");
+
+                    b.HasIndex("DestinatarioId", "ChaveOrigem")
+                        .IsUnique()
+                        .HasDatabaseName("UX_notificacoes_destinatario_origem");
+
+                    b.HasIndex("DestinatarioId", "CriadaEmUtc", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("IX_notificacoes_pendentes")
+                        .HasFilter("[LidaEmUtc] IS NULL");
+
+                    b.ToTable("notificacoes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_notificacoes_Aviso", "([AvisoPendente] IS NULL AND [AvisoProximaTentativaEmUtc] IS NULL) OR ([AvisoPendente] IN (1, 2) AND [AvisoProximaTentativaEmUtc] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
+
+                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2)");
+                        });
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -642,6 +762,9 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateOnly?>("DataExpiracao")
+                        .HasColumnType("date");
+
                     b.Property<DateOnly?>("DataNascimento")
                         .HasColumnType("date");
 
@@ -649,6 +772,9 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(2000)
                         .IsUnicode(false)
                         .HasColumnType("varchar(2000)");
+
+                    b.Property<bool>("EhCin")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -661,6 +787,81 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(100)
                         .IsUnicode(false)
                         .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoBairro")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoCep")
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
+
+                    b.Property<string>("EnderecoComplemento")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoComplementoCep")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoDdd")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoEstado")
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("EnderecoGia")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoIbge")
+                        .HasMaxLength(7)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(7)");
+
+                    b.Property<string>("EnderecoLocalidade")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoLogradouro")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoNumero")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoRegiao")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoSiafi")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoUf")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoUnidade")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<int>("FalhasLoginConsecutivas")
                         .HasColumnType("int");
@@ -738,6 +939,8 @@ namespace Almirante.Api.Data.Migrations
 
                     b.ToTable("Usuarios", null, t =>
                         {
+                            t.HasCheckConstraint("CK_Usuarios_Endereco", "([EnderecoCep] IS NULL AND [EnderecoLogradouro] IS NULL AND [EnderecoNumero] IS NULL AND [EnderecoComplemento] IS NULL AND [EnderecoComplementoCep] IS NULL AND [EnderecoUnidade] IS NULL AND [EnderecoBairro] IS NULL AND [EnderecoLocalidade] IS NULL AND [EnderecoUf] IS NULL AND [EnderecoEstado] IS NULL AND [EnderecoRegiao] IS NULL AND [EnderecoIbge] IS NULL AND [EnderecoGia] IS NULL AND [EnderecoDdd] IS NULL AND [EnderecoSiafi] IS NULL) OR ([EnderecoCep] IS NOT NULL AND DATALENGTH([EnderecoCep]) = 8 AND [EnderecoCep] COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9]%' AND [EnderecoLocalidade] IS NOT NULL AND [EnderecoUf] IS NOT NULL AND [EnderecoUf] COLLATE Latin1_General_BIN2 LIKE '[A-Z][A-Z]')");
+
                             t.HasCheckConstraint("CK_Usuarios_FotoCaminho", "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79 AND [FotoCaminho] COLLATE Latin1_General_BIN2 LIKE 'usuarios/' + LOWER(REPLACE(CONVERT(char(36), [Id]), '-', '')) + '/%.webp' AND SUBSTRING([FotoCaminho], 43, 32) COLLATE Latin1_General_BIN2 NOT LIKE '%[^0-9a-f]%')");
 
                             t.HasCheckConstraint("CK_Usuarios_TipoSanguineo", "[TipoSanguineo] IS NULL OR [TipoSanguineo] COLLATE Latin1_General_BIN2 IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')");
@@ -774,6 +977,9 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateTime>("DataCriacao")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateOnly?>("DataExpiracao")
+                        .HasColumnType("date");
+
                     b.Property<DateOnly?>("DataNascimento")
                         .HasColumnType("date");
 
@@ -782,10 +988,88 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(2000)");
 
+                    b.Property<bool?>("EhCin")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("EnderecoBairro")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoCep")
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
+
+                    b.Property<string>("EnderecoComplemento")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoComplementoCep")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoDdd")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoEstado")
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("EnderecoGia")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoIbge")
+                        .HasMaxLength(7)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(7)");
+
+                    b.Property<string>("EnderecoLocalidade")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("EnderecoLogradouro")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("EnderecoNumero")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoRegiao")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("EnderecoSiafi")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("EnderecoUf")
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<string>("EnderecoUnidade")
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("FotoCaminho")
                         .HasMaxLength(79)
@@ -964,6 +1248,11 @@ namespace Almirante.Api.Data.Migrations
                         .HasForeignKey("MembroId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("PagamentoRegistradoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Membro");
                 });
 
@@ -989,6 +1278,25 @@ namespace Almirante.Api.Data.Migrations
                         .HasForeignKey("CriadoPorUsuarioId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Notificacao", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("DestinatarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Evento", null)
+                        .WithMany()
+                        .HasForeignKey("EventoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Lancamento", null)
+                        .WithMany()
+                        .HasForeignKey("LancamentoId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>

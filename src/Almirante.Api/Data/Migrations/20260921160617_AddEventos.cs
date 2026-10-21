@@ -350,7 +350,7 @@ namespace Almirante.Api.Data.Migrations
             migrationBuilder.Sql(LancamentosTrigger(comEventoId: false));
         }
 
-        private static string LancamentosTrigger(bool comEventoId) => $$"""
+        internal static string LancamentosTrigger(bool comEventoId) => $$"""
             CREATE TRIGGER [TR_Lancamentos_AuditoriaExclusaoLogica] ON [Lancamentos] AFTER UPDATE AS
             BEGIN
               SET NOCOUNT ON;

@@ -19,6 +19,13 @@ internal static class LancamentoMapping
         Vencimento = lancamento.Vencimento,
         Status = lancamento.Status,
         EventoId = lancamento.EventoId,
+        DataPagamento = lancamento.DataPagamento,
+        ValorPago = lancamento.ValorPago,
+        ValorRestante = lancamento.ValorPago != null
+            ? lancamento.Valor - lancamento.ValorPago
+            : lancamento.Status == StatusLancamento.Pago ? (decimal?)null : lancamento.Valor,
+        PagamentoRegistradoPorUsuarioId = lancamento.PagamentoRegistradoPorUsuarioId,
+        PagamentoRegistradoEmUtc = lancamento.PagamentoRegistradoEmUtc,
     };
 
     public static readonly Func<Lancamento, LancamentoDto> ToDto = Projection.Compile();

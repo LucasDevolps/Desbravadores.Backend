@@ -139,7 +139,7 @@ public static class DbSeeder
             new Cargo { Id = Guid.NewGuid(), Nome = "Padioleiro", Descricao = "Cuida da caixa de primeiros socorros da unidade.", CriadoPor = criadoPor, Role = "PAD" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Coordenador de Recreação", Descricao = "Inventa jogos e desafios para o Cantinho da Unidade.", CriadoPor = criadoPor, Role = "COREC" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Capelão de Unidade", Descricao = "Lidera os momentos espirituais e incentiva o ano bíblico na unidade.", CriadoPor = criadoPor, Role = "CAPU" },
-            new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Jovem de 10 a 15 anos, membro do clube, que pode ocupar qualquer um dos cargos de unidade.", CriadoPor = criadoPor, Role = "DS" },
+            new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Jovem de 10 a 15 anos, membro do clube, que pode ocupar qualquer um dos cargos de unidade.", CriadoPor = criadoPor, Role = Roles.Desbravador },
         };
 
         db.Cargos.AddRange(cargos);
