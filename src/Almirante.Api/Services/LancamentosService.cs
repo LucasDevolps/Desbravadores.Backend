@@ -63,7 +63,7 @@ public sealed class LancamentosService(
         }
 
         var membro = await db.Usuarios.AsNoTracking()
-            .Where(u => u.Id == request.MembroId)
+            .Where(u => u.Id == request.MembroId && u.Ativo)
             .Select(u => new { u.Id, u.Nome })
             .SingleOrDefaultAsync(ct);
         if (membro is null)

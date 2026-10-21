@@ -46,7 +46,8 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         "Modo individual: 201 com o lançamento. Idempotency-Key é opcional no modo individual: sem ele, cada POST cria uma nova cobrança " +
         "(nada é deduplicado por conteúdo); com ele, reenviar a mesma chave e os mesmos dados devolve 200 com o lançamento já criado, " +
         "e a mesma chave com dados diferentes (inclusive outro membro ou o outro modo) devolve 409. " +
-        "Lançamentos de Entrada atribuídos a um membro (débitos) geram uma notificação para esse membro na mesma transação; Saída não notifica.")]
+        "Lançamentos de Entrada atribuídos a um membro (débitos) geram uma notificação para esse membro na mesma transação; Saída não notifica. " +
+        "Só membros ativos são cobrados: no modo individual, membro inexistente ou inativo devolve 404; no modo geral, inativos ficam de fora.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<LancamentoGeralResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
