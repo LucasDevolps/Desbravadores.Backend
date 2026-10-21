@@ -1,3 +1,4 @@
+using System.Data;
 using Almirante.Api.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -46,10 +47,11 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
     public async Task DefinirContextoAuditoriaAsync(Guid usuarioId, string ip, string motivo, CancellationToken ct)
     {
         _definido = true;
+        // varchar como as colunas de auditoria (IpResponsavel varchar(45), Motivo varchar(255)): os triggers leem com TRY_CAST.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={usuarioId};
-            EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={ip};
-            EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value={motivo};
+            EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={new SqlParameter("@ip", SqlDbType.VarChar, 45) { Value = ip }};
+            EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value={new SqlParameter("@motivo", SqlDbType.VarChar, 255) { Value = motivo }};
             """, ct);
     }
 

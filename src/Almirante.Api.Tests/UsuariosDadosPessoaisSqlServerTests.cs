@@ -198,7 +198,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
             {
                 "Usuarios.Cpf=varchar(20) NULL", "Usuarios.DataNascimento=date(3) NULL", "Usuarios.Email=varchar(100)",
                 "Usuarios.EmailNormalizado=varchar(100)", "Usuarios.Telefone=varchar(20) NULL",
-                "_usuarios_hist.Cpf=varchar(20) NULL", "_usuarios_hist.DataNascimento=date(3) NULL", "_usuarios_hist.Email=nvarchar(512)",
+                "_usuarios_hist.Cpf=varchar(20) NULL", "_usuarios_hist.DataNascimento=date(3) NULL", "_usuarios_hist.Email=varchar(256)",
                 "_usuarios_hist.Telefone=varchar(20) NULL",
             }.Order(),
             tipos.Order());

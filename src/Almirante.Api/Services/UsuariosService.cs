@@ -268,7 +268,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             {
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"""
-                    UPDATE dbo.Usuarios SET Nome = {nome}, Email = {Varchar("@email", email, EmailMaximo)},
+                    UPDATE dbo.Usuarios SET Nome = {Varchar("@nome", nome, NomeMaximo)},Email = {Varchar("@email", email, EmailMaximo)},
                         EmailNormalizado = {Varchar("@emailNormalizado", emailNormalizado, EmailMaximo)}, CargoId = {cargo.Id},
                         Cpf = {Varchar("@cpf", cpf, 20)}, DataNascimento = {dataNascimento}, Telefone = {Varchar("@telefone", telefone, 20)},
                         ResponsavelNome = {Varchar("@responsavelNome", responsavelNome, NomeMaximo)},

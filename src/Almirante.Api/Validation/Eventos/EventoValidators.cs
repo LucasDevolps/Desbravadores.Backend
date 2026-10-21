@@ -1,5 +1,6 @@
 using Almirante.Api.Dtos;
 using Almirante.Api.Services;
+using Almirante.Api.Validation.Usuarios;
 using FluentValidation;
 
 namespace Almirante.Api.Validation.Eventos;
@@ -15,7 +16,9 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
         RuleFor(x => x.Local)
             .Must(local => EventoRegras.NormalizarLocal(local).Length > 0).WithMessage("local é obrigatório.")
             .Must(local => EventoRegras.NormalizarLocal(local).Length <= EventoRegras.LocalMaximo)
-            .WithMessage($"local deve ter no máximo {EventoRegras.LocalMaximo} caracteres.");
+            .WithMessage($"local deve ter no máximo {EventoRegras.LocalMaximo} caracteres.")
+            .Must(local => TextoVarchar.CabeNaPagina1252(EventoRegras.NormalizarLocal(local)))
+            .WithMessage(TextoVarchar.ForaDaPagina1252("local"));
 
         RuleFor(x => x.Transporte).NotNull().WithMessage("transporte é obrigatório (objeto com ehGratis e valor).");
         RuleFor(x => x.Transporte!.EhGratis).NotNull().WithMessage("transporte.ehGratis é obrigatório.").When(x => x.Transporte is not null);
@@ -86,6 +89,7 @@ public sealed class UpdateEventoRequestValidator : EventoConteudoValidator<Updat
         RuleFor(x => x.Motivo)
             .Must(m => m!.Trim().Length is >= 1 and <= EventoRegras.MotivoMaximo)
             .WithMessage($"motivo deve ter de 1 a {EventoRegras.MotivoMaximo} caracteres.")
+            .Must(m => TextoVarchar.CabeNaPagina1252(m!.Trim())).WithMessage(TextoVarchar.ForaDaPagina1252("motivo"))
             .When(x => x.Motivo is not null);
     }
 }
@@ -97,7 +101,8 @@ public sealed class DeleteEventoRequestValidator : AbstractValidator<DeleteEvent
         RuleLevelCascadeMode = CascadeMode.Stop;
         RuleFor(x => x.Motivo)
             .Must(m => !string.IsNullOrWhiteSpace(m)).WithMessage("motivo é obrigatório.")
-            .Must(m => m!.Trim().Length <= EventoRegras.MotivoMaximo).WithMessage($"motivo deve ter no máximo {EventoRegras.MotivoMaximo} caracteres.");
+            .Must(m => m!.Trim().Length <= EventoRegras.MotivoMaximo).WithMessage($"motivo deve ter no máximo {EventoRegras.MotivoMaximo} caracteres.")
+            .Must(m => TextoVarchar.CabeNaPagina1252(m!.Trim())).WithMessage(TextoVarchar.ForaDaPagina1252("motivo"));
         RuleFor(x => x.Versao)
             .Must(v => EventoRegras.TentarLerVersao(v, out _)).WithMessage("versao é obrigatória e deve ser a versão devolvida pela API.");
     }
