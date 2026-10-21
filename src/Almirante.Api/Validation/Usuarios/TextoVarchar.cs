@@ -1,4 +1,5 @@
 using System.Text;
+using FluentValidation;
 
 namespace Almirante.Api.Validation.Usuarios;
 
@@ -23,6 +24,14 @@ public static class TextoVarchar
             return false;
         }
     }
+
+    /// <summary>Texto livre gravado em coluna varchar(<paramref name="maximo"/>): limita o tamanho e recusa o que não cabe na página 1252.</summary>
+    public static IRuleBuilderOptions<T, string> CabeEmVarchar<T>(this IRuleBuilder<T, string> regra, string campo, int maximo) =>
+        regra.Must(texto => texto.Length <= maximo).WithMessage($"{campo} deve ter no máximo {maximo} caracteres.")
+            .Must(texto => CabeNaPagina1252(texto)).WithMessage(ForaDaPagina1252(campo));
+
+    public static string ForaDaPagina1252(string campo) =>
+        $"{campo} contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).";
 
     private static readonly Encoding Pagina1252Substituta = CriarPagina1252(new EncoderReplacementFallback("?"));
 
