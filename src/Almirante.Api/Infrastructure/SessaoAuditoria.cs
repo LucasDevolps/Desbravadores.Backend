@@ -55,6 +55,14 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
             """, ct);
     }
 
+    /// <summary>Contexto dos triggers de formacao_historico: além do responsável e do motivo (justificativa), a ação executada.</summary>
+    public async Task DefinirContextoFormacaoAsync(Guid usuarioId, string ip, string acao, string? justificativa, CancellationToken ct)
+    {
+        await DefinirContextoAuditoriaAsync(usuarioId, ip, justificativa ?? string.Empty, ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"EXEC sys.sp_set_session_context @key=N'AcaoAuditoria', @value={new SqlParameter("@acao", SqlDbType.VarChar, 40) { Value = acao }};", ct);
+    }
+
     public async Task<bool> LimparAsync(ILogger logger)
     {
         if (!_definido)
@@ -68,6 +76,7 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
                 EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=NULL;
                 EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value=NULL;
                 EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value=NULL;
+                EXEC sys.sp_set_session_context @key=N'AcaoAuditoria', @value=NULL;
                 """, CancellationToken.None);
             return true;
         }

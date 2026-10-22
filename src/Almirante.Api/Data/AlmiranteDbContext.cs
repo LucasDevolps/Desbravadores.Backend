@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Data;
 
-public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : DbContext(options)
+public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : DbContext(options)
 {
     public const string CheckFotoCaminho =
         "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79" +
@@ -67,8 +67,24 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
     public DbSet<Notificacao> Notificacoes => Set<Notificacao>();
 
+    public DbSet<Especialidade> Especialidades => Set<Especialidade>();
+    public DbSet<EspecialidadePreRequisito> EspecialidadesPreRequisitos => Set<EspecialidadePreRequisito>();
+    public DbSet<RevisaoRequisitos> RevisoesRequisitos => Set<RevisaoRequisitos>();
+    public DbSet<Requisito> Requisitos => Set<Requisito>();
+    public DbSet<MembroClasse> MembrosClasses => Set<MembroClasse>();
+    public DbSet<MembroEspecialidade> MembrosEspecialidades => Set<MembroEspecialidade>();
+    public DbSet<ProgressoRequisito> ProgressoRequisitos => Set<ProgressoRequisito>();
+    public DbSet<EvidenciaEspecialidade> EvidenciasEspecialidades => Set<EvidenciaEspecialidade>();
+    public DbSet<ValidacaoExterna> ValidacoesExternas => Set<ValidacaoExterna>();
+    public DbSet<HistoricoFormacao> HistoricoFormacao => Set<HistoricoFormacao>();
+
+    /// <summary>Valores gravados de <see cref="ClasseDesbravador"/> (CHECK das colunas Classe).</summary>
+    public static string ValoresClasse => string.Join(", ", Enum.GetValues<ClasseDesbravador>().Select(c => (int)c));
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigurarFormacao(modelBuilder);
+
         modelBuilder.Entity<Usuario>(entity =>
         {
             entity.ToTable("Usuarios", table =>
