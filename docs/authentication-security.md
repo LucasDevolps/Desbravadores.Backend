@@ -1,6 +1,6 @@
 # Autenticação, autorização e implantação segura
 
-Este documento cobre as issues #29 (login/perfil/JWT), #31 (RBAC), #33 (força bruta), #34 (segredos e política de senha), #35 (cabeçalhos HTTP), #36 (TLS do SQL Server em produção) e #50 (TLS no ponto de entrada do deploy, rotação de segredos expostos, Data Protection em Linux e auditoria do `PUT` de lançamentos). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
+Este documento cobre as issues #29 (login/perfil/JWT), #31 e #127 (RBAC por perfil e autoatendimento), #33 (força bruta), #34 (segredos e política de senha), #35 (cabeçalhos HTTP), #36 (TLS do SQL Server em produção) e #50 (TLS no ponto de entrada do deploy, rotação de segredos expostos, Data Protection em Linux e auditoria do `PUT` de lançamentos). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
 
 ## Login, perfil e JWT (#29)
 
@@ -9,36 +9,95 @@ Este documento cobre as issues #29 (login/perfil/JWT), #31 (RBAC), #33 (força b
 - Login, refresh, logout e `/Me` respondem com `Cache-Control: no-store` (inclusive em erros).
 - O access token usa HS256 porque emissão e validação ocorrem na mesma API. Payload: `sub`, `role`, `iss`, `aud`, `exp`, `iat`, `nbf`, `jti`, `sid` — sem nome nem e-mail e com um único identificador do usuário (`sub`). `jti`/`iat`/`nbf` são exigidos pelo perfil local e `sid` vincula o token à sessão persistida (revogação). JWS garante integridade, **não** confidencialidade.
 - Validação: assinatura (chave resolvida por `kid`), emissor, audiência, expiração com tolerância de 30 s, `typ=at+jwt`, **somente** `HS256` (`ValidAlgorithms`) e tamanho máximo de 8 KB (`JsonWebTokenHandler` em `TokenHandlers`).
-- Mapeamento de claims: `MapInboundClaims=false`; `RoleClaimType="role"`; `NameClaimType="sub"`. `OnTokenValidated` confere que `sub` é um GUID único e adiciona explicitamente `ClaimTypes.NameIdentifier = sub`, consumida por `ClaimsPrincipalExtensions.TentarObterUsuarioId` (Me, lançamentos, auditoria). Não há fallback silencioso para `sub`.
-- A cada request, `OnTokenValidated` também exige sessão não revogada e que a `role` do token ainda seja a role do cargo ativo do usuário. Consultar `/Me` não altera a role de um token já emitido; a mudança de cargo invalida o token na requisição seguinte (novo login necessário).
+- Mapeamento de claims: `MapInboundClaims=false`; `RoleClaimType="role"`; `NameClaimType="sub"`. `OnTokenValidated` confere que `sub` é um GUID único e adiciona explicitamente `ClaimTypes.NameIdentifier = sub`, consumida por `ClaimsPrincipalExtensions.TentarObterUsuarioId`/`UsuarioId` (Me, autoatendimento, lançamentos, auditoria). Não há fallback silencioso para `sub`.
+- A cada request, `OnTokenValidated` também exige sessão não revogada e que a `role` do token ainda seja a role do cargo ativo do usuário. Consultar `/Me` não altera a role de um token já emitido; a mudança de cargo invalida o token na requisição seguinte (refresh ou novo login emitem o token com o cargo novo).
 - Logs: nenhum código registra senha, token ou `Authorization`; o IdentityModel oculta PII por padrão e a instrumentação OpenTelemetry do ASP.NET Core não captura headers. Um teste captura logs em nível `Trace` durante login/`/Me` e verifica a ausência desses valores.
 
-## Matriz de acesso (#31)
+## Perfis e matriz de acesso (#31, #127)
 
-A matriz existente em Lançamentos (roles `ADM`, `DIR`, `DIRA`, `SEC`, `TES`, PR #41) foi preservada e passou a valer também para as listagens administrativas. Fonte única: `Security/Roles.cs` (`Roles.Diretoria`) e policies registradas em `Program.cs`.
+Fonte única: `Security/Roles.cs` (conjuntos de cargos, `Roles.PodeGerenciar` e `Policies.Registrar`, chamado em `Program.cs`). Toda decisão é do backend: o token só carrega `sub`, `role` e `sid`, e a cada requisição `OnTokenValidated` confere no banco a sessão, o usuário ativo, o cargo ativo e que a `role` do token ainda é a do cargo atual. Tesoureiro (`TES`) e Tesoureiro de Unidade (`TESU`) são cargos diferentes: `TESU` não tem acesso financeiro.
 
-| Endpoint | Sem autenticação válida | Autenticado sem permissão | Permitido |
-| --- | --- | --- | --- |
-| `GET /api/Auth/Me` | 401 | — | qualquer autenticado (só o próprio perfil) |
-| `GET /api/Usuarios` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
-| `POST /api/Usuarios`, `PUT /api/Usuarios/{id}`, `DELETE /api/Usuarios/{id}` | 401 | 403 | policy `GestaoCadastros`; usuário com cargo ADM (ou promoção a ADM) só por ADM (403) |
-| `GET /api/Usuarios/{id}/foto` | 401 | 403 | policy `GestaoCadastros` |
-| `PUT /api/Usuarios/{id}/foto`, `DELETE /api/Usuarios/{id}/foto` | 401 | 403 | policy `GestaoCadastros`; foto de usuário com cargo ADM só por ADM (403) |
-| `GET /api/Cargos` | 401 | 403 | policy `GestaoCadastros`: ADM, DIR, DIRA, SEC, TES |
-| `GET /api/Lancamentos` | 401 | 403 | policy `GestaoFinanceira`: ADM, DIR, DIRA, SEC, TES |
-| `POST /api/Lancamentos/Registrar` | 401 | 403 | policy `GestaoFinanceira` |
-| `PUT /api/Lancamentos/{id}` | 401 | 403 | policy `GestaoFinanceira` |
-| `DELETE /api/Lancamentos/{id}` | 401 | 403 | policy `GestaoFinanceira` |
+| Policy | Cargos | O que libera |
+| --- | --- | --- |
+| `GestaoCadastros` | ADM, DIR, DIRA, SEC | `/api/Usuarios` (listar, cadastrar, editar, excluir), fotos de outros usuários e `GET /api/Cargos` |
+| `GestaoFinanceira` | ADM, DIR, DIRA, TES | `/api/Lancamentos` (inclusive pagamentos) e o bloco `financeiro` do dashboard |
+| `GestaoEventos` | ADM, DIR, DIRA, SEC, TES | `/api/Eventos` (consultar, criar, editar, excluir; as cobranças do evento são geradas na mesma operação) |
+| `ConsultaMembros` | ADM, DIR, DIRA, SEC, TES | `GET /api/Membros` (id, nome e cargo dos ativos, para seletores) |
+| `Painel` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
+| `GestaoFormacao` | ADM, DIR, DIRA, SEC | escrita de especialidades, revisões de requisitos e acompanhamento de classes/especialidades, e consulta da formação de outros membros (`/api/Formacao…`) — [`docs/formacao.md`](formacao.md) |
+| `Autoatendimento` | qualquer cargo ativo | `/api/Me` (dados, foto, eventos e formação do próprio usuário), `GET /api/Cep/{cep}` e a consulta dos catálogos `GET /api/Classes…`, `GET /api/Especialidades…` e `GET /api/RevisoesRequisitos/{id}` (só revisões publicadas/substituídas) |
+| `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
 
-- `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}` (antes era 401, o que levava o cliente a descartar uma sessão válida).
-- Decisão a confirmar com o negócio: as policies `GestaoCadastros` e `GestaoFinanceira` hoje têm o mesmo conjunto de roles (o registro de lançamentos precisa listar membros). Separá-las exige só alterar `Program.cs`.
+Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com token inválido ou expirado, sessão revogada, usuário inativo ou cargo inativo, **todos** respondem `401`.
+
+| Endpoint | ADM | DIR / DIRA | SEC | TES | DS e demais cargos |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| `GET /api/Usuarios` | ✓ | ✓ | ✓ | — | — |
+| `POST /api/Usuarios`, `PUT/DELETE /api/Usuarios/{id}` | ✓ | ✓ (exceto alvo ADM) | ✓ (só cargos sem gestão) | — | — |
+| `GET/PUT/DELETE /api/Usuarios/{id}/foto` | ✓ | ✓ (exceto alvo ADM) | ✓ (só cargos sem gestão) | — | — |
+| `GET /api/Cargos` | ✓ | ✓ | ✓ | — | — |
+| `GET /api/Membros` | ✓ | ✓ | ✓ | ✓ | — |
+| `GET/POST/PUT/DELETE /api/Lancamentos…`, `POST/PUT …/Pagamento` | ✓ | ✓ | — | ✓ | — |
+| `GET/POST/PUT/DELETE /api/Eventos…` | ✓ | ✓ | ✓ | ✓ | — |
+| `GET /api/Dashboard` | ✓ completo | ✓ completo | ✓ sem `financeiro` (`null`) | ✓ completo | — |
+| `GET/PUT /api/Me`, `GET/PUT/DELETE /api/Me/foto` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `GET /api/Me/Eventos`, `GET /api/Me/Eventos/{id}` | ✓ | ✓ | ✓ | ✓ | ✓ (só eventos de que participa) |
+| `GET /api/Cep/{cep}` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `GET /api/Classes…`, `GET /api/Especialidades…`, `GET /api/RevisoesRequisitos/{id}` | ✓ | ✓ | ✓ | ✓ | ✓ (sem rascunhos) |
+| `POST/PUT/DELETE /api/Especialidades…`, `POST /api/RevisoesRequisitos…` | ✓ | ✓ | ✓ | — | — |
+| `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios…` | ✓ | ✓ | ✓ | — | — |
+| `GET /api/Me/Formacao…` | ✓ | ✓ | ✓ | ✓ | ✓ (só a própria formação) |
+| `GET /api/Auth/Me`, `/api/Notificacoes…`, hub | ✓ | ✓ | ✓ | ✓ | ✓ (só as próprias) |
+
+- `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}`. O frontend deve tratar `403` como "sem permissão" **sem** encerrar a sessão.
+- A matriz é verificada endpoint por endpoint e perfil por perfil em `AuthorizationTests` (que também falha se uma action nova ficar fora da tabela) e policy por policy em `PermissoesUnitTests`.
+
+### Exceção ao acesso completo da diretoria e hierarquia de cargos
+
+DIR e DIRA têm acesso completo aos módulos de negócio, com uma exceção técnica preservada: **somente ADM cria, altera, exclui ou troca a foto de um usuário ADM** (ou promove alguém a ADM). ADM é o administrador técnico da plataforma, não um cargo do clube; a exceção impede que a diretoria do clube tome ou desative a conta de quem administra o sistema.
+
+Com cadastros e financeiro separados, o Secretário poderia conceder a si mesmo (ou a outra conta) um cargo com acesso financeiro ou de diretoria. Por isso `Roles.PodeGerenciar` aplica a mesma regra aos **cargos de gestão** (DIR, DIRA, SEC, TES): só a diretoria (ADM, DIR, DIRA) atribui esses cargos ou cria, altera, exclui e troca a foto de usuários que os possuem. O Secretário gerencia os demais cargos (Desbravador, Conselheiro, cargos de unidade etc.). A regra vale para o cargo atual e para o novo cargo do `PUT`, no `DELETE` e nas fotos de terceiros (`403` com o motivo em `detail`). A própria foto (`/api/Me/foto`) não depende do cargo.
+
+### Eventos: cadastro e cobrança na mesma operação
+
+Criar, editar ou excluir um evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes **na mesma transação** (idempotência por `Idempotency-Key`, `rowversion`, lock do passeio e auditoria por trigger). Separar o cadastro das cobranças quebraria essas garantias, então os dois perfis operacionais usam a mesma policy `GestaoEventos`:
+
+- o Secretário gerencia eventos, mas não registra nem corrige pagamentos, não lista lançamentos e não vê o financeiro consolidado (`403` em `/api/Lancamentos`, `financeiro: null` no dashboard). As regras do evento continuam valendo para ele: com um lançamento já pago, mudar custos ou participantes devolve `409`;
+- o Tesoureiro executa as mesmas operações de evento necessárias ao financeiro e registra os pagamentos em `/api/Lancamentos`, mas não ganha acesso a cadastros nem a cargos;
+- `EventoDto` (com `membros` e `lancamentos` por id e status) é a visão de gestão; o participante vê outra representação em `/api/Me/Eventos`.
+
+### Autoatendimento (`/api/Me`)
+
+A identidade vem **só** do token validado: não há id de usuário na rota nem no corpo.
+
+- `GET /api/Me` devolve os dados do próprio usuário (os mesmos campos pessoais de `GET /api/Usuarios`, cargo resumido e `fotoUrl` em `/api/Me/foto`), com `Cache-Control: no-store`.
+- `PUT /api/Me` aceita **somente** `cpf`, `dataNascimento`, `telefone`, `rg`, `ehCin`, `dataExpiracao`, `tipoSanguineo`, `doencasAlergias`, `endereco` e `responsavelNome`/`responsavelEmail`/`responsavelCpf`/`responsavelTelefone`, com as mesmas validações e a mesma semântica de omissão do `PUT /api/Usuarios/{id}` (CPF válido, único e não removível, RG exigido sem CIN, idade e responsável para menores, CEP consultado no ViaCEP, textos na página 1252). O DTO é fechado (`JsonUnmappedMemberHandling.Disallow`): `nome`, `email`, `cargoId`, `senha`, `ativo`, `id`, `role` ou qualquer outra propriedade devolve `400` (`"Campo não aceito nesta operação."` na chave `$.campo`) e nada é gravado; `usuarioId` e `ipResponsavel` nunca são lidos do corpo. Nome e e-mail de login continuam com a secretaria; a senha não muda por esse fluxo. Nome, e-mail e cargo são relidos da linha travada na mesma transação, então uma troca de cargo concorrente nunca é desfeita.
+- A alteração passa pelo mesmo serviço do cadastro administrativo e grava o estado anterior em `_usuarios_hist` pelo trigger, com o próprio usuário como responsável e o IP da conexão.
+- `GET/PUT/DELETE /api/Me/foto` reutilizam o mesmo processamento, limites, armazenamento, auditoria e cabeçalhos de `/api/Usuarios/{id}/foto`; o `PUT` responde com os dados de `GET /api/Me`.
+- `GET /api/Me/Eventos` lista os eventos ativos em que o usuário é participante ativo (passados e futuros, sem recorte de data); `GET /api/Me/Eventos/{id}` aceita o `eventoId` das notificações. A resposta traz data, local, composição do valor por membro e a própria cobrança (`valor`, `vencimento`, `status`), nunca os outros participantes, o total, os lançamentos dos demais, a versão ou o agrupamento. Evento inexistente, excluído, alheio ou do qual o usuário foi removido devolve o **mesmo** `404`.
+
+### Sessão, mudança de cargo e conexões persistentes
+
+- Uma mudança de cargo (pela API ou no banco) invalida na requisição seguinte o token emitido com o cargo antigo (`401`); o refresh ou um novo login emite um token com o cargo novo, e só as permissões novas valem.
+- O hub de notificações registra a `role` da conexão; `MonitorSessoesNotificacoes` revalida periodicamente sessão, usuário, cargo e `role` e encerra a conexão que não bate mais. Reconectar com o token antigo é recusado.
+- Desativar o usuário (`DELETE /api/Usuarios/{id}`) incrementa `SecurityVersion` e derruba todas as sessões; cargo inativo também bloqueia login, refresh e tokens já emitidos.
+
+### Pendências da issue #127 fora deste escopo
+
+- Módulo de patrimônios (Almoxarife, `ALM`): o cargo existe, mas não há cadastro, consulta nem gestão de patrimônios.
+- Relatórios da secretaria além dos de formação (classes e especialidades foram entregues na issue #125, ver [`formacao.md`](formacao.md)).
+- Consulta dos próprios débitos pelo desbravador além da cobrança mostrada em `/api/Me/Eventos` (o `lancamentoId` das notificações de débito continua sem rota de autoatendimento).
+- Troca de senha pelo próprio usuário (hoje só a CLI administrativa redefine senhas).
+
+### Auditoria das operações financeiras
+
 - Auditoria: `LancamentoOperacao.CriadoPorUsuarioId`, `lancamentos_deletados.UsuarioResponsavelId`/`IpResponsavel` e, desde a #50, `Lancamento.AtualizadoPorUsuarioId` (migration `AddAtualizadoPorUsuarioIdToLancamentos`) vêm **sempre** da identidade autenticada (`User.TentarObterUsuarioId`, nunca do body) e do IP pós-proxy confiável quando aplicável. `AtualizadoPorUsuarioId` é nullable (`Guid?`, FK `Restrict` para `Usuarios`) para não quebrar lançamentos atualizados antes desta coluna existir; não é exposto em `LancamentoDto` (não é necessário ao frontend). Registra somente o **último** responsável pelo `PUT` — não é um histórico completo de alterações (se isso vier a ser necessário, é escopo de uma issue separada, com uma tabela de auditoria própria).
 
 ## Fotos de usuários (#116)
 
 Decisão e alternativas: [ADR-0011](architecture/adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md).
 
-- **Sem URL pública.** A pasta `Media:Storage:Path` fica fora do site e nenhum servidor web a publica; o arquivo só sai por `GET /api/Usuarios/{id}/foto` (Bearer), com `Cache-Control: private, no-cache`, `ETag` e `Cross-Origin-Resource-Policy: same-origin`.
+- **Sem URL pública.** A pasta `Media:Storage:Path` fica fora do site e nenhum servidor web a publica; o arquivo só sai por `GET /api/Usuarios/{id}/foto` ou, para o próprio usuário, `GET /api/Me/foto` (Bearer), com `Cache-Control: private, no-cache`, `ETag` e `Cross-Origin-Resource-Policy: same-origin`.
 - **Entrada.** O multipart é lido em streaming (sem `IFormFile` e sem arquivo temporário), com uma única parte `arquivo` de até `Media:Images:MaxUploadSizeMb` (10 MB; o nginx corta em 11 MB só nessa rota). Requisição com `Content-Encoding` é recusada (`415`): não há descompressão no transporte (zip bomb).
 - **Conteúdo.** Só JPEG, PNG e WebP, com a assinatura real igual à extensão e ao `Content-Type`. O cabeçalho é lido antes de decodificar e imagens acima de `MaxMegapixels` são recusadas (`422`) sem alocar os pixels (decompression bomb). A imagem é decodificada já reduzida, orientada pelo EXIF e regravada em WebP de no máximo 1024×1024, sem EXIF/GPS, perfil ICC ou XMP; a saída é conferida de novo. O original nunca é gravado.
 - **Abuso.** `UploadsPerUserPerWindow` envios por usuário autenticado a cada `UploadWindowMinutes`, no máximo `MaxConcurrentProcessing` imagens processadas ao mesmo tempo (`429` com `Retry-After`) e prazo de `ProcessingTimeoutMs` por imagem.
@@ -197,7 +256,7 @@ A API **nunca** executa SQL como `sa`, e isso é imposto por código, não por d
 | --- | --- | --- |
 | `sa` | só o serviço `sqlserver` (`MSSQL_SA_PASSWORD`) e o serviço `sql-bootstrap` (`SQLCMDPASSWORD`) do Compose | administrar a instância e provisionar as duas identidades abaixo. **Não existe para a API.** |
 | Administrativa (`SQL_ADMIN_USER`, padrão `almirante_admin_bd`) | usuário **contido** do banco da aplicação (sem login de servidor) | `CREATE TABLE/VIEW/PROCEDURE/FUNCTION`, `CONTROL` no schema `dbo` e `ALTER ANY USER` — só para migrations, concessões à role de runtime e rotação da senha de runtime. Sem papel/permissão de servidor, sem `db_owner`, sem `CONTROL` no banco, sem acesso a outro banco. |
-| Runtime (`SQL_APP_USER`, padrão `almirante_user_bd`) | usuário **contido** do banco, membro só de `almirante_app_role` | `SELECT`/`INSERT`/`UPDATE` nas tabelas de negócio; `DELETE` só em `AuthSessions` (limpeza de sessões); só `SELECT` em `__EFMigrationsHistory` e `lancamentos_deletados` (com `DENY` de escrita: só o trigger grava a auditoria). Sem DDL, `db_owner`, impersonação, `ALTER ANY LOGIN` ou propriedade de objetos. |
+| Runtime (`SQL_APP_USER`, padrão `almirante_user_bd`) | usuário **contido** do banco, membro só de `almirante_app_role` | `SELECT`/`INSERT`/`UPDATE` nas tabelas de negócio; `DELETE` só em `AuthSessions` (limpeza de sessões); só `SELECT` em `__EFMigrationsHistory` e nas tabelas de auditoria `lancamentos_deletados`, `historico_eventos`, `_usuarios_hist` e `formacao_historico` (com `DENY` de escrita: só os triggers gravam a auditoria). Sem DDL, `db_owner`, impersonação, `ALTER ANY LOGIN` ou propriedade de objetos. |
 
 Por que **usuários contidos**: um usuário contido é um principal do banco, não do servidor — não pode ser `sysadmin`, ter `CONTROL SERVER`, `ALTER ANY LOGIN`, `CREATE ANY DATABASE` nem `IMPERSONATE ANY LOGIN`, e a rotação da senha vira um `ALTER USER … WITH PASSWORD` restrito ao banco. Com um *login* isso exigiria `ALTER ANY LOGIN`, que permitiria também redefinir a senha de logins de outras aplicações da mesma instância (e assumir a identidade delas). O custo é que a connection string das duas identidades precisa de `Database=<banco>`.
 

@@ -17,7 +17,7 @@ namespace Almirante.Api.Data.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -39,7 +39,8 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<string>("RevocationReason")
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
 
                     b.Property<DateTime?>("RevokedAtUtc")
                         .HasColumnType("datetime2");
@@ -80,22 +81,26 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("CriadoPor")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("Descricao")
                         .IsRequired()
                         .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
 
                     b.Property<string>("Nome")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
 
                     b.Property<DateTime?>("UltimaAtualizacao")
                         .HasColumnType("datetime2");
@@ -106,6 +111,163 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Cargos", (string)null);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Especialidade", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Area")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("AtualizadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AtualizadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CodigoOficial")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Descricao")
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
+
+                    b.Property<string>("EdicaoRevisao")
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("FonteOficial")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<int?>("Modalidade")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MotivoInativacao")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int?>("NivelDificuldade")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Nome")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(150)");
+
+                    b.Property<string>("PreRequisitosTexto")
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<string>("ReferenciaDistintivo")
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<byte[]>("Versao")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtualizadoPorUsuarioId");
+
+                    b.HasIndex("CodigoOficial")
+                        .IsUnique()
+                        .HasDatabaseName("UX_especialidades_CodigoOficial")
+                        .HasFilter("[CodigoOficial] IS NOT NULL");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("Area", "Ativo");
+
+                    b.HasIndex("Nome", "Area", "Modalidade")
+                        .IsUnique()
+                        .HasDatabaseName("UX_especialidades_Nome_Area_Modalidade_ativa")
+                        .HasFilter("[Ativo] = 1");
+
+                    b.ToTable("especialidades", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_especialidades_Inativacao", "[Ativo] = 1 OR [MotivoInativacao] IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_especialidades_Modalidade", "[Modalidade] IS NULL OR [Modalidade] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_especialidades_NivelDificuldade", "[NivelDificuldade] IS NULL OR [NivelDificuldade] BETWEEN 1 AND 3");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.EspecialidadePreRequisito", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("AtualizadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AtualizadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("EspecialidadeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PreRequisitoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtualizadoPorUsuarioId");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("PreRequisitoId");
+
+                    b.HasIndex("EspecialidadeId", "PreRequisitoId")
+                        .IsUnique();
+
+                    b.ToTable("especialidades_prerequisitos", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_especialidades_prerequisitos_Proprio", "[EspecialidadeId] <> [PreRequisitoId]");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Evento", b =>
@@ -147,7 +309,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("Local")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<decimal>("SeguroObrigatorio")
                         .HasColumnType("decimal(18,2)");
@@ -254,15 +417,18 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
 
                     b.Property<string>("RequestHash")
                         .IsRequired()
                         .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<string>("RespostaJson")
-                        .HasColumnType("nvarchar(max)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
 
                     b.Property<Guid>("UsuarioId")
                         .HasColumnType("uniqueidentifier");
@@ -278,6 +444,59 @@ namespace Almirante.Api.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_eventos_operacoes_RespostaJson", "[RespostaJson] IS NULL OR ISJSON([RespostaJson]) = 1");
                         });
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.EvidenciaEspecialidade", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("MembroClasseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("MembroEspecialidadeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("RemovidaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("RemovidaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RequisitoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("MembroEspecialidadeId");
+
+                    b.HasIndex("RemovidaPorUsuarioId");
+
+                    b.HasIndex("RequisitoId");
+
+                    b.HasIndex("MembroClasseId", "MembroEspecialidadeId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_evidencias_especialidades_classe_especialidade_ativa")
+                        .HasFilter("[Ativo] = 1");
+
+                    b.ToTable("evidencias_especialidades", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_evidencias_especialidades_Remocao", "([Ativo] = 1 AND [RemovidaPorUsuarioId] IS NULL AND [RemovidaEmUtc] IS NULL) OR ([Ativo] = 0 AND [RemovidaPorUsuarioId] IS NOT NULL AND [RemovidaEmUtc] IS NOT NULL)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.HistoricoEvento", b =>
@@ -314,16 +533,19 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("Local")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("Motivo")
                         .IsRequired()
                         .HasMaxLength(255)
-                        .HasColumnType("nvarchar(255)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
 
                     b.Property<string>("ParticipantesJson")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
 
                     b.Property<int>("QuantidadeMembros")
                         .HasColumnType("int");
@@ -358,6 +580,71 @@ namespace Almirante.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.HistoricoFormacao", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Acao")
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<string>("EstadoAnteriorJson")
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("EstadoNovoJson")
+                        .IsRequired()
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("IpResponsavel")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<string>("Motivo")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("OcorridoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("RegistroId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Tabela")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<Guid>("UsuarioResponsavelId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("VinculoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UsuarioResponsavelId");
+
+                    b.HasIndex("Tabela", "RegistroId");
+
+                    b.HasIndex("VinculoId", "OcorridoEmUtc");
+
+                    b.ToTable("formacao_historico", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_formacao_historico_EstadoAnteriorJson", "[EstadoAnteriorJson] IS NULL OR ISJSON([EstadoAnteriorJson]) = 1");
+
+                            t.HasCheckConstraint("CK_formacao_historico_EstadoNovoJson", "ISJSON([EstadoNovoJson]) = 1");
+                        });
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.Lancamento", b =>
                 {
                     b.Property<Guid>("Id")
@@ -385,14 +672,16 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<string>("Descricao")
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(500)");
 
                     b.Property<Guid?>("EventoId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Finalidade")
                         .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
 
                     b.Property<Guid?>("MembroId")
                         .HasColumnType("uniqueidentifier");
@@ -486,12 +775,14 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<string>("Finalidade")
                         .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
 
                     b.Property<string>("IpResponsavel")
                         .IsRequired()
                         .HasMaxLength(45)
-                        .HasColumnType("nvarchar(45)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
 
                     b.Property<Guid>("LancamentoId")
                         .HasColumnType("uniqueidentifier");
@@ -502,7 +793,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("Motivo")
                         .IsRequired()
                         .HasMaxLength(255)
-                        .HasColumnType("nvarchar(255)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
 
                     b.Property<Guid?>("OperacaoId")
                         .HasColumnType("uniqueidentifier");
@@ -564,17 +856,20 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<string>("Descricao")
                         .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(500)");
 
                     b.Property<string>("Finalidade")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
 
                     b.Property<int>("LancamentosCriados")
                         .HasColumnType("int");
@@ -582,7 +877,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("RequestHash")
                         .IsRequired()
                         .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<int>("TipoFluxo")
                         .HasColumnType("int");
@@ -609,6 +905,273 @@ namespace Almirante.Api.Data.Migrations
 
                             t.HasCheckConstraint("CK_LancamentosOperacoes_TipoFluxo", "[TipoFluxo] IN (0, 1)");
                         });
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.MembroClasse", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("AtualizadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AtualizadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("CanceladoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("CanceladoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Classe")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ConclusaoRegistradaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ConclusaoRegistradaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateOnly?>("DataConclusao")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("DataInicio")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("DataReconhecimento")
+                        .HasColumnType("date")
+                        .HasColumnName("DataInvestidura");
+
+                    b.Property<bool>("Historico")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("InstrutorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("MembroId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Modalidade")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MotivoCancelamento")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Observacoes")
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<string>("OrigemHistorica")
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<DateTime?>("ReconhecimentoRegistradoEmUtc")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("InvestiduraRegistradaEmUtc");
+
+                    b.Property<Guid?>("ReconhecimentoRegistradoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("InvestiduraRegistradaPorUsuarioId");
+
+                    b.Property<Guid?>("RevisaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Situacao")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("Versao")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtualizadoPorUsuarioId");
+
+                    b.HasIndex("CanceladoPorUsuarioId");
+
+                    b.HasIndex("ConclusaoRegistradaPorUsuarioId");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("InstrutorId");
+
+                    b.HasIndex("MembroId");
+
+                    b.HasIndex("ReconhecimentoRegistradoPorUsuarioId");
+
+                    b.HasIndex("RevisaoId");
+
+                    b.HasIndex("Classe", "Situacao");
+
+                    b.HasIndex("MembroId", "Classe")
+                        .IsUnique()
+                        .HasDatabaseName("UX_membros_classes_membro_classe_ativa")
+                        .HasFilter("[Situacao] <> 3");
+
+                    b.ToTable("membros_classes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_membros_classes_Cancelamento", "([Situacao] = 3 AND [MotivoCancelamento] IS NOT NULL AND [CanceladoPorUsuarioId] IS NOT NULL AND [CanceladoEmUtc] IS NOT NULL) OR ([Situacao] <> 3 AND [MotivoCancelamento] IS NULL AND [CanceladoPorUsuarioId] IS NULL AND [CanceladoEmUtc] IS NULL)");
+
+                            t.HasCheckConstraint("CK_membros_classes_Classe", "[Classe] IN (1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15, 16, 21, 22, 23)");
+
+                            t.HasCheckConstraint("CK_membros_classes_Conclusao", "([Situacao] = 2 AND [ConclusaoRegistradaPorUsuarioId] IS NOT NULL AND [ConclusaoRegistradaEmUtc] IS NOT NULL AND ([DataConclusao] IS NOT NULL OR [Historico] = 1)) OR ([Situacao] <> 2 AND [DataConclusao] IS NULL AND [ConclusaoRegistradaPorUsuarioId] IS NULL AND [ConclusaoRegistradaEmUtc] IS NULL)");
+
+                            t.HasCheckConstraint("CK_membros_classes_Cronologia", "([DataConclusao] IS NULL OR [DataInicio] IS NULL OR [DataConclusao] >= [DataInicio]) AND ([DataInvestidura] IS NULL OR [DataConclusao] IS NULL OR [DataInvestidura] >= [DataConclusao]) AND ([DataInvestidura] IS NULL OR [DataInicio] IS NULL OR [DataInvestidura] >= [DataInicio])");
+
+                            t.HasCheckConstraint("CK_membros_classes_Fluxo", "([Historico] = 0 AND [RevisaoId] IS NOT NULL AND [DataInicio] IS NOT NULL AND [OrigemHistorica] IS NULL) OR ([Historico] = 1 AND [OrigemHistorica] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_membros_classes_Investidura", "([DataInvestidura] IS NULL AND [InvestiduraRegistradaPorUsuarioId] IS NULL AND [InvestiduraRegistradaEmUtc] IS NULL) OR ([Situacao] = 2 AND [InvestiduraRegistradaPorUsuarioId] IS NOT NULL AND [InvestiduraRegistradaEmUtc] IS NOT NULL AND ([DataInvestidura] IS NOT NULL OR [Historico] = 1))");
+
+                            t.HasCheckConstraint("CK_membros_classes_Modalidade", "[Modalidade] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_membros_classes_Situacao", "[Situacao] IN (1, 2, 3)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.MembroEspecialidade", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("AtualizadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AtualizadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("CanceladoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("CanceladoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ConclusaoRegistradaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ConclusaoRegistradaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateOnly?>("DataConclusao")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("DataInicio")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("DataReconhecimento")
+                        .HasColumnType("date")
+                        .HasColumnName("DataEntrega");
+
+                    b.Property<Guid>("EspecialidadeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Historico")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("InstrutorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("MembroId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("MotivoCancelamento")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Observacoes")
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<string>("OrigemHistorica")
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<DateTime?>("ReconhecimentoRegistradoEmUtc")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EntregaRegistradaEmUtc");
+
+                    b.Property<Guid?>("ReconhecimentoRegistradoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("EntregaRegistradaPorUsuarioId");
+
+                    b.Property<Guid?>("RevisaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Situacao")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("Versao")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtualizadoPorUsuarioId");
+
+                    b.HasIndex("CanceladoPorUsuarioId");
+
+                    b.HasIndex("ConclusaoRegistradaPorUsuarioId");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("InstrutorId");
+
+                    b.HasIndex("MembroId");
+
+                    b.HasIndex("ReconhecimentoRegistradoPorUsuarioId");
+
+                    b.HasIndex("RevisaoId");
+
+                    b.HasIndex("EspecialidadeId", "Situacao");
+
+                    b.HasIndex("MembroId", "EspecialidadeId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_membros_especialidades_membro_especialidade_ativa")
+                        .HasFilter("[Situacao] <> 3");
+
+                    b.ToTable("membros_especialidades", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_membros_especialidades_Cancelamento", "([Situacao] = 3 AND [MotivoCancelamento] IS NOT NULL AND [CanceladoPorUsuarioId] IS NOT NULL AND [CanceladoEmUtc] IS NOT NULL) OR ([Situacao] <> 3 AND [MotivoCancelamento] IS NULL AND [CanceladoPorUsuarioId] IS NULL AND [CanceladoEmUtc] IS NULL)");
+
+                            t.HasCheckConstraint("CK_membros_especialidades_Conclusao", "([Situacao] = 2 AND [ConclusaoRegistradaPorUsuarioId] IS NOT NULL AND [ConclusaoRegistradaEmUtc] IS NOT NULL AND ([DataConclusao] IS NOT NULL OR [Historico] = 1)) OR ([Situacao] <> 2 AND [DataConclusao] IS NULL AND [ConclusaoRegistradaPorUsuarioId] IS NULL AND [ConclusaoRegistradaEmUtc] IS NULL)");
+
+                            t.HasCheckConstraint("CK_membros_especialidades_Cronologia", "([DataConclusao] IS NULL OR [DataInicio] IS NULL OR [DataConclusao] >= [DataInicio]) AND ([DataEntrega] IS NULL OR [DataConclusao] IS NULL OR [DataEntrega] >= [DataConclusao]) AND ([DataEntrega] IS NULL OR [DataInicio] IS NULL OR [DataEntrega] >= [DataInicio])");
+
+                            t.HasCheckConstraint("CK_membros_especialidades_Entrega", "([DataEntrega] IS NULL AND [EntregaRegistradaPorUsuarioId] IS NULL AND [EntregaRegistradaEmUtc] IS NULL) OR ([Situacao] = 2 AND [EntregaRegistradaPorUsuarioId] IS NOT NULL AND [EntregaRegistradaEmUtc] IS NOT NULL AND ([DataEntrega] IS NOT NULL OR [Historico] = 1))");
+
+                            t.HasCheckConstraint("CK_membros_especialidades_Fluxo", "([Historico] = 0 AND [RevisaoId] IS NOT NULL AND [DataInicio] IS NOT NULL AND [OrigemHistorica] IS NULL) OR ([Historico] = 1 AND [OrigemHistorica] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_membros_especialidades_Situacao", "[Situacao] IN (1, 2, 3)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Notificacao", b =>
@@ -694,6 +1257,85 @@ namespace Almirante.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.ProgressoRequisito", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("AtualizadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AtualizadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateOnly?>("DataCumprimento")
+                        .HasColumnType("date");
+
+                    b.Property<Guid?>("MembroClasseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("MembroEspecialidadeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Observacao")
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<string>("ReferenciaEvidencia")
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<Guid>("RequisitoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Situacao")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ValidadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ValidadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtualizadoPorUsuarioId");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("RequisitoId");
+
+                    b.HasIndex("ValidadoPorUsuarioId");
+
+                    b.HasIndex("MembroClasseId", "RequisitoId")
+                        .IsUnique()
+                        .HasFilter("[MembroClasseId] IS NOT NULL");
+
+                    b.HasIndex("MembroEspecialidadeId", "RequisitoId")
+                        .IsUnique()
+                        .HasFilter("[MembroEspecialidadeId] IS NOT NULL");
+
+                    b.ToTable("progresso_requisitos", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_progresso_requisitos_Situacao", "[Situacao] IN (1, 2, 3)");
+
+                            t.HasCheckConstraint("CK_progresso_requisitos_Validacao", "([Situacao] = 3 AND [ValidadoPorUsuarioId] IS NOT NULL AND [ValidadoEmUtc] IS NOT NULL) OR ([Situacao] <> 3 AND [ValidadoPorUsuarioId] IS NULL AND [ValidadoEmUtc] IS NULL)");
+
+                            t.HasCheckConstraint("CK_progresso_requisitos_Vinculo", "([MembroClasseId] IS NOT NULL AND [MembroEspecialidadeId] IS NULL) OR ([MembroClasseId] IS NULL AND [MembroEspecialidadeId] IS NOT NULL)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -740,6 +1382,188 @@ namespace Almirante.Api.Data.Migrations
                     b.HasIndex("SessionId", "ExpiresAtUtc");
 
                     b.ToTable("RefreshTokens", (string)null);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Requisito", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AreaEspecialidadeExigida")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("Codigo")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("Descricao")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
+
+                    b.Property<Guid?>("EspecialidadeExigidaId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("EspecialidadesExigidas")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Obrigatorio")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("Ordem")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("QuantidadeMinima")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ReferenciaOficial")
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<int?>("Regra")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("RequisitoPaiId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RevisaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Secao")
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<bool>("SomenteEspecialidadeNaoRealizada")
+                        .HasColumnType("bit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EspecialidadeExigidaId");
+
+                    b.HasIndex("RequisitoPaiId");
+
+                    b.HasIndex("RevisaoId", "Codigo")
+                        .IsUnique();
+
+                    b.ToTable("requisitos", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_requisitos_Especialidades", "([EspecialidadesExigidas] IS NULL AND [EspecialidadeExigidaId] IS NULL AND [AreaEspecialidadeExigida] IS NULL AND [SomenteEspecialidadeNaoRealizada] = 0) OR ([Regra] IS NULL AND [EspecialidadesExigidas] BETWEEN 1 AND 50)");
+
+                            t.HasCheckConstraint("CK_requisitos_Ordem", "[Ordem] >= 1");
+
+                            t.HasCheckConstraint("CK_requisitos_Regra", "([Regra] IS NULL AND [QuantidadeMinima] IS NULL) OR ([Regra] = 1 AND [QuantidadeMinima] IS NULL) OR ([Regra] = 2 AND [QuantidadeMinima] >= 1)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.RevisaoRequisitos", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("AtualizadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("AtualizadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int?>("Classe")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CriadoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Edicao")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<Guid?>("EspecialidadeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("FonteOficial")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<string>("MotivoDescarte")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Observacoes")
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
+
+                    b.Property<DateTime?>("PublicadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("PublicadaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Situacao")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("Versao")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AtualizadoPorUsuarioId");
+
+                    b.HasIndex("Classe")
+                        .IsUnique()
+                        .HasDatabaseName("UX_requisitos_revisoes_Classe_publicada")
+                        .HasFilter("[Situacao] = 2 AND [Classe] IS NOT NULL");
+
+                    b.HasIndex("CriadoPorUsuarioId");
+
+                    b.HasIndex("EspecialidadeId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_requisitos_revisoes_Especialidade_publicada")
+                        .HasFilter("[Situacao] = 2 AND [EspecialidadeId] IS NOT NULL");
+
+                    b.HasIndex("PublicadaPorUsuarioId");
+
+                    b.HasIndex("Classe", "Situacao")
+                        .HasDatabaseName("IX_requisitos_revisoes_Classe_Situacao");
+
+                    b.HasIndex("EspecialidadeId", "Situacao")
+                        .HasDatabaseName("IX_requisitos_revisoes_Especialidade_Situacao");
+
+                    b.ToTable("requisitos_revisoes", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_requisitos_revisoes_Alvo", "([Classe] IS NOT NULL AND [EspecialidadeId] IS NULL) OR ([Classe] IS NULL AND [EspecialidadeId] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_requisitos_revisoes_Classe", "[Classe] IS NULL OR [Classe] IN (1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15, 16, 21, 22, 23)");
+
+                            t.HasCheckConstraint("CK_requisitos_revisoes_Descarte", "[Situacao] <> 4 OR [MotivoDescarte] IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_requisitos_revisoes_Publicacao", "([Situacao] IN (1, 4) AND [PublicadaPorUsuarioId] IS NULL AND [PublicadaEmUtc] IS NULL) OR ([Situacao] IN (2, 3) AND [PublicadaPorUsuarioId] IS NOT NULL AND [PublicadaEmUtc] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_requisitos_revisoes_Situacao", "[Situacao] IN (1, 2, 3, 4)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Usuario", b =>
@@ -877,7 +1701,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("Nome")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("ResponsavelCpf")
                         .HasMaxLength(11)
@@ -910,7 +1735,8 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<string>("SenhaHash")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
 
                     b.Property<string>("Telefone")
                         .HasMaxLength(20)
@@ -967,7 +1793,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("CargoNome")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("Cpf")
                         .HasMaxLength(20)
@@ -994,7 +1821,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(256)");
 
                     b.Property<string>("EnderecoBairro")
                         .HasMaxLength(100)
@@ -1083,7 +1911,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("Nome")
                         .IsRequired()
                         .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("ResponsavelCpf")
                         .HasMaxLength(11)
@@ -1133,7 +1962,8 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<string>("UsuarioResponsavelLogin")
                         .IsRequired()
                         .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(256)");
 
                     b.HasKey("Id");
 
@@ -1147,6 +1977,58 @@ namespace Almirante.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.ValidacaoExterna", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Codigo")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<bool>("Confirmada")
+                        .HasColumnType("bit");
+
+                    b.Property<DateOnly?>("Data")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("MembroClasseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Observacao")
+                        .HasMaxLength(1000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<string>("Referencia")
+                        .HasMaxLength(300)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<DateTime>("RegistradaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("RegistradaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RegistradaPorUsuarioId");
+
+                    b.HasIndex("MembroClasseId", "Codigo")
+                        .IsUnique();
+
+                    b.ToTable("validacoes_externas", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_validacoes_externas_Data", "[Confirmada] = 0 OR [Data] IS NOT NULL");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.AuthSession", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.Usuario", "Usuario")
@@ -1156,6 +2038,46 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Usuario");
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Especialidade", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("AtualizadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.EspecialidadePreRequisito", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("AtualizadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Especialidade", null)
+                        .WithMany()
+                        .HasForeignKey("EspecialidadeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Especialidade", null)
+                        .WithMany()
+                        .HasForeignKey("PreRequisitoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Evento", b =>
@@ -1216,6 +2138,38 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.EvidenciaEspecialidade", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.MembroClasse", null)
+                        .WithMany()
+                        .HasForeignKey("MembroClasseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.MembroEspecialidade", null)
+                        .WithMany()
+                        .HasForeignKey("MembroEspecialidadeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("RemovidaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Requisito", null)
+                        .WithMany()
+                        .HasForeignKey("RequisitoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.HistoricoEvento", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.Evento", null)
@@ -1224,6 +2178,15 @@ namespace Almirante.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("UsuarioResponsavelId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.HistoricoFormacao", b =>
+                {
                     b.HasOne("Almirante.Api.Entities.Usuario", null)
                         .WithMany()
                         .HasForeignKey("UsuarioResponsavelId")
@@ -1280,6 +2243,102 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.MembroClasse", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("AtualizadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CanceladoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ConclusaoRegistradaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("InstrutorId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("MembroId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ReconhecimentoRegistradoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.RevisaoRequisitos", null)
+                        .WithMany()
+                        .HasForeignKey("RevisaoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.MembroEspecialidade", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("AtualizadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CanceladoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ConclusaoRegistradaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Especialidade", null)
+                        .WithMany()
+                        .HasForeignKey("EspecialidadeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("InstrutorId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("MembroId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ReconhecimentoRegistradoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.RevisaoRequisitos", null)
+                        .WithMany()
+                        .HasForeignKey("RevisaoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.Notificacao", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.Usuario", null)
@@ -1299,6 +2358,41 @@ namespace Almirante.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.ProgressoRequisito", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("AtualizadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.MembroClasse", null)
+                        .WithMany()
+                        .HasForeignKey("MembroClasseId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.MembroEspecialidade", null)
+                        .WithMany()
+                        .HasForeignKey("MembroEspecialidadeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Requisito", null)
+                        .WithMany()
+                        .HasForeignKey("RequisitoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ValidadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.RefreshToken", "ReplacedByToken")
@@ -1315,6 +2409,49 @@ namespace Almirante.Api.Data.Migrations
                     b.Navigation("ReplacedByToken");
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.Requisito", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Especialidade", null)
+                        .WithMany()
+                        .HasForeignKey("EspecialidadeExigidaId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Requisito", null)
+                        .WithMany()
+                        .HasForeignKey("RequisitoPaiId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.RevisaoRequisitos", null)
+                        .WithMany("Requisitos")
+                        .HasForeignKey("RevisaoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.RevisaoRequisitos", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("AtualizadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("CriadoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Especialidade", null)
+                        .WithMany()
+                        .HasForeignKey("EspecialidadeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("PublicadaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Usuario", b =>
@@ -1343,9 +2480,29 @@ namespace Almirante.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.ValidacaoExterna", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.MembroClasse", null)
+                        .WithMany()
+                        .HasForeignKey("MembroClasseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("RegistradaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.Evento", b =>
                 {
                     b.Navigation("Membros");
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.RevisaoRequisitos", b =>
+                {
+                    b.Navigation("Requisitos");
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.Usuario", b =>

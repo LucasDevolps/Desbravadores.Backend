@@ -9,6 +9,7 @@ namespace Almirante.Api.Controllers;
 [ApiController]
 [Route("api/Cargos")]
 [Authorize(Policy = Policies.GestaoCadastros)]
+/// <summary>Consulta de cargos para o cadastro de usuários (GestaoCadastros: ADM, DIR, DIRA, SEC). Não há criação nem edição de cargos pela API.</summary>
 public class CargosController(CargosService cargosService) : ControllerBase
 {
     [HttpGet]

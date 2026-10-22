@@ -20,7 +20,7 @@ public sealed class LancamentoGeralService(AlmiranteDbContext db, TimeProvider c
             return ResultadoExistente(existing, hash);
         }
 
-        var membros = await db.Usuarios.AsNoTracking().Select(u => u.Id).ToListAsync(ct);
+        var membros = await db.Usuarios.AsNoTracking().Where(u => u.Ativo).Select(u => u.Id).ToListAsync(ct);
         var now = clock.GetUtcNow().UtcDateTime;
         var operationId = Guid.NewGuid();
         var entities = membros.Select(id => LancamentoMapping.Criar(request, id, operationId, now)).ToList();

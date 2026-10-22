@@ -89,15 +89,18 @@ public static class NotificacoesTestKit
             .Build();
 
     /// <summary>Token de acesso válido para uma sessão existente, com expiração curta (o handler aceita 30 s de tolerância).</summary>
-    public static string TokenComExpiracao(AlmiranteApiFactory factory, string tokenOriginal, TimeSpan duracao)
+    public static string TokenComExpiracao(AlmiranteApiFactory factory, string tokenOriginal, TimeSpan duracao) =>
+        TokenReassinado(factory, tokenOriginal, DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow + duracao);
+
+    /// <summary>Mesmo sub/role/sid do token original, assinado com a chave real, com datas escolhidas (ex.: já expirado).</summary>
+    public static string TokenReassinado(AlmiranteApiFactory factory, string tokenOriginal, DateTime emitidoEmUtc, DateTime expiraEmUtc)
     {
         var original = new JwtSecurityTokenHandler().ReadJwtToken(tokenOriginal);
-        var agora = DateTime.UtcNow;
         var chave = new SymmetricSecurityKey(Convert.FromBase64String(factory.JwtKeyBase64)) { KeyId = factory.JwtKeyId };
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = "Almirante.Api.Tests", Audience = "Almirante.Api.Tests",
-            NotBefore = agora.AddSeconds(-5), IssuedAt = agora.AddSeconds(-5), Expires = agora + duracao,
+            NotBefore = emitidoEmUtc, IssuedAt = emitidoEmUtc, Expires = expiraEmUtc,
             Subject = new ClaimsIdentity([
                 new(JwtRegisteredClaimNames.Sub, original.Subject), new("role", original.Claims.Single(c => c.Type == "role").Value),
                 new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), new("sid", original.Claims.Single(c => c.Type == "sid").Value)]),

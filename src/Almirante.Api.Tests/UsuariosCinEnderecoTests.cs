@@ -422,17 +422,20 @@ public sealed class UsuariosCinEnderecoTests : IClassFixture<AlmiranteApiFactory
     }
 
     [Fact]
-    public async Task GetCep_ExigeGestaoDeCadastros()
+    public async Task GetCep_ExigeAutenticacao_EDesbravadorConsultaParaOsProprioDados()
     {
         using var anonimo = factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.GetAsync("/api/Cep/04382160")).StatusCode);
+        Assert.Empty(factory.ViaCep.Consultas);
 
         var (membro, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DS");
         using (membro)
         {
-            Assert.Equal(HttpStatusCode.Forbidden, (await membro.GetAsync("/api/Cep/04382160")).StatusCode);
+            var resposta = await membro.GetAsync("/api/Cep/04382160");
+            Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
+            Assert.Equal("04382160", (string)JsonNode.Parse(await resposta.Content.ReadAsStringAsync())!["cep"]!);
         }
 
-        Assert.Empty(factory.ViaCep.Consultas);
+        Assert.Equal(new[] { "04382160" }, factory.ViaCep.Consultas);
     }
 }

@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Threading.RateLimiting;
 using Almirante.Api.Dtos;
 using Almirante.Api.Infrastructure;
 using Almirante.Api.Options;
@@ -9,7 +7,6 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using Microsoft.Net.Http.Headers;
 
 namespace Almirante.Api.Controllers;
 
@@ -19,7 +16,7 @@ namespace Almirante.Api.Controllers;
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public class UsuariosController(UsuariosService usuariosService, ISender mediator, LimitadorEnvioFotos limitador,
-    IOptions<MediaOptions> media, ILogger<UsuariosController> logger) : ControllerBase
+    IOptions<MediaOptions> media, ILogger<UsuariosController> logger) : FotoUsuarioControllerBase(mediator, limitador, media, logger)
 {
     [HttpGet]
     [EndpointSummary("Lista os usuários; por padrão, somente os ativos.")]
@@ -51,15 +48,16 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         "pode ser passada) são opcionais. endereco é opcional: { cep (8 dígitos, com ou sem hífen, obrigatório no objeto), numero " +
         "(até 20), complemento (até 100) }; a API consulta o ViaCEP e grava os dados oficiais do CEP (400 CEP mal formado ou inexistente, " +
         "503 ViaCEP indisponível, lento ou com resposta inválida — nada é gravado). " +
-        "cargoId deve ser um cargo ativo; somente um Administrador cadastra outro Administrador (403).")]
+        "cargoId deve ser um cargo ativo. Hierarquia (403): somente um Administrador cadastra outro Administrador; Diretor, Diretor Associado, " +
+        "Secretário e Tesoureiro só são atribuídos pela diretoria (ADM, DIR, DIRA). Política GestaoCadastros: ADM, DIR, DIRA, SEC.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Registrar([FromBody] RegistrarUsuarioRequest request, CancellationToken cancellationToken)
     {
-        request.SolicitanteEhAdmin = User.IsInRole(Roles.Admin);
-        var usuario = await mediator.Send(request, cancellationToken);
+        request.SolicitanteRole = User.Role();
+        var usuario = await Mediator.Send(request, cancellationToken);
         return StatusCode(StatusCodes.Status201Created, usuario);
     }
 
@@ -75,7 +73,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         "Se a consulta falhar (400 CEP inexistente, 503 ViaCEP indisponível/lento/resposta inválida), nada é alterado. " +
         "A obrigatoriedade do responsável usa a data de nascimento informada ou, se omitida, " +
         "a já gravada (400 se o menor de 18 anos ficar sem nome ou e-mail do responsável). " +
-        "409 se o e-mail ou o CPF pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente.")]
+        "409 se o e-mail ou o CPF pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente. " +
+        "Hierarquia (403) vale para o cargo atual e para o novo: Usuário com cargo Administrador só por um Administrador; Diretor, Diretor Associado, Secretário ou Tesoureiro só pela diretoria (ADM, DIR, DIRA) (403). O próprio usuário altera os dados pessoais em PUT /api/Me.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -91,14 +90,15 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         request.Id = id;
         request.UsuarioResponsavelId = usuarioId;
         request.IpResponsavel = HttpContext.IpDeOrigem();
-        request.SolicitanteEhAdmin = User.IsInRole(Roles.Admin);
-        return Ok(await mediator.Send(request, cancellationToken));
+        request.SolicitanteRole = User.Role();
+        return Ok(await Mediator.Send(request, cancellationToken));
     }
 
     [HttpDelete("{id:guid}")]
     [EndpointSummary("Exclui logicamente (inativa) um usuário (estado anterior auditado em _usuarios_hist).")]
     [EndpointDescription("409 se o usuário estiver vinculado a eventos de hoje em diante (extensão eventos lista todos), se já estiver inativo " +
-        "ou se for o próprio solicitante; 404 se inexistente. Eventos passados não impedem a exclusão. A foto, se houver, é mantida.")]
+        "ou se for o próprio solicitante; 404 se inexistente. Eventos passados não impedem a exclusão. A foto, se houver, é mantida. " +
+        "Usuário com cargo Administrador só por um Administrador; Diretor, Diretor Associado, Secretário ou Tesoureiro só pela diretoria (ADM, DIR, DIRA) (403).")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
@@ -109,7 +109,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
             return IdentidadeInvalida();
         }
 
-        await mediator.Send(new DeleteUsuarioRequest(id, usuarioId, HttpContext.IpDeOrigem(), User.IsInRole(Roles.Admin)), cancellationToken);
+        await Mediator.Send(new DeleteUsuarioRequest(id, usuarioId, HttpContext.IpDeOrigem(), User.Role()), cancellationToken);
         return NoContent();
     }
 
@@ -119,8 +119,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [EndpointSummary("Envia ou substitui a foto de perfil de um usuário ativo (troca auditada em _usuarios_hist).")]
     [EndpointDescription("multipart/form-data com um único campo 'arquivo': JPEG, PNG ou WebP, com extensão, Content-Type e assinatura coincidentes. " +
         "Limites em Media:Images (padrão: até 10 MB, de 64x64 até 25 megapixels). A API decodifica, corrige a orientação, remove todos os metadados " +
-        "(EXIF/GPS, XMP, IPTC, ICC) e regrava em WebP de até 1024x1024 e 1 MB; o arquivo original nunca é guardado. Só um Administrador altera a " +
-        "foto de um Administrador (403). 400 multipart inválido, 404 usuário inexistente, 409 usuário inativo, 413 acima do limite, " +
+        "(EXIF/GPS, XMP, IPTC, ICC) e regrava em WebP de até 1024x1024 e 1 MB; o arquivo original nunca é guardado. Foto de outro usuário segue a " +
+        "hierarquia dos cargos (403; a própria foto também pode ser trocada em PUT /api/Me/foto). 400 multipart inválido, 404 usuário inexistente, 409 usuário inativo, 413 acima do limite, " +
         "415 formato ou Content-Encoding não suportado, 422 imagem inválida/fora dos limites, 429 excesso de envios, 503 armazenamento indisponível.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -138,23 +138,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
             return IdentidadeInvalida();
         }
 
-        using (var envio = limitador.RegistrarEnvio(usuarioId))
-        {
-            if (!envio.IsAcquired)
-            {
-                return MuitosEnvios(envio, usuarioId, "Muitos envios de foto.", "Aguarde alguns minutos antes de enviar outra foto.");
-            }
-        }
-
-        using var vaga = await limitador.ReservarProcessamentoAsync(cancellationToken);
-        if (!vaga.IsAcquired)
-        {
-            return MuitosEnvios(vaga, usuarioId, "Processamento de fotos ocupado.", "Muitas fotos sendo processadas agora; tente novamente em instantes.");
-        }
-
-        var upload = await LeitorUploadFoto.LerAsync(Request, media.Value.Images.MaxUploadBytes, cancellationToken);
-        var request = new EnviarFotoUsuarioRequest(id, upload.Conteudo, upload.Formato, usuarioId, HttpContext.IpDeOrigem(), User.IsInRole(Roles.Admin));
-        return Ok(await mediator.Send(request, cancellationToken));
+        return await EnviarFotoAsync(id, usuarioId, cancellationToken);
     }
 
     [HttpGet("{id:guid}/foto")]
@@ -164,23 +148,11 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [ProducesResponseType<FileStreamResult>(StatusCodes.Status200OK, "image/webp")]
     [ProducesResponseType(StatusCodes.Status304NotModified)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> ObterFoto(Guid id, CancellationToken cancellationToken)
-    {
-        var foto = await mediator.Send(new ObterFotoUsuarioQuery(id), cancellationToken);
-        if (foto is null)
-        {
-            return NotFound(new ProblemDetails { Title = "Foto não encontrada.", Status = StatusCodes.Status404NotFound });
-        }
-
-        Response.Headers.CacheControl = "private, no-cache";
-        Response.Headers.ContentDisposition = "inline; filename=\"foto.webp\"";
-        Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
-        return File(foto.Conteudo, "image/webp", lastModified: null, entityTag: new EntityTagHeaderValue(foto.ETag), enableRangeProcessing: false);
-    }
+    public Task<IActionResult> ObterFoto(Guid id, CancellationToken cancellationToken) => ObterFotoAsync(id, cancellationToken);
 
     [HttpDelete("{id:guid}/foto")]
     [EndpointSummary("Remove a foto de perfil de um usuário (remoção auditada em _usuarios_hist; o arquivo é apagado).")]
-    [EndpointDescription("Também para usuário inativo. 404 se o usuário não existir ou não tiver foto; só um Administrador remove a foto de um Administrador (403).")]
+    [EndpointDescription("Também para usuário inativo. 404 se o usuário não existir ou não tiver foto; foto de outro usuário segue a hierarquia dos cargos (403).")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ExcluirFoto(Guid id, CancellationToken cancellationToken)
@@ -190,21 +162,6 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
             return IdentidadeInvalida();
         }
 
-        await mediator.Send(new ExcluirFotoUsuarioRequest(id, usuarioId, HttpContext.IpDeOrigem(), User.IsInRole(Roles.Admin)), cancellationToken);
-        return NoContent();
-    }
-
-    private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails
-    {
-        Title = "Identidade autenticada inválida.",
-        Status = StatusCodes.Status401Unauthorized,
-    });
-
-    private ObjectResult MuitosEnvios(RateLimitLease recusa, Guid usuarioId, string titulo, string detalhe)
-    {
-        var segundos = recusa.TryGetMetadata(MetadataName.RetryAfter, out var espera) ? Math.Max(1, (int)Math.Ceiling(espera.TotalSeconds)) : 5;
-        logger.LogWarning("Envio de foto recusado (429) {Titulo}: usuário {UsuarioId}.", titulo, usuarioId);
-        Response.Headers.RetryAfter = segundos.ToString(CultureInfo.InvariantCulture);
-        return StatusCode(StatusCodes.Status429TooManyRequests, new ProblemDetails { Title = titulo, Detail = detalhe, Status = StatusCodes.Status429TooManyRequests });
+        return await ExcluirFotoAsync(id, usuarioId, cancellationToken);
     }
 }

@@ -20,7 +20,7 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         var alvo = await db.Usuarios.AsNoTracking().Where(u => u.Id == request.Id)
                        .Select(u => new UsuarioAlvo(u.Ativo, u.Cargo!.Role, u.FotoCaminho)).SingleOrDefaultAsync(ct)
                    ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
-        ExigirAlvoAlteravel(alvo, request.SolicitanteEhAdmin);
+        ExigirAlvoAlteravel(alvo, request.Id, request.UsuarioResponsavelId, request.SolicitanteRole);
 
         var foto = processador.Processar(request.Conteudo, request.Formato, ct);
         var chave = FotoChave.Gerar(request.Id);
@@ -32,7 +32,7 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
             anterior = await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
             {
                 var atual = await TravarAsync(request.Id, ct);
-                ExigirAlvoAlteravel(atual, request.SolicitanteEhAdmin);
+                ExigirAlvoAlteravel(atual, request.Id, request.UsuarioResponsavelId, request.SolicitanteRole);
                 await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"UPDATE dbo.Usuarios SET FotoCaminho = {UsuariosService.Varchar("@fotoCaminho", chave, FotoChave.Tamanho)} WHERE Id = {request.Id}", ct);
@@ -90,7 +90,7 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         var anterior = await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
             var atual = await TravarAsync(request.Id, ct);
-            UsuariosService.ExigirPermissaoSobreCargo(atual.Role, request.SolicitanteEhAdmin);
+            ExigirPermissaoSobreFoto(atual.Role, request.Id, request.UsuarioResponsavelId, request.SolicitanteRole);
             var caminho = atual.FotoCaminho ?? throw ApiProblemException.NotFound("Foto não encontrada.", "O usuário não tem foto cadastrada.");
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.Usuarios SET FotoCaminho = NULL WHERE Id = {request.Id}", ct);
@@ -101,14 +101,23 @@ public sealed class UsuarioFotoService(AlmiranteDbContext db, UsuariosService us
         logger.LogInformation("Foto do usuário {UsuarioId} removida por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
     }
 
-    private static void ExigirAlvoAlteravel(UsuarioAlvo alvo, bool solicitanteEhAdmin)
+    private static void ExigirAlvoAlteravel(UsuarioAlvo alvo, Guid alvoId, Guid responsavelId, string solicitanteRole)
     {
         if (!alvo.Ativo)
         {
             throw ApiProblemException.Conflict("Usuário inativo.", "Um usuário excluído não pode receber foto. Nenhum registro foi alterado.");
         }
 
-        UsuariosService.ExigirPermissaoSobreCargo(alvo.Role, solicitanteEhAdmin);
+        ExigirPermissaoSobreFoto(alvo.Role, alvoId, responsavelId, solicitanteRole);
+    }
+
+    /// <summary>A própria foto (autoatendimento) não depende do cargo; a de outro usuário segue a hierarquia do cadastro.</summary>
+    private static void ExigirPermissaoSobreFoto(string alvoRole, Guid alvoId, Guid responsavelId, string solicitanteRole)
+    {
+        if (alvoId != responsavelId)
+        {
+            UsuariosService.ExigirPermissaoSobreCargo(alvoRole, solicitanteRole);
+        }
     }
 
     private async Task<UsuarioAlvo> TravarAsync(Guid id, CancellationToken ct) =>

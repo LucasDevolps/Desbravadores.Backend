@@ -20,7 +20,7 @@ server {
   client_max_body_size 20m;
   location = /api/Auth/login   { default_type application/json; return 401 '{"s":401}'; }
   location = /api/Auth/refresh { default_type application/json; return 401 '{"s":401}'; }
-  location ~* ^/api/usuarios/[^/]+/foto$ { default_type application/json; return 200 '{"foto":"recebida"}'; }
+  location ~* ^/api/(usuarios/[^/]+|me)/foto$ { default_type application/json; return 200 '{"foto":"recebida"}'; }
   location = /health { return 200 "ok"; }
   location ~* ^/hubs/notificacoes {
     add_header X-Seen-Upgrade "$http_upgrade" always; add_header X-Seen-Connection "$http_connection" always;
@@ -35,6 +35,7 @@ head -c 10500000 /dev/zero > "$W/foto-ok.bin"
 head -c 12000000 /dev/zero > "$W/foto-grande.bin"
 head -c 2000000 /dev/zero > "$W/outro-2m.bin"
 FOTO=/api/Usuarios/11111111-1111-4111-8111-111111111111/foto
+FOTO_PROPRIA=/api/Me/foto
 docker run -d --name ${P}-api --network ${P}-net --network-alias api -v "$W/stub/default.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.27-alpine >/dev/null
 
 docker run -d --name ${P}-tls --network ${P}-net -p 127.0.0.1::443 -p 127.0.0.1::80 \
@@ -114,6 +115,9 @@ for h in 'content-type: application/problem+json' 'x-content-type-options: nosni
 done
 grep -q '"status":413' "$W/body" && echo "ok   - foto 413 corpo problem+json" || { echo "FAIL - foto 413 corpo"; fail=1; }
 check "2 MB fora da rota da foto -> 413 (padrão 1 MB)" "$(code $R -X POST --data-binary @"$W/outro-2m.bin" https://api.exemplo.test:$HTTPS_PORT/api/Usuarios)" 413
+check "própria foto (/api/Me/foto) de 10,5 MB chega à API" "$(code $R -X PUT --data-binary @"$W/foto-ok.bin" https://api.exemplo.test:$HTTPS_PORT$FOTO_PROPRIA)" 200
+check "própria foto de 12 MB -> 413 no nginx" "$(code $R -X PUT --data-binary @"$W/foto-grande.bin" https://api.exemplo.test:$HTTPS_PORT$FOTO_PROPRIA)" 413
+check "2 MB em /api/Me (sem foto) -> 413 (padrão 1 MB)" "$(code $R -X PUT --data-binary @"$W/outro-2m.bin" https://api.exemplo.test:$HTTPS_PORT/api/Me)" 413
 
 hub_checks "tls" ${P}-tls https "https://api.exemplo.test:$HTTPS_PORT" $R
 seen=$(curl -s -o /dev/null -D - $R https://api.exemplo.test:$HTTPS_PORT/hubs/notificacoes | grep -i '^x-seen-host' | tr -d '\r')
@@ -150,6 +154,8 @@ for conf in "$REPO/nginx/nginx.conf" "$W/win.conf"; do
   grep -qi '^content-type: application/problem+json' "$W/hdr" && grep -q '"status":413' "$W/body" \
     && echo "ok   - $(basename $conf) foto 413 problem+json" || { echo "FAIL - $(basename $conf) foto 413 corpo"; fail=1; }
   check "$(basename $conf) 2 MB fora da rota da foto -> 413" "$(code -X POST --data-binary @"$W/outro-2m.bin" http://127.0.0.1:$PLAIN_PORT/api/Usuarios)" 413
+  check "$(basename $conf) própria foto de 10,5 MB chega à API" "$(code -X PUT --data-binary @"$W/foto-ok.bin" http://127.0.0.1:$PLAIN_PORT$FOTO_PROPRIA)" 200
+  check "$(basename $conf) própria foto de 12 MB -> 413" "$(code -X PUT --data-binary @"$W/foto-grande.bin" http://127.0.0.1:$PLAIN_PORT$FOTO_PROPRIA)" 413
   hub_checks "$(basename $conf)" ${P}-plain http "http://127.0.0.1:$PLAIN_PORT"
 done
 

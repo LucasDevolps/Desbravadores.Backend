@@ -100,7 +100,7 @@ public static class DbSeeder
     private static async Task SeedLancamentosAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
     {
         if (await db.Lancamentos.AnyAsync(cancellationToken)) return;
-        var membroId = await db.Usuarios.Select(u => u.Id).FirstOrDefaultAsync(cancellationToken);
+        var membroId = await db.Usuarios.Where(u => u.Ativo).Select(u => u.Id).FirstOrDefaultAsync(cancellationToken);
         if (membroId == Guid.Empty) return;
         db.Lancamentos.Add(new Lancamento
         {

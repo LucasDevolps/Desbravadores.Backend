@@ -77,6 +77,45 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         },
     };
 
+    private static readonly Expression<Func<Usuario, MeusDadosDto>> ParaMeusDados = u => new MeusDadosDto
+    {
+        Id = u.Id,
+        Nome = u.Nome,
+        Email = u.Email,
+        Cpf = u.Cpf,
+        DataNascimento = u.DataNascimento,
+        Telefone = u.Telefone,
+        ResponsavelNome = u.ResponsavelNome,
+        ResponsavelEmail = u.ResponsavelEmail,
+        ResponsavelCpf = u.ResponsavelCpf,
+        ResponsavelTelefone = u.ResponsavelTelefone,
+        Rg = u.Rg,
+        TipoSanguineo = u.TipoSanguineo,
+        DoencasAlergias = u.DoencasAlergias,
+        EhCin = u.EhCin,
+        DataExpiracao = u.DataExpiracao,
+        Endereco = u.EnderecoCep == null ? null : new EnderecoDto
+        {
+            Cep = u.EnderecoCep,
+            Logradouro = u.EnderecoLogradouro,
+            Numero = u.EnderecoNumero,
+            Complemento = u.EnderecoComplemento,
+            ComplementoCep = u.EnderecoComplementoCep,
+            Unidade = u.EnderecoUnidade,
+            Bairro = u.EnderecoBairro,
+            Localidade = u.EnderecoLocalidade!,
+            Uf = u.EnderecoUf!,
+            Estado = u.EnderecoEstado,
+            Regiao = u.EnderecoRegiao,
+            Ibge = u.EnderecoIbge,
+            Gia = u.EnderecoGia,
+            Ddd = u.EnderecoDdd,
+            Siafi = u.EnderecoSiafi,
+        },
+        PossuiFoto = u.FotoCaminho != null,
+        Cargo = new MeCargoDto { Id = u.Cargo!.Id, Nome = u.Cargo.Nome, Role = u.Cargo.Role },
+    };
+
     public static string NormalizarEmail(string email) => email.Trim().ToUpperInvariant();
 
     public static bool EmailValido(string? email)
@@ -117,12 +156,24 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .ToListAsync(cancellationToken);
     }
 
+    /// <summary>Usuários ativos com o mínimo para identificá-los (id, nome, cargo), para seletores de participantes e cobrados.</summary>
+    public async Task<IReadOnlyList<MembroResumoDto>> ListarMembrosAsync(CancellationToken ct) =>
+        await db.Usuarios.AsNoTracking()
+            .Where(u => u.Ativo)
+            .OrderBy(u => u.Nome).ThenBy(u => u.Id)
+            .Select(u => new MembroResumoDto(u.Id, u.Nome, u.Cargo!.Nome, u.Cargo.Role))
+            .ToListAsync(ct);
+
+    /// <summary>Dados do próprio usuário ativo; null se ele foi desativado entre a validação do token e a consulta.</summary>
+    public Task<MeusDadosDto?> ObterMeusDadosAsync(Guid id, CancellationToken ct) =>
+        db.Usuarios.AsNoTracking().Where(u => u.Id == id && u.Ativo).Select(ParaMeusDados).SingleOrDefaultAsync(ct);
+
     public async Task<UsuarioListItemDto> RegistrarAsync(RegistrarUsuarioRequest request, CancellationToken ct)
     {
         var email = request.Email!.Trim();
         var emailNormalizado = NormalizarEmail(email);
         var cargo = await ObterCargoAtivoAsync(request.CargoId!.Value, ct);
-        ExigirPermissaoSobreCargo(cargo.Role, request.SolicitanteEhAdmin);
+        ExigirPermissaoSobreCargo(cargo.Role, request.SolicitanteRole);
 
         if (await db.Usuarios.AnyAsync(u => u.EmailNormalizado == emailNormalizado, ct))
         {
@@ -204,27 +255,52 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
     public async Task<UsuarioListItemDto> UpdateAsync(UpdateUsuarioRequest request, CancellationToken ct)
     {
+        var cadastro = new CadastroAdministrativo(request.Nome!.Trim(), request.Email!.Trim(), request.CargoId!.Value, request.SolicitanteRole);
+        await AlterarAsync(request.Id, request, cadastro, request.UsuarioResponsavelId, request.IpResponsavel, ct);
+        logger.LogInformation("Usuário {UsuarioId} alterado por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
+        return await ObterDtoAsync(request.Id, ct);
+    }
+
+    /// <summary>
+    /// Autoatendimento: o próprio usuário altera só os dados pessoais. Nome, e-mail e cargo são mantidos a partir da linha travada
+    /// na mesma transação (uma troca de cargo concorrente nunca é desfeita). Auditado em _usuarios_hist como qualquer alteração.
+    /// </summary>
+    public async Task<MeusDadosDto> AtualizarMeusDadosAsync(AtualizarMeusDadosRequest request, CancellationToken ct)
+    {
+        await AlterarAsync(request.UsuarioId, request, null, request.UsuarioId, request.IpResponsavel, ct);
+        logger.LogInformation("Usuário {UsuarioId} alterou os próprios dados pessoais.", request.UsuarioId);
+        return await db.Usuarios.AsNoTracking().Where(u => u.Id == request.UsuarioId).Select(ParaMeusDados).SingleAsync(ct);
+    }
+
+    /// <summary>Nome, e-mail e cargo do PUT administrativo, com o cargo de quem pede (hierarquia de <see cref="Roles.PodeGerenciar"/>).</summary>
+    private sealed record CadastroAdministrativo(string Nome, string Email, Guid CargoId, string SolicitanteRole);
+
+    private async Task AlterarAsync(Guid id, DadosPessoaisRequest request, CadastroAdministrativo? cadastro, Guid responsavelId,
+        string ipResponsavel, CancellationToken ct)
+    {
         ExigirSqlServer();
-        var nome = request.Nome!.Trim();
-        var email = request.Email!.Trim();
-        var emailNormalizado = NormalizarEmail(email);
-        var cepPreConsultado = await PreConsultarCepAlteradoAsync(request, ct);
+        var cepPreConsultado = await PreConsultarCepAlteradoAsync(id, request, ct);
 
         await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
-            var atual = await TravarUsuarioAsync(request.Id, ct);
+            var atual = await TravarUsuarioAsync(id, ct);
             if (!atual.Ativo)
             {
                 throw ApiProblemException.Conflict("Usuário inativo.", "Um usuário excluído não pode ser alterado. Nenhum registro foi alterado.");
             }
 
-            ExigirPermissaoSobreCargo(atual.Role, request.SolicitanteEhAdmin);
-            var cargo = await ObterCargoAtivoAsync(request.CargoId!.Value, ct);
-            ExigirPermissaoSobreCargo(cargo.Role, request.SolicitanteEhAdmin);
-
-            if (await db.Usuarios.AnyAsync(u => u.Id != request.Id && u.EmailNormalizado == emailNormalizado, ct))
+            var (nome, email, emailNormalizado, cargoId) = (atual.Nome, atual.Email, atual.EmailNormalizado, atual.CargoId);
+            if (cadastro is not null)
             {
-                throw EmailDeOutroUsuario();
+                ExigirPermissaoSobreCargo(atual.Role, cadastro.SolicitanteRole);
+                var cargo = await ObterCargoAtivoAsync(cadastro.CargoId, ct);
+                ExigirPermissaoSobreCargo(cargo.Role, cadastro.SolicitanteRole);
+                (nome, email, emailNormalizado, cargoId) = (cadastro.Nome, cadastro.Email, NormalizarEmail(cadastro.Email), cargo.Id);
+
+                if (await db.Usuarios.AnyAsync(u => u.Id != id && u.EmailNormalizado == emailNormalizado, ct))
+                {
+                    throw EmailDeOutroUsuario();
+                }
             }
 
             var cpf = request.CpfInformado ? NormalizarCpf(request.Cpf) : atual.Cpf;
@@ -256,20 +332,20 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw new ApiProblemException(StatusCodes.Status400BadRequest, "Dados inválidos.", errors: erros);
             }
 
-            if (cpf is not null && await db.Usuarios.AnyAsync(u => u.Id != request.Id && u.Cpf == cpf, ct))
+            if (cpf is not null && await db.Usuarios.AnyAsync(u => u.Id != id && u.Cpf == cpf, ct))
             {
                 throw CpfDeOutroUsuario();
             }
 
             var endereco = await EnderecoEfetivoAsync(request, atual.Endereco, cepPreConsultado, ct);
 
-            await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
+            await sessao.DefinirContextoAuditoriaAsync(responsavelId, ipResponsavel, UsuarioHistorico.OperacaoUpdate, ct);
             try
             {
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"""
-                    UPDATE dbo.Usuarios SET Nome = {nome}, Email = {Varchar("@email", email, EmailMaximo)},
-                        EmailNormalizado = {Varchar("@emailNormalizado", emailNormalizado, EmailMaximo)}, CargoId = {cargo.Id},
+                    UPDATE dbo.Usuarios SET Nome = {Varchar("@nome", nome, NomeMaximo)},Email = {Varchar("@email", email, EmailMaximo)},
+                        EmailNormalizado = {Varchar("@emailNormalizado", emailNormalizado, EmailMaximo)}, CargoId = {cargoId},
                         Cpf = {Varchar("@cpf", cpf, 20)}, DataNascimento = {dataNascimento}, Telefone = {Varchar("@telefone", telefone, 20)},
                         ResponsavelNome = {Varchar("@responsavelNome", responsavelNome, NomeMaximo)},
                         ResponsavelEmail = {Varchar("@responsavelEmail", responsavelEmail, EmailMaximo)},
@@ -293,7 +369,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                         EnderecoGia = {Varchar("@enderecoGia", endereco.Gia, Endereco.GiaMaximo)},
                         EnderecoDdd = {Varchar("@enderecoDdd", endereco.Ddd, Endereco.DddMaximo)},
                         EnderecoSiafi = {Varchar("@enderecoSiafi", endereco.Siafi, Endereco.SiafiMaximo)}
-                    WHERE Id = {request.Id} AND Ativo = 1
+                    WHERE Id = {id} AND Ativo = 1
                     """, ct);
             }
             catch (SqlException ex) when (ViolouEmailUnico(ex))
@@ -307,9 +383,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
             return true;
         }, ct);
-
-        logger.LogInformation("Usuário {UsuarioId} alterado por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
-        return await ObterDtoAsync(request.Id, ct);
     }
 
     public async Task DeleteAsync(DeleteUsuarioRequest request, CancellationToken ct)
@@ -328,7 +401,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw ApiProblemException.Conflict("Usuário já está inativo.", "O usuário já foi excluído. Nenhum registro foi alterado.");
             }
 
-            ExigirPermissaoSobreCargo(atual.Role, request.SolicitanteEhAdmin);
+            ExigirPermissaoSobreCargo(atual.Role, request.SolicitanteRole);
 
             var hoje = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
             var bloqueadores = (await db.EventosMembros.AsNoTracking()
@@ -352,8 +425,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         logger.LogInformation("Usuário {UsuarioId} excluído logicamente por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
     }
 
-    private sealed record UsuarioTravado(bool Ativo, string Role, string? Cpf, DateOnly? DataNascimento, string? Telefone,
-        string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone,
+    private sealed record UsuarioTravado(bool Ativo, string Nome, string Email, string EmailNormalizado, Guid CargoId, string Role,
+        string? Cpf, DateOnly? DataNascimento, string? Telefone, string? ResponsavelNome, string? ResponsavelEmail, string? ResponsavelCpf, string? ResponsavelTelefone,
         string? Rg, string? TipoSanguineo, string? DoencasAlergias, bool EhCin, DateOnly? DataExpiracao, EnderecoGravado Endereco);
 
     private sealed record EnderecoGravado(string? Cep, string? Logradouro, string? Numero, string? Complemento, string? ComplementoCep,
@@ -374,8 +447,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     private async Task<UsuarioTravado> TravarUsuarioAsync(Guid id, CancellationToken ct) =>
         await db.Usuarios.FromSqlInterpolated($"SELECT * FROM dbo.Usuarios WITH (XLOCK, ROWLOCK) WHERE Id = {id}")
             .AsNoTracking()
-            .Select(u => new UsuarioTravado(u.Ativo, u.Cargo!.Role, u.Cpf, u.DataNascimento, u.Telefone,
-                u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone, u.Rg, u.TipoSanguineo, u.DoencasAlergias,
+            .Select(u => new UsuarioTravado(u.Ativo, u.Nome, u.Email, u.EmailNormalizado, u.CargoId, u.Cargo!.Role,
+                u.Cpf, u.DataNascimento, u.Telefone, u.ResponsavelNome, u.ResponsavelEmail, u.ResponsavelCpf, u.ResponsavelTelefone, u.Rg, u.TipoSanguineo, u.DoencasAlergias,
                 u.EhCin, u.DataExpiracao,
                 new EnderecoGravado(u.EnderecoCep, u.EnderecoLogradouro, u.EnderecoNumero, u.EnderecoComplemento, u.EnderecoComplementoCep,
                     u.EnderecoUnidade, u.EnderecoBairro, u.EnderecoLocalidade, u.EnderecoUf, u.EnderecoEstado, u.EnderecoRegiao,
@@ -391,14 +464,14 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     /// Consulta o ViaCEP antes da transação (sem segurar o lock da linha durante a chamada HTTP), só quando o PUT troca o CEP de um
     /// usuário ativo. CEP igual ao gravado não é consultado: os dados do CEP já gravados são mantidos.
     /// </summary>
-    private async Task<CepDto?> PreConsultarCepAlteradoAsync(UpdateUsuarioRequest request, CancellationToken ct)
+    private async Task<CepDto?> PreConsultarCepAlteradoAsync(Guid id, DadosPessoaisRequest request, CancellationToken ct)
     {
         if (!request.EnderecoInformado || request.Endereco is not { CepInformado: true } pedido || Cep.Normalizar(pedido.Cep) is not { } cep)
         {
             return null;
         }
 
-        var gravado = await db.Usuarios.AsNoTracking().Where(u => u.Id == request.Id && u.Ativo)
+        var gravado = await db.Usuarios.AsNoTracking().Where(u => u.Id == id && u.Ativo)
             .Select(u => new { u.EnderecoCep }).SingleOrDefaultAsync(ct);
         return gravado is null || gravado.EnderecoCep == cep ? null : await ConsultarCepAsync(cep, NadaAlterado, ct);
     }
@@ -408,7 +481,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
     /// novo substitui todos os dados do CEP pelos do ViaCEP e, se número ou complemento forem omitidos, eles ficam vazios (eram do
     /// endereço anterior). Falha do ViaCEP recusa o PUT inteiro, sem tocar no endereço gravado.
     /// </summary>
-    private async Task<EnderecoGravado> EnderecoEfetivoAsync(UpdateUsuarioRequest request, EnderecoGravado atual, CepDto? cepPreConsultado,
+    private async Task<EnderecoGravado> EnderecoEfetivoAsync(DadosPessoaisRequest request, EnderecoGravado atual, CepDto? cepPreConsultado,
         CancellationToken ct)
     {
         if (!request.EnderecoInformado)
@@ -449,12 +522,14 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.Invalid("CargoId", "cargoId inexistente ou inativo.");
 
-    internal static void ExigirPermissaoSobreCargo(string role, bool solicitanteEhAdmin)
+    internal static void ExigirPermissaoSobreCargo(string role, string solicitanteRole)
     {
-        if (role == Roles.Admin && !solicitanteEhAdmin)
+        if (!Roles.PodeGerenciar(solicitanteRole, role))
         {
-            throw new ApiProblemException(StatusCodes.Status403Forbidden, "ACESSO NEGADO!",
-                "Somente um Administrador pode gerenciar usuários com o cargo Administrador.");
+            throw new ApiProblemException(StatusCodes.Status403Forbidden, "ACESSO NEGADO!", role == Roles.Admin
+                ? "Somente um Administrador pode gerenciar usuários com o cargo Administrador."
+                : "Somente a diretoria (Administrador, Diretor ou Diretor Associado) pode gerenciar usuários com os cargos Diretor, " +
+                  "Diretor Associado, Secretário ou Tesoureiro.");
         }
     }
 

@@ -105,6 +105,8 @@ builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<NotificacoesService>();
+builder.Services.AddScoped<CatalogoFormacaoService>();
+builder.Services.AddScoped<FormacaoService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
 builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))
@@ -281,11 +283,7 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy(Policies.GestaoFinanceira, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Diretoria));
-    options.AddPolicy(Policies.GestaoCadastros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Diretoria));
-});
+builder.Services.AddAuthorization(Policies.Registrar);
 
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 

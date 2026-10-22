@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Data;
 
-public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : DbContext(options)
+public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : DbContext(options)
 {
     public const string CheckFotoCaminho =
         "[FotoCaminho] IS NULL OR (DATALENGTH([FotoCaminho]) = 79" +
@@ -67,8 +67,24 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
 
     public DbSet<Notificacao> Notificacoes => Set<Notificacao>();
 
+    public DbSet<Especialidade> Especialidades => Set<Especialidade>();
+    public DbSet<EspecialidadePreRequisito> EspecialidadesPreRequisitos => Set<EspecialidadePreRequisito>();
+    public DbSet<RevisaoRequisitos> RevisoesRequisitos => Set<RevisaoRequisitos>();
+    public DbSet<Requisito> Requisitos => Set<Requisito>();
+    public DbSet<MembroClasse> MembrosClasses => Set<MembroClasse>();
+    public DbSet<MembroEspecialidade> MembrosEspecialidades => Set<MembroEspecialidade>();
+    public DbSet<ProgressoRequisito> ProgressoRequisitos => Set<ProgressoRequisito>();
+    public DbSet<EvidenciaEspecialidade> EvidenciasEspecialidades => Set<EvidenciaEspecialidade>();
+    public DbSet<ValidacaoExterna> ValidacoesExternas => Set<ValidacaoExterna>();
+    public DbSet<HistoricoFormacao> HistoricoFormacao => Set<HistoricoFormacao>();
+
+    /// <summary>Valores gravados de <see cref="ClasseDesbravador"/> (CHECK das colunas Classe).</summary>
+    public static string ValoresClasse => string.Join(", ", Enum.GetValues<ClasseDesbravador>().Select(c => (int)c));
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigurarFormacao(modelBuilder);
+
         modelBuilder.Entity<Usuario>(entity =>
         {
             entity.ToTable("Usuarios", table =>
@@ -79,7 +95,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK_Usuarios_Endereco", CheckEndereco);
             });
             entity.HasKey(u => u.Id);
-            entity.Property(u => u.Nome).HasMaxLength(200).IsRequired();
+            entity.Property(u => u.Nome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(u => u.Email).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
             entity.Property(u => u.EmailNormalizado).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
             entity.Property(u => u.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
@@ -99,7 +115,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             {
                 entity.Property<string?>(coluna).HasColumnType($"varchar({tamanho})").HasMaxLength(tamanho).IsUnicode(false);
             }
-            entity.Property(u => u.SenhaHash).IsRequired();
+            entity.Property(u => u.SenhaHash).HasColumnType("varchar(max)").IsUnicode(false).IsRequired();
             entity.Property(u => u.SecurityVersion).IsConcurrencyToken();
             entity.HasIndex(u => u.EmailNormalizado).IsUnique();
             entity.HasIndex(u => u.Cpf)
@@ -117,7 +133,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
         modelBuilder.Entity<AuthSession>(entity =>
         {
             entity.ToTable("AuthSessions"); entity.HasKey(x => x.Id);
-            entity.Property(x => x.RevocationReason).HasMaxLength(100);
+            entity.Property(x => x.RevocationReason).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false);
             entity.Property(x => x.RowVersion).IsRowVersion();
             entity.HasIndex(x => new { x.UsuarioId, x.AbsoluteExpiresAtUtc });
             entity.HasIndex(x => x.AbsoluteExpiresAtUtc);
@@ -146,8 +162,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK_Lancamentos_Pagamento", CheckPagamento);
             });
             entity.HasKey(l => l.Id);
-            entity.Property(l => l.Finalidade).HasMaxLength(50);
-            entity.Property(l => l.Descricao).HasMaxLength(500);
+            entity.Property(l => l.Finalidade).HasColumnType("varchar(50)").HasMaxLength(50).IsUnicode(false);
+            entity.Property(l => l.Descricao).HasColumnType("varchar(500)").HasMaxLength(500).IsUnicode(false);
             entity.Property(l => l.Categoria).HasConversion<int>().IsRequired();
             entity.Property(l => l.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(l => l.Valor).HasColumnType("decimal(18,2)").IsConcurrencyToken();
@@ -189,10 +205,10 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK_LancamentosOperacoes_TipoFluxo", "[TipoFluxo] IN (0, 1)");
             });
             entity.HasKey(o => o.Id);
-            entity.Property(o => o.IdempotencyKey).HasMaxLength(100).IsRequired();
-            entity.Property(o => o.RequestHash).HasMaxLength(64).IsRequired();
-            entity.Property(o => o.Finalidade).HasMaxLength(50).IsRequired();
-            entity.Property(o => o.Descricao).HasMaxLength(500);
+            entity.Property(o => o.IdempotencyKey).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
+            entity.Property(o => o.RequestHash).HasColumnType("varchar(64)").HasMaxLength(64).IsUnicode(false).IsRequired();
+            entity.Property(o => o.Finalidade).HasColumnType("varchar(50)").HasMaxLength(50).IsUnicode(false).IsRequired();
+            entity.Property(o => o.Descricao).HasColumnType("varchar(500)").HasMaxLength(500).IsUnicode(false);
             entity.Property(o => o.Categoria).HasConversion<int>().IsRequired();
             entity.Property(o => o.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(o => o.Valor).HasColumnType("decimal(18,2)");
@@ -214,9 +230,9 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
                 table.HasCheckConstraint("CK_lancamentos_deletados_TipoFluxo", "[TipoFluxo] IN (0, 1)");
             });
             entity.HasKey(d => d.Id);
-            entity.Property(d => d.IpResponsavel).HasMaxLength(45).IsRequired();
-            entity.Property(d => d.Motivo).HasMaxLength(255).IsRequired();
-            entity.Property(d => d.Finalidade).HasMaxLength(50);
+            entity.Property(d => d.IpResponsavel).HasColumnType("varchar(45)").HasMaxLength(45).IsUnicode(false).IsRequired();
+            entity.Property(d => d.Motivo).HasColumnType("varchar(255)").HasMaxLength(255).IsUnicode(false).IsRequired();
+            entity.Property(d => d.Finalidade).HasColumnType("varchar(50)").HasMaxLength(50).IsUnicode(false);
             entity.Property(d => d.Categoria).HasConversion<int>().IsRequired();
             entity.Property(d => d.TipoFluxo).HasConversion<int>().IsRequired();
             entity.Property(d => d.Valor).HasColumnType("decimal(18,2)");
@@ -251,7 +267,7 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             });
             entity.HasKey(e => e.Id);
             entity.HasAlternateKey(e => new { e.Id, e.EventoGrupoId }).HasName("AK_eventos_Id_EventoGrupoId");
-            entity.Property(e => e.Local).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Local).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(e => e.DataEvento).HasColumnType("date");
             entity.Property(e => e.TransporteValor).HasColumnType("decimal(18,2)");
             entity.Property(e => e.AlimentacaoValor).HasColumnType("decimal(18,2)");
@@ -294,9 +310,9 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.ToTable("eventos_operacoes", table =>
                 table.HasCheckConstraint("CK_eventos_operacoes_RespostaJson", "[RespostaJson] IS NULL OR ISJSON([RespostaJson]) = 1"));
             entity.HasKey(o => o.Id);
-            entity.Property(o => o.IdempotencyKey).HasMaxLength(100).IsRequired();
-            entity.Property(o => o.RequestHash).HasMaxLength(64).IsRequired();
-            entity.Property(o => o.RespostaJson).HasColumnType("nvarchar(max)");
+            entity.Property(o => o.IdempotencyKey).HasColumnType("varchar(100)").HasMaxLength(100).IsUnicode(false).IsRequired();
+            entity.Property(o => o.RequestHash).HasColumnType("varchar(64)").HasMaxLength(64).IsUnicode(false).IsRequired();
+            entity.Property(o => o.RespostaJson).HasColumnType("varchar(max)").IsUnicode(false);
             entity.HasIndex(o => new { o.UsuarioId, o.IdempotencyKey }).IsUnique();
             entity.HasIndex(o => o.EventoId);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(o => o.UsuarioId).OnDelete(DeleteBehavior.Restrict);
@@ -308,16 +324,16 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.ToTable("historico_eventos", table =>
                 table.HasCheckConstraint("CK_historico_eventos_ParticipantesJson", "ISJSON([ParticipantesJson]) = 1"));
             entity.HasKey(h => h.Id);
-            entity.Property(h => h.Local).HasMaxLength(200).IsRequired();
+            entity.Property(h => h.Local).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(h => h.DataEvento).HasColumnType("date");
             entity.Property(h => h.TransporteValor).HasColumnType("decimal(18,2)");
             entity.Property(h => h.AlimentacaoValor).HasColumnType("decimal(18,2)");
             entity.Property(h => h.SeguroObrigatorio).HasColumnType("decimal(18,2)");
             entity.Property(h => h.ValorPorMembro).HasColumnType("decimal(18,2)");
             entity.Property(h => h.Total).HasColumnType("decimal(18,2)");
-            entity.Property(h => h.ParticipantesJson).IsRequired();
+            entity.Property(h => h.ParticipantesJson).HasColumnType("varchar(max)").IsUnicode(false).IsRequired();
             entity.Property(h => h.IpResponsavel).HasColumnType("varchar(45)").IsRequired();
-            entity.Property(h => h.Motivo).HasMaxLength(255).IsRequired();
+            entity.Property(h => h.Motivo).HasColumnType("varchar(255)").HasMaxLength(255).IsUnicode(false).IsRequired();
             entity.HasIndex(h => h.EventoId);
             entity.HasOne<Evento>().WithMany().HasForeignKey(h => h.EventoId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioResponsavelId).OnDelete(DeleteBehavior.Restrict);
@@ -328,8 +344,8 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             entity.ToTable("_usuarios_hist", table =>
                 table.HasCheckConstraint("CK__usuarios_hist_TipoOperacao", "[TipoOperacao] IN ('UPDATE', 'DELETE')"));
             entity.HasKey(h => h.Id);
-            entity.Property(h => h.Nome).HasMaxLength(200).IsRequired();
-            entity.Property(h => h.Email).HasMaxLength(256).IsRequired();
+            entity.Property(h => h.Nome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
+            entity.Property(h => h.Email).HasColumnType("varchar(256)").HasMaxLength(256).IsUnicode(false).IsRequired();
             entity.Property(h => h.Cpf).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
             entity.Property(h => h.DataNascimento).HasColumnType("date");
             entity.Property(h => h.Telefone).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false);
@@ -346,9 +362,9 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
             {
                 entity.Property<string?>(coluna).HasColumnType($"varchar({tamanho})").HasMaxLength(tamanho).IsUnicode(false);
             }
-            entity.Property(h => h.CargoNome).HasMaxLength(200).IsRequired();
+            entity.Property(h => h.CargoNome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(h => h.TipoOperacao).HasColumnType("varchar(6)").IsRequired();
-            entity.Property(h => h.UsuarioResponsavelLogin).HasMaxLength(256).IsRequired();
+            entity.Property(h => h.UsuarioResponsavelLogin).HasColumnType("varchar(256)").HasMaxLength(256).IsUnicode(false).IsRequired();
             entity.Property(h => h.IpResponsavel).HasColumnType("varchar(45)").IsRequired();
             entity.HasIndex(h => h.UsuarioId);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(h => h.UsuarioId).OnDelete(DeleteBehavior.Restrict);
@@ -401,10 +417,10 @@ public class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> options) : 
         {
             entity.ToTable("Cargos");
             entity.HasKey(c => c.Id);
-            entity.Property(c => c.Nome).HasMaxLength(200).IsRequired();
-            entity.Property(c => c.Descricao).HasMaxLength(1000).IsRequired();
-            entity.Property(c => c.CriadoPor).HasMaxLength(200).IsRequired();
-            entity.Property(c => c.Role).HasMaxLength(20).IsRequired();
+            entity.Property(c => c.Nome).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
+            entity.Property(c => c.Descricao).HasColumnType("varchar(1000)").HasMaxLength(1000).IsUnicode(false).IsRequired();
+            entity.Property(c => c.CriadoPor).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
+            entity.Property(c => c.Role).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false).IsRequired();
             entity.HasIndex(c => c.Role).IsUnique();
         });
     }

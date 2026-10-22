@@ -80,7 +80,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         var user = session.Usuario;
         if (token.RevokedAtUtc is not null || session.RevokedAtUtc is not null || token.ExpiresAtUtc <= now ||
             session.AbsoluteExpiresAtUtc <= now || session.LastRenewedAtUtc.AddHours(_options.RefreshInactivityHours) <= now ||
-            user?.Cargo is null || !user.Cargo.Ativo || user.SecurityVersion != session.SecurityVersion) return null;
+            user is null || !user.Ativo || user.Cargo is null || !user.Cargo.Ativo || user.SecurityVersion != session.SecurityVersion) return null;
 
         var raw = CreateRefreshToken();
         var successor = NewRefresh(session.Id, raw, now, session.AbsoluteExpiresAtUtc);
@@ -112,7 +112,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         if (session is not null && session.RevokedAtUtc is null) { session.RevokedAtUtc = clock.GetUtcNow().UtcDateTime; session.RevocationReason = "logout"; await db.SaveChangesAsync(ct); }
     }
 
-    public Task<MeDto?> GetMeAsync(Guid id, CancellationToken ct) => db.Usuarios.AsNoTracking().Where(x => x.Id == id && x.Cargo != null && x.Cargo.Ativo)
+    public Task<MeDto?> GetMeAsync(Guid id, CancellationToken ct) => db.Usuarios.AsNoTracking().Where(x => x.Id == id && x.Ativo && x.Cargo != null && x.Cargo.Ativo)
         .Select(x => new MeDto { Id = x.Id, Nome = x.Nome, Email = x.Email,
             Cargo = new MeCargoDto { Id = x.Cargo!.Id, Nome = x.Cargo.Nome, Role = x.Cargo.Role } }).SingleOrDefaultAsync(ct);
 
