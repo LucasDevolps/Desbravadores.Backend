@@ -9,6 +9,9 @@ public static partial class ModelBindingErrors
 {
     private const string MensagemGenerica = "O valor informado é inválido ou está em formato incorreto para este campo.";
 
+    /// <summary>Propriedade fora do contrato de um DTO fechado (ex.: cargoId em PUT /api/Me); a chave do erro já diz qual.</summary>
+    private const string MensagemCampoNaoAceito = "Campo não aceito nesta operação.";
+
     public static IActionResult Responder(ActionContext context)
     {
         var limpo = new ModelStateDictionary();
@@ -31,6 +34,11 @@ public static partial class ModelBindingErrors
         if (string.IsNullOrWhiteSpace(mensagem))
         {
             return MensagemGenerica;
+        }
+
+        if (mensagem.Contains("could not be mapped to any .NET member", StringComparison.Ordinal))
+        {
+            return MensagemCampoNaoAceito;
         }
 
         var revelaTipos = mensagem.Contains("could not be converted", StringComparison.OrdinalIgnoreCase)

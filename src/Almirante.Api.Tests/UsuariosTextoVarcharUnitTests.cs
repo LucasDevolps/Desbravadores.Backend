@@ -40,9 +40,21 @@ public sealed class UsuariosTextoVarcharUnitTests
         return request;
     }
 
+    private static readonly AtualizarMeusDadosRequestValidator AtualizarProprios = new(TimeProvider.System);
+
+    // Só o que vem do corpo: propriedades [JsonIgnore] (ex.: SolicitanteRole, IpResponsavel) são preenchidas pelo servidor.
     private static IEnumerable<PropertyInfo> CamposTexto(Type tipo) =>
         tipo.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.PropertyType == typeof(string) && p.CanWrite && !CamposSemTexto.Contains(p.Name));
+            .Where(p => p.PropertyType == typeof(string) && p.CanWrite && !CamposSemTexto.Contains(p.Name)
+                && p.GetCustomAttribute<System.Text.Json.Serialization.JsonIgnoreAttribute>() is null);
+
+    private static AtualizarMeusDadosRequest ValidoParaAutoatendimento() => new()
+    {
+        Cpf = TestHelpers.NovoCpf(), DataNascimento = new DateOnly(2000, 1, 15), Telefone = "11987654321", Rg = "12.345.678-9", TipoSanguineo = "O+",
+        DoencasAlergias = "Alergia a amendoim.\nAsma leve.", ResponsavelNome = "Maria Conceição", ResponsavelEmail = "maria@local.dev",
+        ResponsavelCpf = TestHelpers.NovoCpf(), ResponsavelTelefone = "1132345678",
+        Endereco = new EnderecoRequest { Cep = "01001-000", Numero = "100", Complemento = "Apto 2" },
+    };
 
     public static TheoryData<string> Invalidos => ["😀", "中", "\u0007"];
 
@@ -51,6 +63,7 @@ public sealed class UsuariosTextoVarcharUnitTests
     {
         Assert.True(Registrar.Validate(ValidoParaRegistro()).IsValid, string.Join("; ", Registrar.Validate(ValidoParaRegistro()).Errors));
         Assert.True(Atualizar.Validate(Valido<UpdateUsuarioRequest>()).IsValid);
+        Assert.True(AtualizarProprios.Validate(ValidoParaAutoatendimento()).IsValid);
     }
 
     [Theory]
@@ -84,6 +97,20 @@ public sealed class UsuariosTextoVarcharUnitTests
             AssertRecusado(Atualizar, Valido<UpdateUsuarioRequest>(), r => r.Endereco!, campo, invalido);
             verificados.Add($"Endereco.{campo.Name}");
         }
+
+        var proprios = new List<string>();
+        foreach (var campo in CamposTexto(typeof(AtualizarMeusDadosRequest)))
+        {
+            AssertRecusado(AtualizarProprios, ValidoParaAutoatendimento(), r => r, campo, invalido);
+            proprios.Add(campo.Name);
+        }
+
+        foreach (var campo in CamposTexto(typeof(EnderecoRequest)))
+        {
+            AssertRecusado(AtualizarProprios, ValidoParaAutoatendimento(), r => r.Endereco!, campo, invalido);
+        }
+
+        Assert.Equal(verificados.Where(v => v is not "Nome" and not "Email" && !v.StartsWith("Endereco.", StringComparison.Ordinal)).Order(), proprios.Order());
 
         // Garante que a varredura não passou vazia: nome, e-mail, documentos, contato, responsável e endereço.
         Assert.Superset(new HashSet<string>

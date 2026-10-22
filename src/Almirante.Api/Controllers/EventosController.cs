@@ -9,9 +9,15 @@ namespace Almirante.Api.Controllers;
 
 [ApiController]
 [Route("api/Eventos")]
-[Authorize(Policy = Policies.GestaoFinanceira)]
+[Authorize(Policy = Policies.GestaoEventos)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+/// <summary>
+/// Gestão de eventos (GestaoEventos: ADM, DIR, DIRA, SEC, TES). Cadastro e cobranças são uma operação só: criar, editar ou excluir um
+/// evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes na mesma transação (idempotência, rowversion e
+/// auditoria preservadas). Registrar ou corrigir pagamentos continua em /api/Lancamentos (GestaoFinanceira). Participantes consultam
+/// os próprios eventos em /api/Me/Eventos.
+/// </summary>
 public sealed class EventosController(ISender mediator) : ControllerBase
 {
     [HttpGet]

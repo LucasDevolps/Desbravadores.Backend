@@ -3,17 +3,12 @@ using MediatR;
 
 namespace Almirante.Api.Dtos;
 
-public abstract class UsuarioConteudoRequest
+/// <summary>
+/// Dados pessoais do usuário, com as mesmas regras no cadastro administrativo (POST/PUT /api/Usuarios) e no autoatendimento
+/// (PUT /api/Me). Nome, e-mail, cargo, senha, foto e situação não fazem parte deste conjunto.
+/// </summary>
+public abstract class DadosPessoaisRequest
 {
-    /// <summary>Obrigatório, até 200 caracteres.</summary>
-    public string? Nome { get; set; }
-
-    /// <summary>E-mail de login: obrigatório, formato válido, até 100 caracteres ASCII, único (sem diferenciar maiúsculas/minúsculas).</summary>
-    public string? Email { get; set; }
-
-    /// <summary>Id de um cargo ativo (ver GET /api/Cargos).</summary>
-    public Guid? CargoId { get; set; }
-
     private string? _cpf;
     private DateOnly? _dataNascimento;
     private string? _telefone;
@@ -106,8 +101,21 @@ public abstract class UsuarioConteudoRequest
     [JsonIgnore] public bool ResponsavelEmailInformado { get; private set; }
     [JsonIgnore] public bool ResponsavelCpfInformado { get; private set; }
     [JsonIgnore] public bool ResponsavelTelefoneInformado { get; private set; }
+}
 
-    [JsonIgnore] public bool SolicitanteEhAdmin { get; set; }
+public abstract class UsuarioConteudoRequest : DadosPessoaisRequest
+{
+    /// <summary>Obrigatório, até 200 caracteres.</summary>
+    public string? Nome { get; set; }
+
+    /// <summary>E-mail de login: obrigatório, formato válido, até 100 caracteres ASCII, único (sem diferenciar maiúsculas/minúsculas).</summary>
+    public string? Email { get; set; }
+
+    /// <summary>Id de um cargo ativo (ver GET /api/Cargos).</summary>
+    public Guid? CargoId { get; set; }
+
+    /// <summary>Cargo (role) de quem faz a requisição, sempre do token validado; decide se pode gerenciar o cargo do usuário-alvo.</summary>
+    [JsonIgnore] public string SolicitanteRole { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -180,7 +188,7 @@ public sealed class UpdateUsuarioRequest : UsuarioConteudoRequest, IRequest<Usua
 }
 
 /// <summary>DELETE /api/Usuarios/{id} (exclusão lógica). Sem corpo: tudo vem da rota e do contexto autenticado.</summary>
-public sealed record DeleteUsuarioRequest(Guid Id, Guid UsuarioResponsavelId, string IpResponsavel, bool SolicitanteEhAdmin) : IRequest<Unit>;
+public sealed record DeleteUsuarioRequest(Guid Id, Guid UsuarioResponsavelId, string IpResponsavel, string SolicitanteRole) : IRequest<Unit>;
 
 /// <summary>Evento futuro que impede a exclusão de um usuário (extensão "eventos" do 409).</summary>
 public sealed record EventoBloqueadorDto(Guid Id, string Nome, DateOnly Data);

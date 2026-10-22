@@ -1,14 +1,36 @@
 using System.Net;
 using System.Net.Http.Json;
 using Almirante.Api.Dtos;
+using Almirante.Api.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
+/// <summary>
+/// Matriz de permissões da issue #127, endpoint por endpoint e perfil por perfil. "Permitido" = a autorização deixou passar (nunca 401/403;
+/// o corpo propositalmente inválido ou o id inexistente produzem 400/404); "negado" = 403 com o ProblemDetails padrão.
+/// </summary>
+public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
-    private readonly AlmiranteApiFactory factory;
-    public AuthorizationTests(AlmiranteApiFactory factory) => this.factory = factory;
+    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Autoatendimento }
+
+    private static readonly Modulo[] Todos = Enum.GetValues<Modulo>();
+
+    /// <summary>Fonte única do esperado: docs/authentication-security.md descreve a mesma tabela.</summary>
+    private static readonly Dictionary<string, Modulo[]> Matriz = new()
+    {
+        ["ADM"] = Todos,
+        ["DIR"] = Todos,
+        ["DIRA"] = Todos,
+        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento],
+        ["TES"] = [Modulo.Financeiro, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento],
+        ["DS"] = [Modulo.Autoatendimento],
+        ["CONS"] = [Modulo.Autoatendimento],
+        ["TESU"] = [Modulo.Autoatendimento],
+        ["SECU"] = [Modulo.Autoatendimento],
+        ["CAP"] = [Modulo.Autoatendimento],
+        ["ALM"] = [Modulo.Autoatendimento],
+    };
 
     private static object NovoLancamento(Guid? membroId, bool todos = false) => new
     {
@@ -16,87 +38,186 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         vencimento = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(5).ToString("yyyy-MM-dd"), aplicarATodosOsMembros = todos,
     };
 
-    private static HttpRequestMessage Endpoint(string nome) => nome switch
-    {
-        "GET /api/Usuarios" => new(HttpMethod.Get, "/api/Usuarios"),
-        "POST /api/Usuarios" => new(HttpMethod.Post, "/api/Usuarios") { Content = JsonContent.Create(new { nome = "RBAC", email = $"rbac-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = Guid.NewGuid() }) },
-        "PUT /api/Usuarios/{id}" => new(HttpMethod.Put, $"/api/Usuarios/{Guid.NewGuid()}") { Content = JsonContent.Create(new { nome = "RBAC", email = $"rbac-{Guid.NewGuid():N}@local.dev", cargoId = Guid.NewGuid() }) },
-        "DELETE /api/Usuarios/{id}" => new(HttpMethod.Delete, $"/api/Usuarios/{Guid.NewGuid()}"),
-        "GET /api/Cargos" => new(HttpMethod.Get, "/api/Cargos"),
-        "GET /api/Lancamentos" => new(HttpMethod.Get, "/api/Lancamentos"),
-        "GET /api/Lancamentos/{id}" => new(HttpMethod.Get, $"/api/Lancamentos/{Guid.NewGuid()}"),
-        "POST /api/Lancamentos/Registrar" => new(HttpMethod.Post, "/api/Lancamentos/Registrar") { Content = JsonContent.Create(NovoLancamento(Guid.NewGuid())) },
-        "PUT /api/Lancamentos/{id}" => new(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { status = "Pago" }) },
-        "POST /api/Lancamentos/{id}/Pagamento" => new(HttpMethod.Post, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento") { Content = JsonContent.Create(new { dataPagamento = "2026-10-01", valorPago = 10m }) },
-        "PUT /api/Lancamentos/{id}/Pagamento" => new(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento") { Content = JsonContent.Create(new { dataPagamento = "2026-10-01", valorPago = 10m }) },
-        "GET /api/Dashboard" => new(HttpMethod.Get, "/api/Dashboard"),
-        "DELETE /api/Lancamentos/{id}" => new(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { motivo = "rbac" }) },
-        "GET /api/Eventos" => new(HttpMethod.Get, "/api/Eventos"),
-        "POST /api/Eventos" => new(HttpMethod.Post, "/api/Eventos") { Content = JsonContent.Create(EventosTestKit.Corpo(Guid.NewGuid())) },
-        "PUT /api/Eventos/{id}" => new(HttpMethod.Put, $"/api/Eventos/{Guid.NewGuid()}") { Content = JsonContent.Create(EventosTestKit.Corpo(Guid.NewGuid(), versao: "AAAAAAAAB9E=")) },
-        "DELETE /api/Eventos/{id}" => new(HttpMethod.Delete, $"/api/Eventos/{Guid.NewGuid()}") { Content = JsonContent.Create(new { motivo = "rbac", versao = "AAAAAAAAB9E=" }) },
-        _ => throw new ArgumentOutOfRangeException(nameof(nome)),
-    };
+    private static HttpRequestMessage Json(HttpMethod metodo, string rota, object corpo) => new(metodo, rota) { Content = JsonContent.Create(corpo) };
 
-    public static TheoryData<string> EndpointsAdministrativos => new()
-    {
-        "GET /api/Usuarios", "POST /api/Usuarios", "PUT /api/Usuarios/{id}", "DELETE /api/Usuarios/{id}", "GET /api/Cargos", "GET /api/Lancamentos", "GET /api/Lancamentos/{id}", "POST /api/Lancamentos/Registrar",
-        "PUT /api/Lancamentos/{id}", "POST /api/Lancamentos/{id}/Pagamento", "PUT /api/Lancamentos/{id}/Pagamento", "DELETE /api/Lancamentos/{id}",
-        "GET /api/Dashboard",
-        "GET /api/Eventos", "POST /api/Eventos", "PUT /api/Eventos/{id}", "DELETE /api/Eventos/{id}",
-    };
+    public sealed record Endpoint(string Nome, Modulo Modulo, Func<HttpRequestMessage> Requisicao);
 
-    [Theory]
-    [MemberData(nameof(EndpointsAdministrativos))]
-    public async Task SemAutenticacao_Retorna401(string endpoint)
+    public static readonly Endpoint[] Endpoints =
+    [
+        new("GET /api/Usuarios", Modulo.Cadastros, () => new(HttpMethod.Get, "/api/Usuarios")),
+        new("POST /api/Usuarios", Modulo.Cadastros, () => Json(HttpMethod.Post, "/api/Usuarios", new { nome = "RBAC", email = $"rbac-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = Guid.NewGuid(), cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio })),
+        new("PUT /api/Usuarios/{id}", Modulo.Cadastros, () => Json(HttpMethod.Put, $"/api/Usuarios/{Guid.NewGuid()}", new { })),
+        new("DELETE /api/Usuarios/{id}", Modulo.Cadastros, () => new(HttpMethod.Delete, $"/api/Usuarios/{Guid.NewGuid()}")),
+        new("GET /api/Usuarios/{id}/foto", Modulo.Cadastros, () => new(HttpMethod.Get, $"/api/Usuarios/{Guid.NewGuid()}/foto")),
+        new("PUT /api/Usuarios/{id}/foto", Modulo.Cadastros, () => new(HttpMethod.Put, $"/api/Usuarios/{Guid.NewGuid()}/foto")),
+        new("DELETE /api/Usuarios/{id}/foto", Modulo.Cadastros, () => new(HttpMethod.Delete, $"/api/Usuarios/{Guid.NewGuid()}/foto")),
+        new("GET /api/Cargos", Modulo.Cadastros, () => new(HttpMethod.Get, "/api/Cargos")),
+
+        new("GET /api/Lancamentos", Modulo.Financeiro, () => new(HttpMethod.Get, "/api/Lancamentos")),
+        new("GET /api/Lancamentos/{id}", Modulo.Financeiro, () => new(HttpMethod.Get, $"/api/Lancamentos/{Guid.NewGuid()}")),
+        new("POST /api/Lancamentos/Registrar", Modulo.Financeiro, () => Json(HttpMethod.Post, "/api/Lancamentos/Registrar", NovoLancamento(Guid.NewGuid()))),
+        new("PUT /api/Lancamentos/{id}", Modulo.Financeiro, () => Json(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}", new { status = "Pago" })),
+        new("POST /api/Lancamentos/{id}/Pagamento", Modulo.Financeiro, () => Json(HttpMethod.Post, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento", new { dataPagamento = "2026-10-01", valorPago = 10m })),
+        new("PUT /api/Lancamentos/{id}/Pagamento", Modulo.Financeiro, () => Json(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento", new { dataPagamento = "2026-10-01", valorPago = 10m })),
+        new("DELETE /api/Lancamentos/{id}", Modulo.Financeiro, () => Json(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}", new { motivo = "rbac" })),
+
+        new("GET /api/Eventos", Modulo.Eventos, () => new(HttpMethod.Get, "/api/Eventos")),
+        new("GET /api/Eventos/{id}", Modulo.Eventos, () => new(HttpMethod.Get, $"/api/Eventos/{Guid.NewGuid()}")),
+        new("POST /api/Eventos", Modulo.Eventos, () => Json(HttpMethod.Post, "/api/Eventos", EventosTestKit.Corpo(Guid.NewGuid()))),
+        new("PUT /api/Eventos/{id}", Modulo.Eventos, () => Json(HttpMethod.Put, $"/api/Eventos/{Guid.NewGuid()}", EventosTestKit.Corpo(Guid.NewGuid(), versao: "AAAAAAAAB9E="))),
+        new("DELETE /api/Eventos/{id}", Modulo.Eventos, () => Json(HttpMethod.Delete, $"/api/Eventos/{Guid.NewGuid()}", new { motivo = "rbac", versao = "AAAAAAAAB9E=" })),
+
+        new("GET /api/Membros", Modulo.Membros, () => new(HttpMethod.Get, "/api/Membros")),
+        new("GET /api/Dashboard", Modulo.Painel, () => new(HttpMethod.Get, "/api/Dashboard")),
+
+        new("GET /api/Auth/Me", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Auth/Me")),
+        new("GET /api/Me", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me")),
+        new("PUT /api/Me", Modulo.Autoatendimento, () => Json(HttpMethod.Put, "/api/Me", new { cpf = "123" })),
+        new("GET /api/Me/foto", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me/foto")),
+        new("PUT /api/Me/foto", Modulo.Autoatendimento, () => new(HttpMethod.Put, "/api/Me/foto")),
+        new("DELETE /api/Me/foto", Modulo.Autoatendimento, () => new(HttpMethod.Delete, "/api/Me/foto")),
+        new("GET /api/Me/Eventos", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me/Eventos")),
+        new("GET /api/Me/Eventos/{id}", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/Me/Eventos/{Guid.NewGuid()}")),
+        new("GET /api/Cep/{cep}", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Cep/04382160")),
+        new("GET /api/Notificacoes/Pendentes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes/Pendentes")),
+        new("POST /api/Notificacoes/{id}/Leitura", Modulo.Autoatendimento, () => new(HttpMethod.Post, $"/api/Notificacoes/{Guid.NewGuid()}/Leitura")),
+    ];
+
+    public static TheoryData<string> Perfis => new(Matriz.Keys);
+
+    private static async Task<List<string>> DivergenciasAsync(HttpClient client, Func<Endpoint, HttpStatusCode, string?> avaliar)
     {
-        using var client = factory.CreateClient();
-        var response = await client.SendAsync(Endpoint(endpoint));
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Contains(response.Headers.WwwAuthenticate, h => h.Scheme == "Bearer");
+        var divergencias = new List<string>();
+        foreach (var endpoint in Endpoints)
+        {
+            using var response = await client.SendAsync(endpoint.Requisicao());
+            if (avaliar(endpoint, response.StatusCode) is { } erro)
+            {
+                divergencias.Add($"{endpoint.Nome}: {erro} (obtido {(int)response.StatusCode})");
+            }
+        }
+
+        return divergencias;
+    }
+
+    [Fact]
+    public void Matriz_CobreTodasAsActionsDosControllers()
+    {
+        var rotas = typeof(Program).Assembly.GetTypes()
+            .Where(t => t.IsSubclassOf(typeof(Microsoft.AspNetCore.Mvc.ControllerBase)) && !t.IsAbstract)
+            .SelectMany(t => t.GetMethods().Where(m => m.DeclaringType == t && m.IsPublic)
+                .SelectMany(m => m.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute), false)
+                    .Cast<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
+                    .Select(a => (Controller: t, Metodo: a.HttpMethods.Single(), a.Template))))
+            .ToList();
+
+        // Login, refresh, logout e csrf são anônimos por desenho; os demais endpoints precisam estar na matriz.
+        var anonimos = new[] { "POST /api/Auth/login", "POST /api/Auth/refresh", "POST /api/Auth/logout", "GET /api/Auth/csrf" };
+        var semMatriz = rotas
+            .Select(r => $"{r.Metodo} /{((Microsoft.AspNetCore.Mvc.RouteAttribute)r.Controller.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RouteAttribute), true).Single()).Template}"
+                + (string.IsNullOrEmpty(r.Template) ? "" : "/" + r.Template))
+            .Select(r => r.Replace(":guid", ""))
+            .Where(r => !anonimos.Contains(r) && !Endpoints.Any(e => e.Nome == r))
+            .ToList();
+        Assert.Empty(semMatriz);
+    }
+
+    [Fact]
+    public async Task SemAutenticacao_TokenInvalido_TodosOsEndpointsRetornam401()
+    {
+        using var anonimo = factory.CreateClient();
+        Assert.Empty(await DivergenciasAsync(anonimo, (_, status) => status == HttpStatusCode.Unauthorized ? null : "esperado 401 sem token"));
+
+        using var invalido = factory.CreateClient();
+        invalido.DefaultRequestHeaders.Authorization = new("Bearer", "abc.def.ghi");
+        Assert.Empty(await DivergenciasAsync(invalido, (_, status) => status == HttpStatusCode.Unauthorized ? null : "esperado 401 com token inválido"));
+
+        using var semPermissao = factory.CreateClient();
+        var resposta = await semPermissao.GetAsync("/api/Me");
+        Assert.Contains(resposta.Headers.WwwAuthenticate, h => h.Scheme == "Bearer");
+    }
+
+    [Fact]
+    public async Task TokenExpirado_ESessaoRevogada_Retornam401_MesmoParaQuemTinhaPermissao()
+    {
+        var (client, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DIR");
+        var token = NotificacoesTestKit.Token(client);
+
+        using var expirado = factory.CreateClient();
+        expirado.DefaultRequestHeaders.Authorization = new("Bearer",
+            NotificacoesTestKit.TokenReassinado(factory, token, DateTime.UtcNow.AddMinutes(-20), DateTime.UtcNow.AddSeconds(-60)));
+        Assert.Empty(await DivergenciasAsync(expirado, (_, status) => status == HttpStatusCode.Unauthorized ? null : "esperado 401 com token expirado"));
+
+        var sessao = NotificacoesTestKit.Sessao(token);
+        await TestHelpers.WithDbAsync(factory, async db =>
+        {
+            var s = await db.AuthSessions.SingleAsync(x => x.Id == sessao);
+            s.RevokedAtUtc = DateTime.UtcNow;
+            s.RevocationReason = "logout";
+            return await db.SaveChangesAsync();
+        });
+        Assert.Empty(await DivergenciasAsync(client, (_, status) => status == HttpStatusCode.Unauthorized ? null : "esperado 401 com sessão revogada"));
+    }
+
+    [Fact]
+    public async Task UsuarioInativo_ECargoInativo_PerdemTodoOAcesso()
+    {
+        using var isolada = new AlmiranteApiFactory();
+        var (usuario, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(isolada, "SEC");
+        var (almoxarife, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(isolada, "ALM");
+        Assert.Equal(HttpStatusCode.OK, (await usuario.GetAsync("/api/Usuarios")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await almoxarife.GetAsync("/api/Me")).StatusCode);
+
+        await TestHelpers.WithDbAsync(isolada, async db =>
+        {
+            (await db.Usuarios.SingleAsync(u => u.Id == usuarioId)).Ativo = false;
+            (await db.Cargos.SingleAsync(c => c.Role == "ALM")).Ativo = false;
+            return await db.SaveChangesAsync();
+        });
+
+        Assert.Empty(await DivergenciasAsync(usuario, (_, status) => status == HttpStatusCode.Unauthorized ? null : "esperado 401 com usuário inativo"));
+        Assert.Empty(await DivergenciasAsync(almoxarife, (_, status) => status == HttpStatusCode.Unauthorized ? null : "esperado 401 com cargo inativo"));
     }
 
     [Theory]
-    [MemberData(nameof(EndpointsAdministrativos))]
-    public async Task TokenInvalido_Retorna401(string endpoint)
-    {
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new("Bearer", "abc.def.ghi");
-        Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(Endpoint(endpoint))).StatusCode);
-    }
-
-    public static TheoryData<string, string> CargosSemPermissao()
-    {
-        var data = new TheoryData<string, string>();
-        foreach (var role in new[] { "DS", "CONS", "TESU", "CAP" })
-        foreach (var endpoint in EndpointsAdministrativos) data.Add(role, endpoint);
-        return data;
-    }
-
-    [Theory]
-    [MemberData(nameof(CargosSemPermissao))]
-    public async Task AutenticadoSemPermissao_Retorna403(string role, string endpoint)
+    [MemberData(nameof(Perfis))]
+    public async Task MatrizDePermissoes_PorEndpointEPerfil(string role)
     {
         var (client, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, role);
-        var response = await client.SendAsync(Endpoint(endpoint));
+        var permitidos = Matriz[role];
+
+        var divergencias = await DivergenciasAsync(client, (endpoint, status) =>
+            permitidos.Contains(endpoint.Modulo)
+                ? status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "esperado acesso permitido" : null
+                : status == HttpStatusCode.Forbidden ? null : "esperado 403");
+
+        Assert.True(divergencias.Count == 0, $"{role}: " + string.Join(" | ", divergencias));
+    }
+
+    [Fact]
+    public async Task AcessoNegado_UsaProblemDetailsPadrao_ESessaoContinuaValida()
+    {
+        var (client, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "DS");
+
+        var response = await client.GetAsync("/api/Lancamentos");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
         Assert.Equal("ACESSO NEGADO!", problem!.Title);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Auth/Me")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Me")).StatusCode);
     }
 
     [Theory]
-    [InlineData("ADM")] [InlineData("DIR")] [InlineData("DIRA")] [InlineData("SEC")] [InlineData("TES")]
-    public async Task Diretoria_AcessaEndpointsAdministrativos_EOperacoesSaoAuditadas(string role)
+    [InlineData("ADM")] [InlineData("DIR")] [InlineData("DIRA")] [InlineData("TES")]
+    public async Task Financeiro_OperaLancamentosEPagamentos_EOperacoesSaoAuditadas(string role)
     {
         var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, role);
         var membro = await TestHelpers.AddUsuarioAsync(factory, $"Membro {role}", "DS");
 
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Usuarios")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Cargos")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Eventos")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Lancamentos")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Eventos")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Membros")).StatusCode);
 
         var criado = await client.PostAsJsonAsync("/api/Lancamentos/Registrar", NovoLancamento(membro.Id));
         Assert.Equal(HttpStatusCode.Created, criado.StatusCode);
@@ -118,7 +239,65 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
     }
 
     [Fact]
-    public async Task MudancaDeCargoNoBanco_InvalidaTokenAnterior_ENovoLoginRecebe403()
+    public async Task Secretario_NaoRegistraCorrigeNemExcluiOperacoesFinanceiras_ENadaEhGravado()
+    {
+        var (tesoureiro, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "TES");
+        var (secretario, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "SEC");
+        var membro = await TestHelpers.AddUsuarioAsync(factory, "Membro cobrado", "DS");
+        var dto = (await (await tesoureiro.PostAsJsonAsync("/api/Lancamentos/Registrar", NovoLancamento(membro.Id)))
+            .Content.ReadFromJsonAsync<LancamentoDto>())!;
+        var antes = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.CountAsync());
+
+        var tentativas = new[]
+        {
+            await secretario.PostAsJsonAsync("/api/Lancamentos/Registrar", NovoLancamento(membro.Id)),
+            await secretario.PutAsJsonAsync($"/api/Lancamentos/{dto.Id}", new { status = "Pago", valor = 1m }),
+            await TestHelpers.RegistrarPagamentoAsync(secretario, dto.Id, dto.Valor),
+            await secretario.PutAsJsonAsync($"/api/Lancamentos/{dto.Id}/Pagamento", new { dataPagamento = TestHelpers.DataPagamentoPassada.ToString("yyyy-MM-dd"), valorPago = 1m }),
+            await secretario.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{dto.Id}") { Content = JsonContent.Create(new { motivo = "sec" }) }),
+            await secretario.GetAsync($"/api/Lancamentos/{dto.Id}"),
+        };
+
+        Assert.All(tentativas, t => Assert.Equal(HttpStatusCode.Forbidden, t.StatusCode));
+        var salvo = await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.AsNoTracking().SingleAsync(l => l.Id == dto.Id));
+        Assert.Equal((StatusLancamento.Pendente, (decimal?)null, true, 10m), (salvo.Status, salvo.ValorPago, salvo.Ativo, salvo.Valor));
+        Assert.Equal(antes, await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.CountAsync()));
+    }
+
+    [Fact]
+    public async Task Tesoureiro_NaoGerenciaUsuariosCargosNemFotosDeTerceiros_MasConsultaMembrosEAPropriaConta()
+    {
+        var (tesoureiro, tesoureiroId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "TES");
+        var alvo = await TestHelpers.AddUsuarioAsync(factory, "Alvo do tesoureiro", "DS");
+        var email = $"tes-{Guid.NewGuid():N}@local.dev";
+        var cargoDiretor = await TestHelpers.WithDbAsync(factory, db => db.Cargos.Where(c => c.Role == "DIR").Select(c => c.Id).SingleAsync());
+
+        var tentativas = new[]
+        {
+            await tesoureiro.GetAsync("/api/Usuarios"),
+            await tesoureiro.PostAsJsonAsync("/api/Usuarios", new { nome = "Novo", email, senha = "Forte-Senha-9x2k", cargoId = cargoDiretor, cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio }),
+            await tesoureiro.PutAsJsonAsync($"/api/Usuarios/{tesoureiroId}", new { nome = "Eu", email = alvo.Email, cargoId = cargoDiretor }),
+            await tesoureiro.PutAsJsonAsync($"/api/Usuarios/{alvo.Id}", new { nome = "Outro", email = alvo.Email, cargoId = cargoDiretor }),
+            await tesoureiro.DeleteAsync($"/api/Usuarios/{alvo.Id}"),
+            await tesoureiro.GetAsync("/api/Cargos"),
+            await tesoureiro.GetAsync($"/api/Usuarios/{alvo.Id}/foto"),
+            await tesoureiro.PutAsync($"/api/Usuarios/{alvo.Id}/foto", FotosTestKit.Multipart(FotosTestKit.Jpeg(100, 100))),
+            await tesoureiro.DeleteAsync($"/api/Usuarios/{alvo.Id}/foto"),
+        };
+
+        Assert.All(tentativas, t => Assert.Equal(HttpStatusCode.Forbidden, t.StatusCode));
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == email)));
+        var (cargoDoTesoureiro, alvoAtivo) = await TestHelpers.WithDbAsync(factory, async db =>
+            ((await db.Usuarios.Include(u => u.Cargo).SingleAsync(u => u.Id == tesoureiroId)).Cargo!.Role,
+                (await db.Usuarios.SingleAsync(u => u.Id == alvo.Id)).Ativo));
+        Assert.Equal(("TES", true), (cargoDoTesoureiro, alvoAtivo));
+
+        Assert.Equal(HttpStatusCode.OK, (await tesoureiro.GetAsync("/api/Membros")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await tesoureiro.GetAsync("/api/Me")).StatusCode);
+    }
+
+    [Fact]
+    public async Task MudancaDeCargoNoBanco_InvalidaTokenAnterior_ENovoLoginRecebeSoAsNovasPermissoes()
     {
         var (client, usuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "TES");
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Lancamentos")).StatusCode);
@@ -132,11 +311,13 @@ public sealed class AuthorizationTests : IClassFixture<AlmiranteApiFactory>
         });
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/Lancamentos")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/Me")).StatusCode);
 
         using var novo = factory.CreateClient();
         await TestHelpers.AddCsrfAsync(novo);
         var login = await TestHelpers.PostLoginAsync(novo, email, TestHelpers.SenhaPadraoTeste);
         novo.DefaultRequestHeaders.Authorization = new("Bearer", (await login.Content.ReadFromJsonAsync<LoginResponse>())!.Token.AccessToken);
         Assert.Equal(HttpStatusCode.Forbidden, (await novo.GetAsync("/api/Lancamentos")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await novo.GetAsync("/api/Me")).StatusCode);
     }
 }

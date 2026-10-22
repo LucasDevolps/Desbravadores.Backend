@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authorization;
+
 namespace Almirante.Api.Security;
 
 public static class Roles
@@ -11,11 +13,58 @@ public static class Roles
     /// <summary>Cargo dos desbravadores (membros do clube); usado na contagem do dashboard, sem acesso administrativo.</summary>
     public const string Desbravador = "DS";
 
-    public static readonly string[] Diretoria = [Admin, Diretor, DiretorAssociado, Secretario, Tesoureiro];
+    /// <summary>Acesso completo aos módulos de negócio. ADM também é o administrador técnico (única exceção: usuários ADM).</summary>
+    public static readonly string[] Diretoria = [Admin, Diretor, DiretorAssociado];
+
+    /// <summary>Usuários, fotos de terceiros, cargos e CEP no cadastro.</summary>
+    public static readonly string[] Cadastros = [.. Diretoria, Secretario];
+
+    /// <summary>Lançamentos, pagamentos e indicadores financeiros.</summary>
+    public static readonly string[] Financeiro = [.. Diretoria, Tesoureiro];
+
+    /// <summary>Eventos (cadastro e cobranças geradas por ele), consulta mínima de membros e painel.</summary>
+    public static readonly string[] Gestao = [.. Diretoria, Secretario, Tesoureiro];
+
+    /// <summary>Cargos que dão acesso a algum módulo de gestão: só a diretoria atribui ou gerencia usuários com eles.</summary>
+    public static readonly string[] CargosDeGestao = [Diretor, DiretorAssociado, Secretario, Tesoureiro];
+
+    /// <summary>
+    /// Se quem tem o cargo <paramref name="solicitante"/> pode criar, alterar, excluir ou trocar a foto de um usuário com o cargo
+    /// <paramref name="alvo"/> (e atribuir esse cargo). ADM só por ADM; cargos de gestão só pela diretoria (impede que o secretário
+    /// conceda a si ou a outra conta acesso financeiro ou de diretoria); os demais por quem tem a policy de cadastros.
+    /// </summary>
+    public static bool PodeGerenciar(string solicitante, string alvo) =>
+        alvo == Admin ? solicitante == Admin
+        : !CargosDeGestao.Contains(alvo) || Diretoria.Contains(solicitante);
 }
 
 public static class Policies
 {
-    public const string GestaoFinanceira = "GestaoFinanceira";
+    /// <summary>Usuários (CRUD e fotos de terceiros) e cargos: ADM, DIR, DIRA, SEC.</summary>
     public const string GestaoCadastros = "GestaoCadastros";
+
+    /// <summary>Lançamentos, pagamentos e indicadores financeiros do painel: ADM, DIR, DIRA, TES.</summary>
+    public const string GestaoFinanceira = "GestaoFinanceira";
+
+    /// <summary>Cadastro, edição e exclusão de eventos (com as cobranças que eles geram): ADM, DIR, DIRA, SEC, TES.</summary>
+    public const string GestaoEventos = "GestaoEventos";
+
+    /// <summary>Lista mínima de membros (id, nome, cargo) para selecionar participantes e cobrados: ADM, DIR, DIRA, SEC, TES.</summary>
+    public const string ConsultaMembros = "ConsultaMembros";
+
+    /// <summary>Painel: ADM, DIR, DIRA, SEC, TES; o bloco financeiro só para quem também tem <see cref="GestaoFinanceira"/>.</summary>
+    public const string Painel = "Painel";
+
+    /// <summary>Dados, foto e eventos do próprio usuário e consulta de CEP: qualquer cargo ativo (a identidade vem só do token).</summary>
+    public const string Autoatendimento = "Autoatendimento";
+
+    public static void Registrar(AuthorizationOptions options)
+    {
+        options.AddPolicy(GestaoCadastros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Cadastros));
+        options.AddPolicy(GestaoFinanceira, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Financeiro));
+        options.AddPolicy(GestaoEventos, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
+        options.AddPolicy(ConsultaMembros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
+        options.AddPolicy(Painel, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
+        options.AddPolicy(Autoatendimento, policy => policy.RequireAuthenticatedUser());
+    }
 }
