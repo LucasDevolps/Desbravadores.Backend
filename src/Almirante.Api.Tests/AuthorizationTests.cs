@@ -12,7 +12,7 @@ namespace Almirante.Api.Tests;
 /// </summary>
 public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
-    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Autoatendimento }
+    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento }
 
     private static readonly Modulo[] Todos = Enum.GetValues<Modulo>();
 
@@ -22,7 +22,7 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         ["ADM"] = Todos,
         ["DIR"] = Todos,
         ["DIRA"] = Todos,
-        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento],
+        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Formacao, Modulo.Autoatendimento],
         ["TES"] = [Modulo.Financeiro, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento],
         ["DS"] = [Modulo.Autoatendimento],
         ["CONS"] = [Modulo.Autoatendimento],
@@ -81,7 +81,60 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("GET /api/Cep/{cep}", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Cep/04382160")),
         new("GET /api/Notificacoes/Pendentes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes/Pendentes")),
         new("POST /api/Notificacoes/{id}/Leitura", Modulo.Autoatendimento, () => new(HttpMethod.Post, $"/api/Notificacoes/{Guid.NewGuid()}/Leitura")),
+
+        // Issue #125: catálogos e a própria formação para qualquer cargo; escrita e dados de outros membros só para ADM, DIR, DIRA e SEC.
+        new("GET /api/Classes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Classes")),
+        new("GET /api/Classes/{classe}", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Classes/Amigo")),
+        new("GET /api/Classes/{classe}/Revisoes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Classes/LiderMaster/Revisoes")),
+        new("GET /api/Especialidades", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Especialidades")),
+        new("GET /api/Especialidades/{id}", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/Especialidades/{Guid.NewGuid()}")),
+        new("GET /api/Especialidades/{id}/Revisoes", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/Especialidades/{Guid.NewGuid()}/Revisoes")),
+        new("GET /api/RevisoesRequisitos/{id}", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/RevisoesRequisitos/{Guid.NewGuid()}")),
+        new("GET /api/Me/Formacao", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me/Formacao")),
+        new("GET /api/Me/Formacao/Classes/{id}", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/Me/Formacao/Classes/{Guid.NewGuid()}")),
+        new("GET /api/Me/Formacao/Especialidades/{id}", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/Me/Formacao/Especialidades/{Guid.NewGuid()}")),
+
+        new("POST /api/Especialidades", Modulo.Formacao, () => Json(HttpMethod.Post, "/api/Especialidades", new { })),
+        new("PUT /api/Especialidades/{id}", Modulo.Formacao, () => Json(HttpMethod.Put, $"/api/Especialidades/{Guid.NewGuid()}", new { })),
+        new("DELETE /api/Especialidades/{id}", Modulo.Formacao, () => Json(HttpMethod.Delete, $"/api/Especialidades/{Guid.NewGuid()}", new { })),
+        new("POST /api/Especialidades/{id}/Reativar", Modulo.Formacao, () => Json(HttpMethod.Post, $"/api/Especialidades/{Guid.NewGuid()}/Reativar", new { })),
+        new("POST /api/RevisoesRequisitos", Modulo.Formacao, () => Json(HttpMethod.Post, "/api/RevisoesRequisitos", new { })),
+        new("POST /api/RevisoesRequisitos/{id}/Publicar", Modulo.Formacao, () => Json(HttpMethod.Post, $"/api/RevisoesRequisitos/{Guid.NewGuid()}/Publicar", new { })),
+        new("POST /api/RevisoesRequisitos/{id}/Descartar", Modulo.Formacao, () => Json(HttpMethod.Post, $"/api/RevisoesRequisitos/{Guid.NewGuid()}/Descartar", new { })),
+        new("GET /api/Formacao/Membros/{membroId}", Modulo.Formacao, () => new(HttpMethod.Get, $"/api/Formacao/Membros/{Guid.NewGuid()}")),
+        new("GET /api/Formacao/Relatorios/Participantes", Modulo.Formacao, () => new(HttpMethod.Get, "/api/Formacao/Relatorios/Participantes")),
+        .. EndpointsDeVinculo("Classes", "Investidura"),
+        new("POST /api/Formacao/Classes/{id}/Requisitos/{requisitoId}/Evidencias", Modulo.Formacao,
+            () => Json(HttpMethod.Post, $"/api/Formacao/Classes/{Guid.NewGuid()}/Requisitos/{Guid.NewGuid()}/Evidencias", new { })),
+        new("DELETE /api/Formacao/Classes/{id}/Requisitos/{requisitoId}/Evidencias/{membroEspecialidadeId}", Modulo.Formacao,
+            () => Json(HttpMethod.Delete, $"/api/Formacao/Classes/{Guid.NewGuid()}/Requisitos/{Guid.NewGuid()}/Evidencias/{Guid.NewGuid()}", new { })),
+        new("PUT /api/Formacao/Classes/{id}/ValidacoesExternas/{codigo}", Modulo.Formacao,
+            () => Json(HttpMethod.Put, $"/api/Formacao/Classes/{Guid.NewGuid()}/ValidacoesExternas/APROVACAO_OFICIAL", new { })),
+        .. EndpointsDeVinculo("Especialidades", "Entrega"),
     ];
+
+    /// <summary>Ações comuns de /api/Formacao/Classes e /api/Formacao/Especialidades; corpo vazio = 400 para quem passa na autorização.</summary>
+    private static IEnumerable<Endpoint> EndpointsDeVinculo(string recurso, string reconhecimento)
+    {
+        var rota = $"/api/Formacao/{recurso}";
+        return
+        [
+            new($"GET {rota}", Modulo.Formacao, () => new(HttpMethod.Get, rota)),
+            new($"GET {rota}/{{id}}", Modulo.Formacao, () => new(HttpMethod.Get, $"{rota}/{Guid.NewGuid()}")),
+            new($"GET {rota}/{{id}}/Historico", Modulo.Formacao, () => new(HttpMethod.Get, $"{rota}/{Guid.NewGuid()}/Historico")),
+            new($"POST {rota}", Modulo.Formacao, () => Json(HttpMethod.Post, rota, new { })),
+            new($"POST {rota}/Historicos", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/Historicos", new { })),
+            new($"PUT {rota}/{{id}}", Modulo.Formacao, () => Json(HttpMethod.Put, $"{rota}/{Guid.NewGuid()}", new { })),
+            new($"PUT {rota}/{{id}}/Requisitos/{{requisitoId}}", Modulo.Formacao, () => Json(HttpMethod.Put, $"{rota}/{Guid.NewGuid()}/Requisitos/{Guid.NewGuid()}", new { })),
+            new($"POST {rota}/{{id}}/Concluir", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/{Guid.NewGuid()}/Concluir", new { })),
+            new($"POST {rota}/{{id}}/Cancelar", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/{Guid.NewGuid()}/Cancelar", new { })),
+            new($"POST {rota}/{{id}}/Retomar", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/{Guid.NewGuid()}/Retomar", new { })),
+            new($"POST {rota}/{{id}}/Reabrir", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/{Guid.NewGuid()}/Reabrir", new { })),
+            new($"POST {rota}/{{id}}/MigrarRevisao", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/{Guid.NewGuid()}/MigrarRevisao", new { })),
+            new($"POST {rota}/{{id}}/{reconhecimento}", Modulo.Formacao, () => Json(HttpMethod.Post, $"{rota}/{Guid.NewGuid()}/{reconhecimento}", new { })),
+            new($"DELETE {rota}/{{id}}/{reconhecimento}", Modulo.Formacao, () => Json(HttpMethod.Delete, $"{rota}/{Guid.NewGuid()}/{reconhecimento}", new { })),
+        ];
+    }
 
     public static TheoryData<string> Perfis => new(Matriz.Keys);
 
@@ -105,7 +158,8 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
     {
         var rotas = typeof(Program).Assembly.GetTypes()
             .Where(t => t.IsSubclassOf(typeof(Microsoft.AspNetCore.Mvc.ControllerBase)) && !t.IsAbstract)
-            .SelectMany(t => t.GetMethods().Where(m => m.DeclaringType == t && m.IsPublic)
+            // Inclui ações herdadas de controllers base do projeto (ex.: FormacaoVinculosControllerBase), com a rota do controller concreto.
+            .SelectMany(t => t.GetMethods().Where(m => m.IsPublic && m.DeclaringType!.Assembly == typeof(Program).Assembly)
                 .SelectMany(m => m.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute), false)
                     .Cast<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
                     .Select(a => (Controller: t, Metodo: a.HttpMethods.Single(), a.Template))))

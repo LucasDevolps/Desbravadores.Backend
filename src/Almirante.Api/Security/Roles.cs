@@ -25,6 +25,12 @@ public static class Roles
     /// <summary>Eventos (cadastro e cobranças geradas por ele), consulta mínima de membros e painel.</summary>
     public static readonly string[] Gestao = [.. Diretoria, Secretario, Tesoureiro];
 
+    /// <summary>
+    /// Escrita e visão administrativa do acompanhamento de classes, especialidades e requisitos (issue #125). Tesoureiro, instrutor e
+    /// demais cargos só consultam catálogos e a própria formação.
+    /// </summary>
+    public static readonly string[] Formacao = [.. Diretoria, Secretario];
+
     /// <summary>Cargos que dão acesso a algum módulo de gestão: só a diretoria atribui ou gerencia usuários com eles.</summary>
     public static readonly string[] CargosDeGestao = [Diretor, DiretorAssociado, Secretario, Tesoureiro];
 
@@ -55,7 +61,13 @@ public static class Policies
     /// <summary>Painel: ADM, DIR, DIRA, SEC, TES; o bloco financeiro só para quem também tem <see cref="GestaoFinanceira"/>.</summary>
     public const string Painel = "Painel";
 
-    /// <summary>Dados, foto e eventos do próprio usuário e consulta de CEP: qualquer cargo ativo (a identidade vem só do token).</summary>
+    /// <summary>Catálogos, requisitos e acompanhamento de qualquer membro (escrita e consulta administrativa): ADM, DIR, DIRA, SEC.</summary>
+    public const string GestaoFormacao = "GestaoFormacao";
+
+    /// <summary>
+    /// Dados, foto, eventos e formação do próprio usuário, consulta de CEP e dos catálogos de classes e especialidades: qualquer cargo
+    /// ativo (a identidade vem só do token).
+    /// </summary>
     public const string Autoatendimento = "Autoatendimento";
 
     public static void Registrar(AuthorizationOptions options)
@@ -65,6 +77,7 @@ public static class Policies
         options.AddPolicy(GestaoEventos, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
         options.AddPolicy(ConsultaMembros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
         options.AddPolicy(Painel, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
+        options.AddPolicy(GestaoFormacao, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Formacao));
         options.AddPolicy(Autoatendimento, policy => policy.RequireAuthenticatedUser());
     }
 }

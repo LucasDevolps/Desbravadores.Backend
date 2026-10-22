@@ -105,6 +105,8 @@ builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<NotificacoesService>();
+builder.Services.AddScoped<CatalogoFormacaoService>();
+builder.Services.AddScoped<FormacaoService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
 builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))

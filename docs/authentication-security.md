@@ -24,7 +24,8 @@ Fonte única: `Security/Roles.cs` (conjuntos de cargos, `Roles.PodeGerenciar` e 
 | `GestaoEventos` | ADM, DIR, DIRA, SEC, TES | `/api/Eventos` (consultar, criar, editar, excluir; as cobranças do evento são geradas na mesma operação) |
 | `ConsultaMembros` | ADM, DIR, DIRA, SEC, TES | `GET /api/Membros` (id, nome e cargo dos ativos, para seletores) |
 | `Painel` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
-| `Autoatendimento` | qualquer cargo ativo | `/api/Me` (dados, foto e eventos do próprio usuário) e `GET /api/Cep/{cep}` |
+| `GestaoFormacao` | ADM, DIR, DIRA, SEC | escrita de especialidades, revisões de requisitos e acompanhamento de classes/especialidades, e consulta da formação de outros membros (`/api/Formacao…`) — [`docs/formacao.md`](formacao.md) |
+| `Autoatendimento` | qualquer cargo ativo | `/api/Me` (dados, foto, eventos e formação do próprio usuário), `GET /api/Cep/{cep}` e a consulta dos catálogos `GET /api/Classes…`, `GET /api/Especialidades…` e `GET /api/RevisoesRequisitos/{id}` (só revisões publicadas/substituídas) |
 | `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
 
 Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com token inválido ou expirado, sessão revogada, usuário inativo ou cargo inativo, **todos** respondem `401`.
@@ -42,6 +43,10 @@ Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com 
 | `GET/PUT /api/Me`, `GET/PUT/DELETE /api/Me/foto` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `GET /api/Me/Eventos`, `GET /api/Me/Eventos/{id}` | ✓ | ✓ | ✓ | ✓ | ✓ (só eventos de que participa) |
 | `GET /api/Cep/{cep}` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `GET /api/Classes…`, `GET /api/Especialidades…`, `GET /api/RevisoesRequisitos/{id}` | ✓ | ✓ | ✓ | ✓ | ✓ (sem rascunhos) |
+| `POST/PUT/DELETE /api/Especialidades…`, `POST /api/RevisoesRequisitos…` | ✓ | ✓ | ✓ | — | — |
+| `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios…` | ✓ | ✓ | ✓ | — | — |
+| `GET /api/Me/Formacao…` | ✓ | ✓ | ✓ | ✓ | ✓ (só a própria formação) |
 | `GET /api/Auth/Me`, `/api/Notificacoes…`, hub | ✓ | ✓ | ✓ | ✓ | ✓ (só as próprias) |
 
 - `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}`. O frontend deve tratar `403` como "sem permissão" **sem** encerrar a sessão.
@@ -80,8 +85,7 @@ A identidade vem **só** do token validado: não há id de usuário na rota nem 
 ### Pendências da issue #127 fora deste escopo
 
 - Módulo de patrimônios (Almoxarife, `ALM`): o cargo existe, mas não há cadastro, consulta nem gestão de patrimônios.
-- Acompanhamento de especialidades do desbravador.
-- Relatórios da secretaria.
+- Relatórios da secretaria além dos de formação (classes e especialidades foram entregues na issue #125, ver [`formacao.md`](formacao.md)).
 - Consulta dos próprios débitos pelo desbravador além da cobrança mostrada em `/api/Me/Eventos` (o `lancamentoId` das notificações de débito continua sem rota de autoatendimento).
 - Troca de senha pelo próprio usuário (hoje só a CLI administrativa redefine senhas).
 
@@ -252,7 +256,7 @@ A API **nunca** executa SQL como `sa`, e isso é imposto por código, não por d
 | --- | --- | --- |
 | `sa` | só o serviço `sqlserver` (`MSSQL_SA_PASSWORD`) e o serviço `sql-bootstrap` (`SQLCMDPASSWORD`) do Compose | administrar a instância e provisionar as duas identidades abaixo. **Não existe para a API.** |
 | Administrativa (`SQL_ADMIN_USER`, padrão `almirante_admin_bd`) | usuário **contido** do banco da aplicação (sem login de servidor) | `CREATE TABLE/VIEW/PROCEDURE/FUNCTION`, `CONTROL` no schema `dbo` e `ALTER ANY USER` — só para migrations, concessões à role de runtime e rotação da senha de runtime. Sem papel/permissão de servidor, sem `db_owner`, sem `CONTROL` no banco, sem acesso a outro banco. |
-| Runtime (`SQL_APP_USER`, padrão `almirante_user_bd`) | usuário **contido** do banco, membro só de `almirante_app_role` | `SELECT`/`INSERT`/`UPDATE` nas tabelas de negócio; `DELETE` só em `AuthSessions` (limpeza de sessões); só `SELECT` em `__EFMigrationsHistory` e `lancamentos_deletados` (com `DENY` de escrita: só o trigger grava a auditoria). Sem DDL, `db_owner`, impersonação, `ALTER ANY LOGIN` ou propriedade de objetos. |
+| Runtime (`SQL_APP_USER`, padrão `almirante_user_bd`) | usuário **contido** do banco, membro só de `almirante_app_role` | `SELECT`/`INSERT`/`UPDATE` nas tabelas de negócio; `DELETE` só em `AuthSessions` (limpeza de sessões); só `SELECT` em `__EFMigrationsHistory` e nas tabelas de auditoria `lancamentos_deletados`, `historico_eventos`, `_usuarios_hist` e `formacao_historico` (com `DENY` de escrita: só os triggers gravam a auditoria). Sem DDL, `db_owner`, impersonação, `ALTER ANY LOGIN` ou propriedade de objetos. |
 
 Por que **usuários contidos**: um usuário contido é um principal do banco, não do servidor — não pode ser `sysadmin`, ter `CONTROL SERVER`, `ALTER ANY LOGIN`, `CREATE ANY DATABASE` nem `IMPERSONATE ANY LOGIN`, e a rotação da senha vira um `ALTER USER … WITH PASSWORD` restrito ao banco. Com um *login* isso exigiria `ALTER ANY LOGIN`, que permitiria também redefinir a senha de logins de outras aplicações da mesma instância (e assumir a identidade delas). O custo é que a connection string das duas identidades precisa de `Database=<banco>`.
 

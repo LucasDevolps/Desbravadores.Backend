@@ -17,6 +17,8 @@ O backend está em fase de **MVP funcional** e possui:
 - login com e-mail e senha e emissão de token JWT;
 - consulta dos dados do usuário autenticado e autoatendimento (dados pessoais, foto e eventos do próprio usuário);
 - permissões por perfil (cadastros, financeiro, eventos, painel e autoatendimento) com hierarquia de cargos;
+- acompanhamento de classes (regulares, avançadas e de liderança) e especialidades por membro, requisito por requisito,
+  com revisões de requisitos, conclusão, investidura/entrega, registros históricos e relatórios;
 - sessões persistidas, refresh rotativo e logout com revogação efetiva;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
@@ -838,6 +840,26 @@ GET /api/Me/Eventos/6f0c…            (eventoId recebido na notificação Event
 acesso de gestão (`403` para DIR, DIRA, SEC e TES); `GET /api/Cep/{cep}` passa a valer para qualquer cargo ativo; o
 `DashboardResponse.financeiro` passa a ser anulável. Os demais contratos (payloads, idempotência, versões e códigos)
 não mudaram.
+
+## Classes, liderança e especialidades (issue #125)
+
+Acompanhamento individual da formação de cada membro (inclusive diretoria e adultos): catálogo fixo das 15 classes
+(enum `ClasseDesbravador`, sem CRUD), catálogo administrável de especialidades, revisões imutáveis dos requisitos
+(grupos "todos", "escolher uma" e "N entre as opções", e exigência de especialidades como evidência), progresso por
+requisito, conclusão separada da investidura/entrega, regras e validações externas da liderança, registros históricos,
+cancelamento, retomada e reabertura auditados. O contrato completo, com regras de cálculo, filtros e limitações, está em
+[`docs/formacao.md`](docs/formacao.md); a decisão, no [ADR-0014](docs/architecture/adr/0014-acompanhar-formacao-com-catalogo-fixo-e-revisoes-imutaveis.md).
+
+| Rotas | Quem |
+|---|---|
+| `GET /api/Classes…`, `GET /api/Especialidades…`, `GET /api/RevisoesRequisitos/{id}` | qualquer cargo ativo (rascunhos só para quem gerencia) |
+| `GET /api/Me/Formacao`, `/api/Me/Formacao/Classes/{id}`, `/api/Me/Formacao/Especialidades/{id}` | qualquer cargo ativo, só a própria formação |
+| escrita de especialidades e revisões; `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios/Participantes` | `GestaoFormacao`: ADM, DIR, DIRA, SEC |
+
+Tesoureiro, instrutor e demais cargos só consultam os catálogos e a própria formação. A migration
+`AddFormacaoClassesEspecialidades` cria as tabelas e os triggers de histórico (`formacao_historico`, tabela de auditoria
+só com `SELECT` para o runtime) sem alterar dados existentes. Não há carga inicial de especialidades nem de cartões de
+requisitos: o clube os cadastra a partir da fonte oficial, como explicado nas limitações do documento.
 
 ## Notificações (issue #130)
 
