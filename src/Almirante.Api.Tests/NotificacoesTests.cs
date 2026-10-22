@@ -277,7 +277,9 @@ public sealed class NotificacoesTests(AlmiranteApiFactory factory) : IClassFixtu
 
         var (desbravador, _) = await UsuarioAsync("DS");
         Assert.Equal(HttpStatusCode.OK, (await desbravador.GetAsync("/api/Notificacoes/Pendentes")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await desbravador.GetAsync("/api/Me/Eventos")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await desbravador.GetAsync("/api/Eventos")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await desbravador.GetAsync($"/api/Eventos/{Guid.NewGuid()}")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await desbravador.GetAsync("/api/Lancamentos")).StatusCode);
 
         var (diretoria, _) = await UsuarioAsync("DIR");

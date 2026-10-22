@@ -54,6 +54,34 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         return evento is null ? null : (await MontarDtosAsync([evento], ct))[0];
     }
 
+    /// <summary>
+    /// Eventos ativos em que <paramref name="membroId"/> é participante ativo, com a própria cobrança (o lançamento do evento não pode
+    /// ser excluído à parte; ele só sai com o participante). Sem recorte de data: eventos passados continuam consultáveis.
+    /// </summary>
+    public async Task<IReadOnlyList<EventoParticipanteDto>> ListarDoParticipanteAsync(Guid membroId, Guid? eventoId, CancellationToken ct)
+    {
+        var linhas = await (
+                from m in db.EventosMembros.AsNoTracking()
+                join e in db.Eventos.AsNoTracking() on m.EventoId equals e.Id
+                join l in db.Lancamentos.AsNoTracking() on m.LancamentoId equals l.Id
+                where m.MembroId == membroId && m.Ativo && e.Ativo && l.Ativo && (eventoId == null || e.Id == eventoId)
+                orderby e.DataEvento, e.Local, e.Id
+                select new { Evento = e, l.Valor, l.Vencimento, l.Status })
+            .ToListAsync(ct);
+
+        return linhas.Select(x => new EventoParticipanteDto
+        {
+            Id = x.Evento.Id,
+            DataEvento = x.Evento.DataEvento,
+            Local = x.Evento.Local,
+            Transporte = new TransporteDto(x.Evento.TransporteValor, x.Evento.TransporteEhGratis),
+            Alimentacao = new AlimentacaoDto(x.Evento.AlimentacaoIndividual, x.Evento.AlimentacaoValor),
+            SeguroObrigatorio = x.Evento.SeguroObrigatorio,
+            ValorPorMembro = x.Evento.ValorPorMembro,
+            MinhaCobranca = new MinhaCobrancaDto(x.Valor, x.Vencimento, x.Status),
+        }).ToList();
+    }
+
     private async Task<IReadOnlyList<EventoDto>> MontarDtosAsync(IReadOnlyList<Evento> eventos, CancellationToken ct)
     {
         if (eventos.Count == 0)

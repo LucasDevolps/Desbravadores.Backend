@@ -15,7 +15,8 @@ autenticação e gestão de usuários, eventos com cobranças por membro e lanç
 O backend está em fase de **MVP funcional** e possui:
 
 - login com e-mail e senha e emissão de token JWT;
-- consulta dos dados do usuário autenticado;
+- consulta dos dados do usuário autenticado e autoatendimento (dados pessoais, foto e eventos do próprio usuário);
+- permissões por perfil (cadastros, financeiro, eventos, painel e autoatendimento) com hierarquia de cargos;
 - sessões persistidas, refresh rotativo e logout com revogação efetiva;
 - listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
@@ -377,12 +378,16 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `POST` | `/api/Auth/refresh` | rotaciona o refresh cookie e retorna novo access token |
 | `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
 | `GET` | `/api/Auth/Me` | retorna o perfil do usuário autenticado (qualquer cargo) |
-| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC, TES) |
-| `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`) |
-| `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API) |
-| `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto |
-| `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (ADM, DIR, DIRA, SEC, TES; nada é gravado) |
-| `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC, TES) |
+| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC) |
+| `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`; ADM, DIR, DIRA, SEC) |
+| `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API; ADM, DIR, DIRA, SEC) |
+| `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto (ADM, DIR, DIRA, SEC) |
+| `GET` | `/api/Membros` | id, nome e cargo dos membros ativos, para seletores (ADM, DIR, DIRA, SEC, TES) |
+| `GET` / `PUT` | `/api/Me` | dados do próprio usuário / atualização dos dados pessoais permitidos (qualquer cargo) |
+| `GET` / `PUT` / `DELETE` | `/api/Me/foto` | a própria foto (qualquer cargo) |
+| `GET` | `/api/Me/Eventos`, `/api/Me/Eventos/{id}` | eventos de que o usuário participa (qualquer cargo) |
+| `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (qualquer cargo; nada é gravado) |
+| `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
@@ -462,7 +467,8 @@ aplica a orientação do EXIF, remove todos os metadados (EXIF com GPS, XMP, IPT
 máximo 1024x1024; o original nunca é guardado. O banco grava só o caminho relativo (`Usuarios.FotoCaminho`) e o arquivo
 fica na pasta `Media:Storage:Path`, fora do site. A troca apaga a foto anterior só depois de gravar a nova, e a troca ou
 remoção vai para `_usuarios_hist`. A listagem traz `fotoUrl` (`null` sem foto). Mesma autorização do CRUD de usuários
-(só um Administrador gerencia a foto de um Administrador); o envio exige usuário ativo, a remoção vale também para
+(hierarquia de cargos: só um Administrador gerencia a foto de um Administrador, e só a diretoria a de cargos de gestão);
+o próprio usuário gerencia a sua em `/api/Me/foto`; o envio exige usuário ativo, a remoção vale também para
 inativo. Respostas: `400` multipart inválido, `404`, `409` usuário inativo, `413` acima do limite, `415` formato ou
 `Content-Encoding` não suportado, `422` imagem inválida ou fora dos limites, `429` excesso de envios (com
 `Retry-After`), `503` armazenamento indisponível. Decisão e alternativas: [ADR-0011](docs/architecture/adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md).
@@ -494,8 +500,9 @@ Uma faxina diária remove gravações interrompidas e fotos sem referência no b
 
 ## Lançamentos
 
-O agregado financeiro possui um único fluxo de criação, protegido pelas roles `ADM`, `DIR`,
-`DIRA`, `SEC` e `TES`. Sem autenticação válida a resposta é `401`; autenticado com outro cargo, `403`.
+O agregado financeiro possui um único fluxo de criação, protegido pela policy `GestaoFinanceira`
+(`ADM`, `DIR`, `DIRA` e `TES`; o Secretário não opera lançamentos nem pagamentos). Sem autenticação
+válida a resposta é `401`; autenticado com outro cargo, `403`.
 
 | Método | Rota | Finalidade |
 |---|---|---|
@@ -614,9 +621,11 @@ informando a data e o valor reais. `DataAtualizacao` nunca é usada como data de
 
 `/api/Eventos` cadastra **grupos de cobrança** de passeios/eventos. Cada `POST` cria um cadastro
 (uma composição de custos + uma lista de membros) e gera **um lançamento pendente por membro**,
-reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Mesma
-política dos lançamentos (`Policies.GestaoFinanceira`: `ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401`
-sem autenticação, `403` sem permissão). Contrato completo, exemplos e códigos no Swagger.
+reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Policy
+`GestaoEventos` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401` sem autenticação, `403` sem permissão):
+o Secretário gerencia eventos e o Tesoureiro executa as mesmas operações, mas registrar pagamentos
+continua só em `/api/Lancamentos` (`GestaoFinanceira`). O participante consulta os próprios eventos
+em `/api/Me/Eventos`. Contrato completo, exemplos e códigos no Swagger.
 
 | Método | Rota | Resultado |
 |---|---|---|
@@ -727,15 +736,17 @@ composta `evento_membros(EventoId, EventoGrupoId)`), recria `TR_Lancamentos_Audi
 (lançamentos de evento voltam com `Finalidade = ''`). Aplicação pelo startup como as demais; nenhuma
 variável de ambiente, porta ou credencial nova.
 
-**Frontend (issue #57).** Use `GET /api/Usuarios` para os IDs; envie `membros` como GUID ou array;
+**Frontend (issue #57).** Use `GET /api/Membros` (id, nome e cargo, disponível também ao Tesoureiro) para os IDs; envie `membros` como GUID ou array;
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
 retentativas da mesma tentativa; aplique `dataMinimaCadastro` no seletor de data do cadastro.
 
 ## Dashboard
 
 `GET /api/Dashboard[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` devolve, numa resposta só, os
-indicadores do clube. Mesma autorização dos lançamentos (policy `GestaoFinanceira`: `ADM`, `DIR`,
-`DIRA`, `SEC`, `TES`): sem token `401`, outro cargo `403`, filtros inválidos `400`.
+indicadores do clube. Policy `Painel` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`): sem token `401`, outro
+cargo `403`, filtros inválidos `400`. O bloco `financeiro` só é calculado e enviado para quem também
+tem `GestaoFinanceira` (`ADM`, `DIR`, `DIRA`, `TES`); para o Secretário vem `"financeiro": null`, com
+os demais indicadores iguais.
 
 ```json
 {
@@ -767,7 +778,7 @@ pagamento, lançamentos excluídos logicamente nem pagamentos fora do período. 
 `IX_Lancamentos_DataPagamento` atende a consulta.
 
 **Desbravadores.** Total atual de usuários **ativos** com o cargo Desbravador (`Cargos.Role = 'DS'`).
-Diretoria (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`), demais cargos (conselheiros, instrutores, cargos de
+Gestão (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`), demais cargos (conselheiros, instrutores, cargos de
 unidade etc.) e usuários inativos não contam. Não depende do período.
 
 **Próximos eventos.** Até 5 passeios com data igual ou posterior a hoje (fuso do clube), em ordem de
@@ -775,6 +786,58 @@ data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoRefe
 uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
 participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
 Não depende do período.
+
+## Perfis e autoatendimento (issue #127)
+
+Cada cargo acessa só o que corresponde à sua responsabilidade; a matriz completa por endpoint, a hierarquia de cargos
+e as pendências estão em [`docs/authentication-security.md`](docs/authentication-security.md#perfis-e-matriz-de-acesso-31-127).
+Resumo: ADM, DIR e DIRA acessam todos os módulos de negócio (exceção: só ADM gerencia usuários ADM); SEC cuida de
+cadastros e eventos, sem financeiro; TES cuida do financeiro e das operações de evento, sem cadastros nem cargos;
+qualquer cargo ativo (inclusive DS) usa o próprio autoatendimento e as próprias notificações.
+
+| Método | Rota | Resultado |
+|---|---|---|
+| `GET` | `/api/Me` | `200` dados do próprio usuário (`fotoUrl` em `/api/Me/foto`) |
+| `PUT` | `/api/Me` | `200` com os dados atualizados; `400` campo inválido ou não aceito; `409` CPF de outro usuário; `503` ViaCEP |
+| `GET` / `PUT` / `DELETE` | `/api/Me/foto` | mesma regra e respostas de `/api/Usuarios/{id}/foto` |
+| `GET` | `/api/Me/Eventos` | `200` `{ items }`: eventos de que participa, passados e futuros |
+| `GET` | `/api/Me/Eventos/{id}` | `200` / `404` (inexistente, excluído, alheio ou removido: mesma resposta) |
+| `GET` | `/api/Membros` | `200` `[{ id, nome, cargo, role }]` dos ativos (ADM, DIR, DIRA, SEC, TES) |
+
+```http
+PUT /api/Me
+Authorization: Bearer SEU_TOKEN
+Content-Type: application/json
+
+{ "telefone": "(11) 98765-4321", "endereco": { "cep": "04382-160", "numero": "12" }, "doencasAlergias": "Asma leve" }
+```
+
+Campos aceitos: `cpf`, `dataNascimento`, `telefone`, `rg`, `ehCin`, `dataExpiracao`, `tipoSanguineo`,
+`doencasAlergias`, `endereco` e os quatro campos do responsável, com as regras e a semântica de omissão do
+`PUT /api/Usuarios/{id}` (omitido mantém; `null` remove). Nome, e-mail de login, cargo, senha e situação não
+mudam por aqui: um corpo com `cargoId`, `nome`, `email`, `senha`, `ativo` ou qualquer outra propriedade recebe
+
+```json
+{ "status": 400, "errors": { "$.cargoId": ["Campo não aceito nesta operação."] } }
+```
+
+e nada é gravado. A alteração é auditada em `_usuarios_hist` com o próprio usuário como responsável.
+
+```http
+GET /api/Me/Eventos/6f0c…            (eventoId recebido na notificação EventoCadastrado)
+
+200 { "id": "6f0c…", "dataEvento": "2026-11-10", "local": "Acampamento",
+      "transporte": { "valor": 10.00, "ehGratis": false }, "alimentacao": { "individual": false, "valor": 8.00 },
+      "seguroObrigatorio": 2.00, "valorPorMembro": 20.00,
+      "minhaCobranca": { "valor": 20.00, "vencimento": "2026-11-10", "status": "Pendente" } }
+```
+
+**Impacto para os consumidores.** SEC deixa de acessar `/api/Lancamentos` (inclusive pagamentos) e recebe
+`"financeiro": null` no dashboard; TES deixa de acessar `/api/Usuarios` (inclusive fotos de terceiros) e
+`/api/Cargos` e passa a usar `GET /api/Membros` nos seletores de membros; SEC só atribui ou gerencia cargos sem
+acesso de gestão (`403` para DIR, DIRA, SEC e TES); `GET /api/Cep/{cep}` passa a valer para qualquer cargo ativo; o
+`DashboardResponse.financeiro` passa a ser anulável. Os demais contratos (payloads, idempotência, versões e códigos)
+não mudaram.
 
 ## Notificações (issue #130)
 
@@ -990,7 +1053,7 @@ O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive qu
 
 O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
 
-## Segurança (issues #29, #31, #33, #34, #35 e #36)
+## Segurança (issues #29, #31, #33, #34, #35, #36 e #127)
 
 Resumo: RBAC por policies com `401`/`403` distintos; rate limiting e lockout do login na própria API; segredos fora do Git com validação no startup e política de senha; `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP e HSTS (fora de Development, em HTTPS) em todas as respostas. **A autenticação exige TLS** (cookies `Secure`): em HTTP puro, `csrf`/`login` respondem `500`. A API também recusa iniciar em `Production` se a connection string do SQL Server tiver `TrustServerCertificate=True` ou `Encrypt=False` (#36). Detalhes, decisões, rotação de segredos expostos e pendências em [`docs/authentication-security.md`](docs/authentication-security.md).
 

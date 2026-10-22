@@ -2,13 +2,17 @@ using MediatR;
 
 namespace Almirante.Api.Dtos;
 
-/// <summary>GET /api/Dashboard. Datas em yyyy-MM-dd, informadas juntas; sem elas, o mês atual no fuso do clube.</summary>
-public sealed record GetDashboardQuery(string? DataInicial, string? DataFinal) : IRequest<DashboardResponse>;
+/// <summary>
+/// GET /api/Dashboard. Datas em yyyy-MM-dd, informadas juntas; sem elas, o mês atual no fuso do clube. IncluirFinanceiro vem da
+/// policy GestaoFinanceira do solicitante, nunca do cliente: sem ela o financeiro nem é consultado.
+/// </summary>
+public sealed record GetDashboardQuery(string? DataInicial, string? DataFinal, bool IncluirFinanceiro) : IRequest<DashboardResponse>;
 
 public sealed record DashboardResponse
 {
     public required DashboardPeriodoDto Periodo { get; init; }
-    public required DashboardFinanceiroDto Financeiro { get; init; }
+    /// <summary>Null para quem não tem acesso financeiro (ex.: Secretário): os valores não são calculados nem enviados.</summary>
+    public required DashboardFinanceiroDto? Financeiro { get; init; }
     public required DashboardDesbravadoresDto Desbravadores { get; init; }
     public required IReadOnlyList<DashboardEventoDto> ProximosEventos { get; init; }
 }

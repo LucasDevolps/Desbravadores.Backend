@@ -378,9 +378,9 @@ public sealed class UsuariosFotoSqlServerTests(FotosSqlFixture fx) : IClassFixtu
         var servico = scope.ServiceProvider.GetRequiredService<UsuarioFotoService>();
 
         await Assert.ThrowsAsync<NotSupportedException>(() => servico.EnviarAsync(
-            new EnviarFotoUsuarioRequest(Guid.NewGuid(), FotosTestKit.Jpeg(100, 100), FormatoFoto.Jpeg, Guid.NewGuid(), IpTeste, true), CancellationToken.None));
+            new EnviarFotoUsuarioRequest(Guid.NewGuid(), FotosTestKit.Jpeg(100, 100), FormatoFoto.Jpeg, Guid.NewGuid(), IpTeste, "ADM"), CancellationToken.None));
         await Assert.ThrowsAsync<NotSupportedException>(() => servico.ExcluirAsync(
-            new ExcluirFotoUsuarioRequest(Guid.NewGuid(), Guid.NewGuid(), IpTeste, true), CancellationToken.None));
+            new ExcluirFotoUsuarioRequest(Guid.NewGuid(), Guid.NewGuid(), IpTeste, "ADM"), CancellationToken.None));
         Assert.Empty(Directory.EnumerateFileSystemEntries(emMemoria.FotosPath, "*", SearchOption.AllDirectories));
     }
 }
