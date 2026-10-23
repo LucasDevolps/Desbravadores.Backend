@@ -25,6 +25,9 @@ Fonte única: `Security/Roles.cs` (conjuntos de cargos, `Roles.PodeGerenciar` e 
 | `ConsultaMembros` | ADM, DIR, DIRA, SEC, TES | `GET /api/Membros` (id, nome e cargo dos ativos, para seletores) |
 | `Painel` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
 | `GestaoFormacao` | ADM, DIR, DIRA, SEC | escrita de especialidades, revisões de requisitos e acompanhamento de classes/especialidades, e consulta da formação de outros membros (`/api/Formacao…`) — [`docs/formacao.md`](formacao.md) |
+| `GestaoAlmoxarifado` | ADM, DIR, DIRA, SEC, ALM + responsável designado | escrita do almoxarifado: bens, empréstimos, manutenção, baixa, inventários e lista de desejos (`/api/Almoxarifado…`). A designação vigente (`almoxarifado_responsaveis`) é conferida no banco a cada requisição — [`docs/almoxarifado.md`](almoxarifado.md) |
+| `ConsultaAlmoxarifado` | qualquer cargo ativo exceto DS + responsável designado | consultas, históricos, relatórios e CSV do almoxarifado (`GET /api/Almoxarifado…`) |
+| `DesignacaoAlmoxarifado` | ADM, DIR, DIRA, SEC | designar e revogar o responsável pelo almoxarifado (`POST /api/Almoxarifado/Responsaveis…`) |
 | `Autoatendimento` | qualquer cargo ativo | `/api/Me` (dados, foto, eventos e formação do próprio usuário), `GET /api/Cep/{cep}` e a consulta dos catálogos `GET /api/Classes…`, `GET /api/Especialidades…` e `GET /api/RevisoesRequisitos/{id}` (só revisões publicadas/substituídas) |
 | `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
 
@@ -46,6 +49,9 @@ Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com 
 | `GET /api/Classes…`, `GET /api/Especialidades…`, `GET /api/RevisoesRequisitos/{id}` | ✓ | ✓ | ✓ | ✓ | ✓ (sem rascunhos) |
 | `POST/PUT/DELETE /api/Especialidades…`, `POST /api/RevisoesRequisitos…` | ✓ | ✓ | ✓ | — | — |
 | `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios…` | ✓ | ✓ | ✓ | — | — |
+| `GET /api/Almoxarifado/…` (consultas, relatórios, CSV, enums, responsáveis) | ✓ | ✓ | ✓ | ✓ | ✓ (exceto DS: `403`) |
+| escrita em `/api/Almoxarifado/Bens…`, `Emprestimos…`, `Manutencoes…`, `Inventarios…`, `Desejos…` | ✓ | ✓ | ✓ | — | ALM ✓; demais — (o responsável designado também escreve) |
+| `POST /api/Almoxarifado/Responsaveis…` | ✓ | ✓ | ✓ | — | — |
 | `GET /api/Me/Formacao…` | ✓ | ✓ | ✓ | ✓ | ✓ (só a própria formação) |
 | `GET /api/Auth/Me`, `/api/Notificacoes…`, hub | ✓ | ✓ | ✓ | ✓ | ✓ (só as próprias) |
 
@@ -256,7 +262,7 @@ A API **nunca** executa SQL como `sa`, e isso é imposto por código, não por d
 | --- | --- | --- |
 | `sa` | só o serviço `sqlserver` (`MSSQL_SA_PASSWORD`) e o serviço `sql-bootstrap` (`SQLCMDPASSWORD`) do Compose | administrar a instância e provisionar as duas identidades abaixo. **Não existe para a API.** |
 | Administrativa (`SQL_ADMIN_USER`, padrão `almirante_admin_bd`) | usuário **contido** do banco da aplicação (sem login de servidor) | `CREATE TABLE/VIEW/PROCEDURE/FUNCTION`, `CONTROL` no schema `dbo` e `ALTER ANY USER` — só para migrations, concessões à role de runtime e rotação da senha de runtime. Sem papel/permissão de servidor, sem `db_owner`, sem `CONTROL` no banco, sem acesso a outro banco. |
-| Runtime (`SQL_APP_USER`, padrão `almirante_user_bd`) | usuário **contido** do banco, membro só de `almirante_app_role` | `SELECT`/`INSERT`/`UPDATE` nas tabelas de negócio; `DELETE` só em `AuthSessions` (limpeza de sessões); só `SELECT` em `__EFMigrationsHistory` e nas tabelas de auditoria `lancamentos_deletados`, `historico_eventos`, `_usuarios_hist` e `formacao_historico` (com `DENY` de escrita: só os triggers gravam a auditoria). Sem DDL, `db_owner`, impersonação, `ALTER ANY LOGIN` ou propriedade de objetos. |
+| Runtime (`SQL_APP_USER`, padrão `almirante_user_bd`) | usuário **contido** do banco, membro só de `almirante_app_role` | `SELECT`/`INSERT`/`UPDATE` nas tabelas de negócio; `DELETE` só em `AuthSessions` (limpeza de sessões); só `SELECT` em `__EFMigrationsHistory` e nas tabelas de auditoria `lancamentos_deletados`, `historico_eventos`, `_usuarios_hist`, `formacao_historico` e `almoxarifado_historico` (com `DENY` de escrita: só os triggers gravam a auditoria). Sem DDL, `db_owner`, impersonação, `ALTER ANY LOGIN` ou propriedade de objetos. |
 
 Por que **usuários contidos**: um usuário contido é um principal do banco, não do servidor — não pode ser `sysadmin`, ter `CONTROL SERVER`, `ALTER ANY LOGIN`, `CREATE ANY DATABASE` nem `IMPERSONATE ANY LOGIN`, e a rotação da senha vira um `ALTER USER … WITH PASSWORD` restrito ao banco. Com um *login* isso exigiria `ALTER ANY LOGIN`, que permitiria também redefinir a senha de logins de outras aplicações da mesma instância (e assumir a identidade delas). O custo é que a connection string das duas identidades precisa de `Database=<banco>`.
 

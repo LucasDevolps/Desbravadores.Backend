@@ -12,7 +12,7 @@ namespace Almirante.Api.Tests;
 /// </summary>
 public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
-    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento }
+    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento, ConsultaAlmoxarifado, GestaoAlmoxarifado }
 
     private static readonly Modulo[] Todos = Enum.GetValues<Modulo>();
 
@@ -22,14 +22,15 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         ["ADM"] = Todos,
         ["DIR"] = Todos,
         ["DIRA"] = Todos,
-        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Formacao, Modulo.Autoatendimento],
-        ["TES"] = [Modulo.Financeiro, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento],
+        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Formacao, Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado,
+            Modulo.GestaoAlmoxarifado],
+        ["TES"] = [Modulo.Financeiro, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado],
         ["DS"] = [Modulo.Autoatendimento],
-        ["CONS"] = [Modulo.Autoatendimento],
-        ["TESU"] = [Modulo.Autoatendimento],
-        ["SECU"] = [Modulo.Autoatendimento],
-        ["CAP"] = [Modulo.Autoatendimento],
-        ["ALM"] = [Modulo.Autoatendimento],
+        ["CONS"] = [Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado],
+        ["TESU"] = [Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado],
+        ["SECU"] = [Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado],
+        ["CAP"] = [Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado],
+        ["ALM"] = [Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado, Modulo.GestaoAlmoxarifado],
     };
 
     private static object NovoLancamento(Guid? membroId, bool todos = false) => new
@@ -111,7 +112,37 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("PUT /api/Formacao/Classes/{id}/ValidacoesExternas/{codigo}", Modulo.Formacao,
             () => Json(HttpMethod.Put, $"/api/Formacao/Classes/{Guid.NewGuid()}/ValidacoesExternas/APROVACAO_OFICIAL", new { })),
         .. EndpointsDeVinculo("Especialidades", "Entrega"),
+        .. EndpointsDoAlmoxarifado(),
     ];
+
+    /// <summary>Issue #126: consulta para todo cargo menos DS; escrita para ADM, DIR, DIRA, SEC e ALM; designação para quem cadastra cargos.</summary>
+    private static IEnumerable<Endpoint> EndpointsDoAlmoxarifado()
+    {
+        const string raiz = "/api/Almoxarifado";
+        Endpoint Ler(string rota, string? real = null) =>
+            new($"GET {raiz}/{rota}", Modulo.ConsultaAlmoxarifado, () => new(HttpMethod.Get, $"{raiz}/{real ?? rota}"));
+        Endpoint Gravar(string metodo, string rota, string? real = null, Modulo modulo = Modulo.GestaoAlmoxarifado) =>
+            new($"{metodo} {raiz}/{rota}", modulo, () => Json(new HttpMethod(metodo), $"{raiz}/{real ?? rota}", new { }));
+        var id = Guid.NewGuid();
+        return
+        [
+            Ler("Enums"), Ler("Bens"), Ler("Bens/{id}", $"Bens/{id}"), Ler("Bens/{id}/Historico", $"Bens/{id}/Historico"),
+            Ler("Bens/{id}/Manutencoes", $"Bens/{id}/Manutencoes"), Ler("Emprestimos"), Ler("Emprestimos/{id}", $"Emprestimos/{id}"),
+            Ler("Inventarios"), Ler("Inventarios/{id}", $"Inventarios/{id}"), Ler("Desejos"), Ler("Desejos/{id}", $"Desejos/{id}"),
+            Ler("Desejos/{id}/Historico", $"Desejos/{id}/Historico"), Ler("Relatorios/Patrimonio"), Ler("Relatorios/Patrimonio/Csv"),
+            Ler("Relatorios/Emprestimos"), Ler("Relatorios/Emprestimos/Csv"), Ler("Relatorios/Desejos"), Ler("Responsaveis"),
+            Gravar("POST", "Bens"), Gravar("PUT", "Bens/{id}", $"Bens/{id}"), Gravar("DELETE", "Bens/{id}", $"Bens/{id}"),
+            Gravar("POST", "Bens/{id}/Emprestimos", $"Bens/{id}/Emprestimos"), Gravar("POST", "Bens/{id}/Manutencoes", $"Bens/{id}/Manutencoes"),
+            Gravar("POST", "Bens/{id}/Baixa", $"Bens/{id}/Baixa"), Gravar("POST", "Emprestimos/{id}/Devolucao", $"Emprestimos/{id}/Devolucao"),
+            Gravar("POST", "Emprestimos/{id}/PerdaFurto", $"Emprestimos/{id}/PerdaFurto"), Gravar("POST", "Manutencoes/{id}/Saida", $"Manutencoes/{id}/Saida"),
+            Gravar("POST", "Inventarios"), Gravar("POST", "Inventarios/{id}/Votacao", $"Inventarios/{id}/Votacao"), Gravar("POST", "Desejos"),
+            Gravar("PUT", "Desejos/{id}", $"Desejos/{id}"), Gravar("DELETE", "Desejos/{id}", $"Desejos/{id}"),
+            Gravar("POST", "Desejos/{id}/Cancelar", $"Desejos/{id}/Cancelar"), Gravar("POST", "Desejos/{id}/Atendimentos", $"Desejos/{id}/Atendimentos"),
+            Gravar("POST", "Desejos/{id}/Atendimentos/{atendimentoId}/Estorno", $"Desejos/{id}/Atendimentos/{id}/Estorno"),
+            Gravar("POST", "Responsaveis", modulo: Modulo.Cadastros),
+            Gravar("POST", "Responsaveis/{id}/Revogar", $"Responsaveis/{id}/Revogar", Modulo.Cadastros),
+        ];
+    }
 
     /// <summary>Ações comuns de /api/Formacao/Classes e /api/Formacao/Especialidades; corpo vazio = 400 para quem passa na autorização.</summary>
     private static IEnumerable<Endpoint> EndpointsDeVinculo(string recurso, string reconhecimento)

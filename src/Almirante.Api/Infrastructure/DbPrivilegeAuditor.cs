@@ -11,7 +11,8 @@ public static class DbPrivilegeAuditor
     public const string EventosAuditTable = "historico_eventos";
     public const string UsuariosAuditTable = "_usuarios_hist";
     public const string FormacaoAuditTable = "formacao_historico";
-    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable, FormacaoAuditTable];
+    public const string AlmoxarifadoAuditTable = "almoxarifado_historico";
+    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable, FormacaoAuditTable, AlmoxarifadoAuditTable];
     public const string SessionsTable = "AuthSessions";
 
     private static readonly string[] ServerRoles =
