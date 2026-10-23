@@ -107,6 +107,10 @@ builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<NotificacoesService>();
 builder.Services.AddScoped<CatalogoFormacaoService>();
 builder.Services.AddScoped<FormacaoService>();
+builder.Services.AddScoped<PatrimonioService>();
+builder.Services.AddScoped<InventarioService>();
+builder.Services.AddScoped<DesejosAlmoxarifadoService>();
+builder.Services.AddScoped<ResponsaveisAlmoxarifadoService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
 builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))
@@ -284,6 +288,7 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     });
 
 builder.Services.AddAuthorization(Policies.Registrar);
+builder.Services.AddScoped<IAuthorizationHandler, AcessoAlmoxarifadoHandler>();
 
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 
@@ -314,6 +319,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SchemaFilter<MembrosSchemaFilter>();
     options.OperationFilter<EventosOperationFilter>();
     options.OperationFilter<UsuariosFotoOperationFilter>();
+    options.OperationFilter<AlmoxarifadoOperationFilter>();
 
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {

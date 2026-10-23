@@ -22,6 +22,7 @@ sistema está estruturado hoje?" ([voltar à documentação de arquitetura](../R
 | [0012](0012-notificar-com-outbox-na-propria-linha-e-signalr.md) | Notificar com outbox na própria linha da notificação e avisar por SignalR | Accepted |
 | [0013](0013-separar-permissoes-por-perfil-com-hierarquia-de-cargos.md) | Separar as permissões por perfil, com hierarquia de cargos e autoatendimento | Accepted |
 | [0014](0014-acompanhar-formacao-com-catalogo-fixo-e-revisoes-imutaveis.md) | Acompanhar a formação com catálogo fixo de classes, revisões imutáveis de requisitos e histórico por trigger | Accepted |
+| [0015](0015-gerir-patrimonio-e-lista-de-desejos-com-auditoria-por-trigger.md) | Gerir o patrimônio e a lista de desejos com um registro por bem físico, auditoria por trigger e permissão por cargo ou designação | Accepted |
 
 Template: [`0000-template.md`](0000-template.md).
 

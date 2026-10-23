@@ -10,6 +10,9 @@ public static class Roles
     public const string Secretario = "SEC";
     public const string Tesoureiro = "TES";
 
+    /// <summary>Almoxarife (cargo semeado; a migration do almoxarifado o cria se não existir). Gerencia o almoxarifado do clube (issue #126).</summary>
+    public const string Almoxarife = "ALM";
+
     /// <summary>Cargo dos desbravadores (membros do clube); usado na contagem do dashboard, sem acesso administrativo.</summary>
     public const string Desbravador = "DS";
 
@@ -30,6 +33,15 @@ public static class Roles
     /// demais cargos só consultam catálogos e a própria formação.
     /// </summary>
     public static readonly string[] Formacao = [.. Diretoria, Secretario];
+
+    /// <summary>
+    /// Gestão do almoxarifado (patrimônio, movimentações, inventários e lista de desejos, issue #126). Além destes cargos, o membro
+    /// designado como responsável pelo almoxarifado (almoxarifado_responsaveis) também gerencia, mantendo o próprio cargo.
+    /// </summary>
+    public static readonly string[] Almoxarifado = [.. Diretoria, Secretario, Almoxarife];
+
+    /// <summary>Cargos sem consulta ao almoxarifado: o Desbravador (DS). Os demais cargos ativos consultam.</summary>
+    public static readonly string[] SemConsultaAlmoxarifado = [Desbravador];
 
     /// <summary>Cargos que dão acesso a algum módulo de gestão: só a diretoria atribui ou gerencia usuários com eles.</summary>
     public static readonly string[] CargosDeGestao = [Diretor, DiretorAssociado, Secretario, Tesoureiro];
@@ -65,6 +77,18 @@ public static class Policies
     public const string GestaoFormacao = "GestaoFormacao";
 
     /// <summary>
+    /// Gestão do almoxarifado: cadastro e movimentação de bens, inventários e lista de desejos. ADM, DIR, DIRA, SEC, ALM e o responsável
+    /// designado (conferido no banco a cada requisição).
+    /// </summary>
+    public const string GestaoAlmoxarifado = "GestaoAlmoxarifado";
+
+    /// <summary>Consulta do almoxarifado (listas, históricos e relatórios): qualquer cargo ativo exceto DS, e o responsável designado.</summary>
+    public const string ConsultaAlmoxarifado = "ConsultaAlmoxarifado";
+
+    /// <summary>Designar e revogar o responsável pelo almoxarifado: ADM, DIR, DIRA, SEC (quem também atribui o cargo ALM).</summary>
+    public const string DesignacaoAlmoxarifado = "DesignacaoAlmoxarifado";
+
+    /// <summary>
     /// Dados, foto, eventos e formação do próprio usuário, consulta de CEP e dos catálogos de classes e especialidades: qualquer cargo
     /// ativo (a identidade vem só do token).
     /// </summary>
@@ -79,5 +103,8 @@ public static class Policies
         options.AddPolicy(Painel, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
         options.AddPolicy(GestaoFormacao, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Formacao));
         options.AddPolicy(Autoatendimento, policy => policy.RequireAuthenticatedUser());
+        options.AddPolicy(GestaoAlmoxarifado, policy => policy.RequireAuthenticatedUser().AddRequirements(AcessoAlmoxarifadoRequirement.Gestao));
+        options.AddPolicy(ConsultaAlmoxarifado, policy => policy.RequireAuthenticatedUser().AddRequirements(AcessoAlmoxarifadoRequirement.Consulta));
+        options.AddPolicy(DesignacaoAlmoxarifado, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Cadastros));
     }
 }

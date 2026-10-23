@@ -84,6 +84,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigurarFormacao(modelBuilder);
+        ConfigurarAlmoxarifado(modelBuilder);
 
         modelBuilder.Entity<Usuario>(entity =>
         {
