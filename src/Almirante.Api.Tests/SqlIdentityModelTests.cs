@@ -251,7 +251,7 @@ public sealed class SqlIdentityModelTests
             var esperadas = tabela switch
             {
                 DbPrivilegeAuditor.AuditTable or DbPrivilegeAuditor.EventosAuditTable or DbPrivilegeAuditor.UsuariosAuditTable
-                    or DbPrivilegeAuditor.FormacaoAuditTable or "__EFMigrationsHistory" => new[] { "SELECT" },
+                    or DbPrivilegeAuditor.FormacaoAuditTable or DbPrivilegeAuditor.AlmoxarifadoAuditTable or "__EFMigrationsHistory" => new[] { "SELECT" },
                 DbPrivilegeAuditor.SessionsTable => ["SELECT", "INSERT", "UPDATE", "DELETE"],
                 _ => ["SELECT", "INSERT", "UPDATE"],
             };
