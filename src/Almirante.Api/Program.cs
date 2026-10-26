@@ -118,6 +118,17 @@ builder.Services.AddScoped<AlteracaoSenhaService>();
 builder.Services.AddScoped<RecuperacaoSenhaService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
+// Auditoria HTTP (issue #158, docs/auditoria-http.md): middleware -> diário em disco já sanitizado -> gravador em segundo plano -> auditoria_http.
+builder.Services.AddOptions<AuditoriaHttpOptions>().Bind(builder.Configuration.GetSection(AuditoriaHttpOptions.SectionName))
+    .ValidateDataAnnotations().ValidateOnStart();
+builder.Services.AddSingleton<PoliticaAuditoriaHttp>();
+builder.Services.AddSingleton<DiarioAuditoriaHttp>();
+builder.Services.AddSingleton<IRepositorioAuditoriaHttp, RepositorioAuditoriaHttp>();
+builder.Services.AddSingleton<GravadorAuditoriaHttp>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<GravadorAuditoriaHttp>());
+builder.Services.AddHealthChecks().AddCheck<AuditoriaHttpHealthCheck>("auditoria-http",
+    failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded);
+
 builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))
     .ValidateDataAnnotations().ValidateOnStart();
 builder.Services.AddSingleton<SinalAvisosNotificacoes>();
@@ -375,6 +386,9 @@ if (dbCredentialOptions.Enabled)
 app.MapDefaultEndpoints();
 
 app.UseForwardedHeaders();
+
+// Depois do IP real (proxy confiável) e antes de tudo o que pode encerrar a chamada, para registrar inclusive 404, 401, 403, 429 e erros.
+app.UseMiddleware<AuditoriaHttpMiddleware>();
 
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.Use((context, next) =>

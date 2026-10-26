@@ -149,6 +149,9 @@ services:
       # Fotos de usuários (issue #116): pasta fora da aplicação (sobrevive a rebuild e redeploy), montada abaixo.
       # O banco guarda só o caminho relativo; os limites ficam nos padrões de Media:Images (appsettings.json).
       Media__Storage__Path: /var/lib/almirante/fotos
+      # Auditoria HTTP (issue #158): diário em disco dos registros já sanitizados que ainda não chegaram ao banco. Volume próprio, para
+      # sobreviver a reinício e redeploy do container; os demais limites ficam nos padrões de AuditoriaHttp (appsettings.json).
+      AuditoriaHttp__DiretorioPendentes: /var/lib/almirante/auditoria-http
       # Host Header: o padrão "*" aceita qualquer Host, porque este arquivo também serve
       # desenvolvimento local (localhost, 127.0.0.1, IP da LAN) e fixar a lista quebraria isso.
       # Em ambiente PUBLICADO em modo http, defina API_ALLOWED_HOSTS no .env com os nomes reais
@@ -177,6 +180,7 @@ services:
       # Sem FOTOS_HOST_PATH, o volume nomeado almirante-fotos (desenvolvimento). O deploy Linux define uma pasta
       # absoluta do host ($HOME/almirante/fotos), que ele mesmo cria com o dono "app" antes de subir a API.
       - ${FOTOS_HOST_PATH:-almirante-fotos}:/var/lib/almirante/fotos
+      - almirante-auditoria-http:/var/lib/almirante/auditoria-http
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -224,3 +228,5 @@ volumes:
     name: almirante-dataprotection
   almirante-fotos:
     name: almirante-fotos
+  almirante-auditoria-http:
+    name: almirante-auditoria-http

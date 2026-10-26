@@ -78,6 +78,109 @@ namespace Almirante.Api.Data.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.AuditoriaHttp", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("DataRequestUtc")
+                        .HasColumnType("datetimeoffset(7)");
+
+                    b.Property<int>("DuracaoMs")
+                        .HasColumnType("int");
+
+                    b.Property<int>("EstadoCapturaRequest")
+                        .HasColumnType("int");
+
+                    b.Property<int>("EstadoCapturaResponse")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Exception")
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("Headers")
+                        .IsRequired()
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("IdentificacaoUsuario")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(36)");
+
+                    b.Property<string>("IpUsuario")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<string>("MetodoHttp")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("Request")
+                        .IsRequired()
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("Response")
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TraceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2048)");
+
+                    b.HasKey("Id");
+
+                    SqlServerKeyBuilderExtensions.IsClustered(b.HasKey("Id"), false);
+
+                    b.HasIndex("DataRequestUtc")
+                        .HasDatabaseName("CIX_auditoria_http_data");
+
+                    SqlServerIndexBuilderExtensions.IsClustered(b.HasIndex("DataRequestUtc"));
+
+                    b.HasIndex("TraceId")
+                        .HasDatabaseName("IX_auditoria_http_trace");
+
+                    b.HasIndex("IdentificacaoUsuario", "DataRequestUtc")
+                        .HasDatabaseName("IX_auditoria_http_usuario_data");
+
+                    b.HasIndex("StatusCode", "DataRequestUtc")
+                        .HasDatabaseName("IX_auditoria_http_status_data");
+
+                    b.ToTable("auditoria_http", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_auditoria_http_DuracaoMs", "[DuracaoMs] >= 0");
+
+                            t.HasCheckConstraint("CK_auditoria_http_Estados", "[EstadoCapturaRequest] IN (1, 2, 3, 4, 5, 6, 7, 8, 9) AND [EstadoCapturaResponse] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)");
+
+                            t.HasCheckConstraint("CK_auditoria_http_Json", "ISJSON([Request]) = 1 AND ISJSON([Headers]) = 1 AND ([Response] IS NULL OR ISJSON([Response]) = 1) AND ([Exception] IS NULL OR ISJSON([Exception]) = 1)");
+
+                            t.HasCheckConstraint("CK_auditoria_http_StatusCode", "[StatusCode] IS NULL OR [StatusCode] BETWEEN 100 AND 999");
+
+                            t.HasCheckConstraint("CK_auditoria_http_Usuario", "[IdentificacaoUsuario] = 'ANONIMO' OR TRY_CONVERT(uniqueidentifier, [IdentificacaoUsuario]) IS NOT NULL");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.AuthSession", b =>
                 {
                     b.Property<Guid>("Id")
