@@ -59,7 +59,7 @@ sed -i "s|^JWT_KEY_V1=.*|JWT_KEY_V1=$(openssl rand -base64 32)|" .env
 ```
 
 Depois abra o arquivo (`nano .env`) e defina `SEED_ADMIN_SENHA`: a senha do administrador inicial
-(`SEED_ADMIN_EMAIL`, padrão `admin@local.dev`), com 12 a 128 caracteres e não trivial. Guarde essa senha
+(`SEED_ADMIN_EMAIL`, padrão `admin@local.dev`), com 15 a 128 caracteres e não trivial. Guarde essa senha
 num gerenciador de senhas. Confira que não sobrou nenhum placeholder (o comando não deve imprimir nada):
 
 ```bash

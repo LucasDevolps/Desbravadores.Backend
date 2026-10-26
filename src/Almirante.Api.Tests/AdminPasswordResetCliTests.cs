@@ -24,6 +24,35 @@ public sealed class AdminPasswordResetCliTests : IClassFixture<AlmiranteApiFacto
     }
 
     [Fact]
+    public async Task ResetPasswordAsync_EncerraRecuperacaoAberta_SemGravarAuditoriaDeResponsavel()
+    {
+        var usuario = await TestHelpers.AddUsuarioAsync(factory, "ComPedidoAberto", "DS");
+        var recuperacaoId = Guid.NewGuid();
+        await TestHelpers.WithDbAsync(factory, async db =>
+        {
+            db.RecuperacoesSenha.Add(new RecuperacaoSenha
+            {
+                Id = recuperacaoId, UsuarioId = usuario.Id, Origem = OrigemRecuperacaoSenha.SolicitacaoPublica, Status = StatusRecuperacaoSenha.Pendente,
+                SolicitadaEmUtc = DateTime.UtcNow, UltimaSolicitacaoEmUtc = DateTime.UtcNow, Solicitacoes = 1, IpSolicitacao = "127.0.0.1",
+                ExpiraEmUtc = DateTime.UtcNow.AddDays(7),
+            });
+            return await db.SaveChangesAsync();
+        });
+
+        var (db, hasher, clock, scope) = ResolveDependencies();
+        using (scope)
+        {
+            var (resultado, _) = await AdminPasswordResetCli.ResetPasswordAsync(db, hasher, clock, usuario.Email, "Uma frase nova e bem forte 2026");
+            Assert.Equal(AdminPasswordResetCli.ResetResult.Sucesso, resultado);
+        }
+
+        var recuperacao = await TestHelpers.WithDbAsync(factory, db => db.RecuperacoesSenha.AsNoTracking().SingleAsync(r => r.Id == recuperacaoId));
+        Assert.Equal((StatusRecuperacaoSenha.Invalidada, "reset-senha-admin"), (recuperacao.Status, recuperacao.MotivoEncerramento));
+        Assert.NotNull(recuperacao.EncerradaEmUtc);
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.AlteracoesSenha.AnyAsync(a => a.UsuarioAfetadoId == usuario.Id)));
+    }
+
+    [Fact]
     public async Task ResetPasswordAsync_AtualizaHash_ERevogaSessaoAtiva_ImpedindoRefreshAntigo()
     {
         var usuario = await TestHelpers.AddUsuarioAsync(factory, "ParaResetarSenha", "DS");

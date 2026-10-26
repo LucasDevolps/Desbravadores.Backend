@@ -61,6 +61,22 @@ public static class NotificacoesFabrica
             evento.Id, lancamento.Id);
     }
 
+    public static string ChaveSenhaAlterada(Guid alteracaoSenhaId) => $"senha:{alteracaoSenhaId:N}";
+
+    /// <summary>
+    /// Aviso ao titular de que outra pessoa alterou a senha dele (troca administrativa) ou autorizou a recuperação que ele concluiu. A
+    /// origem é a auditoria da alteração: uma por alteração. Sem senha, token, e-mail ou IP no texto.
+    /// </summary>
+    public static Notificacao SenhaAlterada(Guid destinatarioId, Guid alteracaoSenhaId, TipoAlteracaoSenha tipo, DateTime agoraUtc) =>
+        Nova(destinatarioId, TipoNotificacao.SenhaAlterada, ChaveSenhaAlterada(alteracaoSenhaId), agoraUtc,
+            "Senha de acesso alterada",
+            tipo == TipoAlteracaoSenha.RecuperacaoAssistida
+                ? "Sua senha de acesso foi redefinida com uma autorização de recuperação emitida por um usuário autorizado da administração. " +
+                  "Se você não reconhece esta ação, entre em contato com a administração."
+                : "Sua senha de acesso foi alterada por um usuário autorizado da administração. " +
+                  "Se você não reconhece esta ação, entre em contato com a administração.",
+            eventoId: null, lancamentoId: null);
+
     public static string Moeda(decimal valor)
     {
         var texto = Math.Abs(valor).ToString("#,##0.00", CultureInfo.InvariantCulture);

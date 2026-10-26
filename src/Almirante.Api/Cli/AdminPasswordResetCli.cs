@@ -57,6 +57,18 @@ public static class AdminPasswordResetCli
                 sessao.RevocationReason = MotivoRevogacao;
             }
 
+            // A autorização emitida antes já ficaria obsoleta pela SecurityVersion; encerrá-la tira o pedido das pendências. O CLI não tem
+            // usuário autenticado: não grava em Usuarios_alteracoes_senha nem inventa responsável (limite documentado).
+            var recuperacoesAbertas = await db.RecuperacoesSenha
+                .Where(r => r.UsuarioId == usuario.Id && (r.Status == StatusRecuperacaoSenha.Pendente || r.Status == StatusRecuperacaoSenha.Autorizada))
+                .ToListAsync(cancellationToken);
+            foreach (var recuperacao in recuperacoesAbertas)
+            {
+                recuperacao.Status = StatusRecuperacaoSenha.Invalidada;
+                recuperacao.EncerradaEmUtc = agora;
+                recuperacao.MotivoEncerramento = MotivoRevogacao;
+            }
+
             try
             {
                 await db.SaveChangesAsync(cancellationToken);

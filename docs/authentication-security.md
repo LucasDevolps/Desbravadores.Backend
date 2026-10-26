@@ -1,6 +1,6 @@
 # Autenticação, autorização e implantação segura
 
-Este documento cobre as issues #29 (login/perfil/JWT), #31 e #127 (RBAC por perfil e autoatendimento), #33 (força bruta), #34 (segredos e política de senha), #35 (cabeçalhos HTTP), #36 (TLS do SQL Server em produção) e #50 (TLS no ponto de entrada do deploy, rotação de segredos expostos, Data Protection em Linux e auditoria do `PUT` de lançamentos). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
+Este documento cobre as issues #29 (login/perfil/JWT), #31 e #127 (RBAC por perfil e autoatendimento), #33 (força bruta), #34 (segredos e política de senha, evoluída na #159), #35 (cabeçalhos HTTP), #36 (TLS do SQL Server em produção) e #50 (TLS no ponto de entrada do deploy, rotação de segredos expostos, Data Protection em Linux e auditoria do `PUT` de lançamentos). Sessões persistidas, refresh token rotativo e revogação foram adicionados antes (PR #46) e são preservados. O fluxo é próprio da aplicação e **não** é apresentado como OAuth 2.0/OIDC.
 
 ## Login, perfil e JWT (#29)
 
@@ -26,7 +26,8 @@ Fonte única: `Security/Roles.cs` (conjuntos de cargos, `Roles.PodeGerenciar` e 
 | `Painel` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
 | `GestaoFormacao` | ADM, DIR, DIRA, SEC | escrita de especialidades, revisões de requisitos e acompanhamento de classes/especialidades, e consulta da formação de outros membros (`/api/Formacao…`) — [`docs/formacao.md`](formacao.md) |
 | `Autoatendimento` | qualquer cargo ativo | `/api/Me` (dados, foto, eventos e formação do próprio usuário), `GET /api/Cep/{cep}` e a consulta dos catálogos `GET /api/Classes…`, `GET /api/Especialidades…` e `GET /api/RevisoesRequisitos/{id}` (só revisões publicadas/substituídas) |
-| `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
+| `AlteracaoSenhaTerceiros` | ADM, DIR, SEC | filtro inicial da troca de senha de outro usuário e da recuperação assistida (`/api/Usuarios/{id}/alterar-senha`, `/api/Usuarios/recuperacao-senha/pendentes`, `/api/Usuarios/{id}/recuperacao-senha/autorizacao`); o par responsável/alvo é decidido pela matriz de [`senhas.md`](senhas.md#matriz-de-autorização) com os cargos relidos do banco |
+| `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `POST /api/Auth/alterar-senha` (policy `Autoatendimento`), `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
 
 Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com token inválido ou expirado, sessão revogada, usuário inativo ou cargo inativo, **todos** respondem `401`.
 
@@ -48,6 +49,11 @@ Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com 
 | `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios…` | ✓ | ✓ | ✓ | — | — |
 | `GET /api/Me/Formacao…` | ✓ | ✓ | ✓ | ✓ | ✓ (só a própria formação) |
 | `GET /api/Auth/Me`, `/api/Notificacoes…`, hub | ✓ | ✓ | ✓ | ✓ | ✓ (só as próprias) |
+| `POST /api/Auth/alterar-senha` (própria, com a senha atual) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `POST /api/Usuarios/{id}/alterar-senha`, `GET …/recuperacao-senha/pendentes`, `POST …/{id}/recuperacao-senha/autorizacao` | ✓ (alvo SEC, TES, DS) | DIR ✓ (alvo SEC, TES, DS); DIRA — | ✓ (alvo DS) | — | — |
+
+`POST /api/Auth/recuperacao-senha/solicitar` e `…/confirmar` são anônimos por desenho (como login, refresh, logout e csrf), com CSRF,
+resposta genérica e limite por IP ([`senhas.md`](senhas.md)).
 
 - `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}`. O frontend deve tratar `403` como "sem permissão" **sem** encerrar a sessão.
 - A matriz é verificada endpoint por endpoint e perfil por perfil em `AuthorizationTests` (que também falha se uma action nova ficar fora da tabela) e policy por policy em `PermissoesUnitTests`.
@@ -87,7 +93,6 @@ A identidade vem **só** do token validado: não há id de usuário na rota nem 
 - Módulo de patrimônios (Almoxarife, `ALM`): o cargo existe, mas não há cadastro, consulta nem gestão de patrimônios.
 - Relatórios da secretaria além dos de formação (classes e especialidades foram entregues na issue #125, ver [`formacao.md`](formacao.md)).
 - Consulta dos próprios débitos pelo desbravador além da cobrança mostrada em `/api/Me/Eventos` (o `lancamentoId` das notificações de débito continua sem rota de autoatendimento).
-- Troca de senha pelo próprio usuário (hoje só a CLI administrativa redefine senhas).
 
 ### Auditoria das operações financeiras
 
@@ -123,8 +128,10 @@ Duas camadas na própria API, independentes do nginx:
 
 - Nenhum segredo utilizável é versionado: `appsettings*.json` e `.env.example` só têm placeholders `DEFINA_…`; o AppHost não tem mais senha padrão do SQL Server.
 - Startup falha com mensagem clara (sem expor o valor) se `Jwt:Keys` estiver vazio, `Jwt:ActiveKeyId` não existir, a chave for placeholder, Base64 inválido, tiver menos de **32 bytes decodificados** (HS256, RFC 7518 §3.2) ou for trivial (bytes iguais). Comprimento não prova aleatoriedade: gere cada chave com CSPRNG e uma por ambiente. A chave nunca é gerada na inicialização.
-- Política de senha (`Security/PasswordPolicy.cs`), aplicada ao **definir** senha — hoje, o bootstrap do admin: 12 a 128 caracteres; ao menos uma letra; não pode ser formada por 1–2 caracteres repetidos, sequência simples, placeholder, raiz trivial (ex.: `senha`, `admin`, `almirante`, mesmo com dígitos/símbolos) ou conter a parte local do e-mail. O hash (PBKDF2-HMAC-SHA512 do `PasswordHasher`) não trunca a senha; o teto de 128 é validado explicitamente.
+- Política de senha compartilhada (`Security/PasswordPolicy.cs`, issue #159), aplicada ao **definir** senha — bootstrap do admin, cadastro de usuário, CLI de emergência, troca própria, troca administrativa e conclusão da recuperação: 15 a 128 caracteres contados em pontos de código Unicode, espaços e frases aceitos, sem exigência de composição; ao menos uma letra; não pode ser formada por 1–2 caracteres repetidos, sequência simples, trecho repetido, placeholder, raiz trivial (ex.: `senha`, `admin`, `almirante`, mesmo com dígitos/símbolos), senha comum ou vazada da lista local `SenhasComuns` ou conter a parte local do e-mail. A senha é usada como digitada (sem trim nem normalização). Detalhes em [`senhas.md`](senhas.md#política-compartilhada-de-senha).
+- Hash: PBKDF2-HMAC-SHA512 do `PasswordHasher` com 210.000 iterações (`PasswordPolicy.IteracoesHash`, OWASP); hashes antigos de 100.000 continuam válidos e são regravados no próximo login. O hash não trunca a senha; o teto de 128 é validado explicitamente.
 - O login **não** aplica a política: credenciais existentes continuam válidas pelo hash.
+- Troca e recuperação de senha (própria, administrativa pela matriz explícita e assistida sem login), auditoria `Usuarios_alteracoes_senha`, revogação das sessões e notificação ao titular: [`senhas.md`](senhas.md).
 - `SeedAdmin:Senha` só é exigida e validada quando o admin ainda não existe; o seed é idempotente e nunca sobrescreve a senha de um admin existente.
 
 ### Configuração local

@@ -5,6 +5,7 @@ using Almirante.Api.Security;
 using Almirante.Api.Services;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -16,8 +17,103 @@ namespace Almirante.Api.Controllers;
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public class UsuariosController(UsuariosService usuariosService, ISender mediator, LimitadorEnvioFotos limitador,
-    IOptions<MediaOptions> media, ILogger<UsuariosController> logger) : FotoUsuarioControllerBase(mediator, limitador, media, logger)
+    IOptions<MediaOptions> media, ILogger<UsuariosController> logger, LimitadorTentativasSenha limitadorSenha)
+    : FotoUsuarioControllerBase(mediator, limitador, media, logger)
 {
+    private const string DescricaoMatriz = "Matriz explícita (cargos relidos do banco): Administrador e Diretor → Secretário, Tesoureiro e " +
+        "Desbravador; Secretário → Desbravador; nenhum outro par (Diretor Associado, Tesoureiro e Desbravador não atendem terceiros; " +
+        "Administrador, Diretor e Diretor Associado nunca são alvo). Ter acesso ao cadastro de usuários não basta.";
+
+    [HttpPost("{usuarioId:guid}/alterar-senha")]
+    [Authorize(Policy = Policies.AlteracaoSenhaTerceiros)]
+    [ValidateAntiForgeryToken]
+    [ConteudoSensivel, HttpLogging(ConteudoSensivelAttribute.CamposRegistraveis)]
+    [EndpointSummary("Altera a senha de outro usuário, confirmando a senha do responsável logado (a senha antiga do afetado nunca é pedida).")]
+    [EndpointDescription(DescricaoMatriz + " Corpo: senhaAtualSolicitante (a senha de quem está logado, verificada no servidor), novaSenha e " +
+        "confirmacaoNovaSenha (igualdade exata), com a mesma política da troca própria, e metodoVerificacao opcional (AtendimentoPresencial " +
+        "ou ProcedimentoIndependenteEstabelecido), registrado no pedido de recuperação aberto do usuário, que esta troca conclui. O afetado " +
+        "não precisa estar logado. Para a própria senha use POST /api/Auth/alterar-senha (400 aqui). Exige X-CSRF-TOKEN. Sucesso: 204; todas " +
+        "as sessões do afetado são revogadas e ele recebe uma notificação interna (consultável após o novo login); a sessão do responsável " +
+        "continua válida; nenhum token é emitido e nenhum e-mail é enviado. 400 dados inválidos ou senha do responsável incorreta (nada é " +
+        "alterado), 403 par fora da matriz, 404 usuário inexistente, 409 usuário inativo ou conta alterada ao mesmo tempo, 429 excesso de tentativas.")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> AlterarSenha(Guid usuarioId, [FromBody] AlterarSenhaUsuarioRequest request, CancellationToken cancellationToken)
+    {
+        var contexto = ContextoSenha();
+        if (LimiteSenha(contexto) is { } recusa)
+        {
+            return recusa;
+        }
+
+        request.UsuarioAfetadoId = usuarioId;
+        request.Contexto = contexto;
+        await Mediator.Send(request, cancellationToken);
+        return NoContent();
+    }
+
+    [HttpGet("recuperacao-senha/pendentes")]
+    [Authorize(Policy = Policies.AlteracaoSenhaTerceiros)]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [EndpointSummary("Lista os pedidos de recuperação de senha abertos que o usuário logado pode atender.")]
+    [EndpointDescription(DescricaoMatriz + " Somente pedidos não expirados de usuários ativos com cargo que o solicitante atende: id, usuarioId, " +
+        "nome, cargo, origem (SolicitacaoPublica ou Atendimento), status (Pendente ou Autorizada), datas, quantidade de pedidos repetidos e " +
+        "validade da autorização emitida. Nunca traz token, IP ou contato. pageSize de 1 a 50 (padrão 20); paginação por cursor " +
+        "(proximoCursor). Antes de atender, confirme a identidade pessoalmente ou pelo procedimento independente do clube: conferir CPF, " +
+        "nascimento, telefone ou e-mail não comprova identidade.")]
+    [ProducesResponseType<RecuperacoesSenhaPendentesResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ListarRecuperacoesPendentes(
+        [FromQuery] int pageSize = NotificacoesService.PageSizePadrao,
+        [FromQuery] string? cursor = null,
+        CancellationToken cancellationToken = default) =>
+        Ok(await Mediator.Send(new ListarRecuperacoesSenhaPendentesQuery(User.UsuarioId(), pageSize, cursor), cancellationToken));
+
+    [HttpPost("{usuarioId:guid}/recuperacao-senha/autorizacao")]
+    [Authorize(Policy = Policies.AlteracaoSenhaTerceiros)]
+    [ValidateAntiForgeryToken]
+    [ConteudoSensivel, HttpLogging(ConteudoSensivelAttribute.CamposRegistraveis)]
+    [EndpointSummary("Emite uma autorização de recuperação de uso único para o titular escolher a nova senha sem login.")]
+    [EndpointDescription(DescricaoMatriz + " Só depois de confirmar a identidade do titular pessoalmente ou por procedimento independente já " +
+        "estabelecido. Corpo: senhaAtualSolicitante (a senha de quem está logado; reautenticação) e metodoVerificacao (AtendimentoPresencial " +
+        "ou ProcedimentoIndependenteEstabelecido), registrados com o responsável, o IP e o instante. Usa o pedido aberto do titular ou cria " +
+        "um de origem Atendimento, e substitui qualquer autorização anterior dele. A resposta (200, no-store) é o único lugar em que o token " +
+        "aparece: entregue-o ao titular pessoalmente e reservadamente; ele vale 15 minutos, uma vez, em POST " +
+        "/api/Auth/recuperacao-senha/confirmar, e não é guardado nem pode ser consultado de novo. Exige X-CSRF-TOKEN. 400 dados inválidos ou " +
+        "senha do responsável incorreta, 403 par fora da matriz, 404 usuário inexistente, 409 usuário inativo ou conta alterada ao mesmo " +
+        "tempo, 429 excesso de tentativas.")]
+    [ProducesResponseType<AutorizacaoRecuperacaoSenhaResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> EmitirAutorizacaoRecuperacao(Guid usuarioId, [FromBody] EmitirAutorizacaoRecuperacaoRequest request,
+        CancellationToken cancellationToken)
+    {
+        var contexto = ContextoSenha();
+        if (LimiteSenha(contexto) is { } recusa)
+        {
+            return recusa;
+        }
+
+        request.UsuarioAfetadoId = usuarioId;
+        request.Contexto = contexto;
+        return Ok(await Mediator.Send(request, cancellationToken));
+    }
+
+    private ContextoSolicitanteSenha ContextoSenha() =>
+        new(User.UsuarioId(), User.SessaoId(), HttpContext.IpDeOrigem(), HttpContext.TraceIdSeguro());
+
+    private ObjectResult? LimiteSenha(ContextoSolicitanteSenha contexto)
+    {
+        using var tentativa = limitadorSenha.RegistrarTentativa(contexto.UsuarioId, contexto.Ip);
+        return tentativa.IsAcquired ? null : RespostaMuitasTentativas.Criar(Response, tentativa, "Muitas tentativas de operações de senha.",
+            "Aguarde antes de tentar novamente.");
+    }
+
     [HttpGet]
     [EndpointSummary("Lista os usuários; por padrão, somente os ativos.")]
     [EndpointDescription("includeInactive=true inclui os usuários excluídos logicamente. funcao traz o nome do cargo (ex.: \"Diretor\"). " +

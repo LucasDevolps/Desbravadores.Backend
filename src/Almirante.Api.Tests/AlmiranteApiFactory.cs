@@ -57,6 +57,9 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
                 ["SeedAdmin:Senha"] = AdminSenha,
                 ["LoginProtection:RateLimit:PermitLimit"] = "10000",
                 ["LoginProtection:Lockout:MaxFailedAttempts"] = "1000",
+                ["Senhas:TentativasPorUsuario"] = "10000",
+                ["Senhas:TentativasPorIp"] = "10000",
+                ["Senhas:RecuperacoesPorIp"] = "10000",
                 ["Media:Storage:Path"] = FotosPath,
                 ["ViaCep:TimeoutMs"] = "600",
             };
