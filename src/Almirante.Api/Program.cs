@@ -91,6 +91,9 @@ else
     builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
 }
 
+// PBKDF2-HMAC-SHA512 do ASP.NET Core Identity com o custo de PasswordPolicy.IteracoesHash; hashes antigos (100.000) seguem válidos e são
+// regravados no próximo login (SuccessRehashNeeded). Decisão documentada em docs/authentication-security.md.
+builder.Services.Configure<PasswordHasherOptions>(options => options.IterationCount = PasswordPolicy.IteracoesHash);
 builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -107,6 +110,12 @@ builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<NotificacoesService>();
 builder.Services.AddScoped<CatalogoFormacaoService>();
 builder.Services.AddScoped<FormacaoService>();
+builder.Services.AddOptions<SenhasOptions>().Bind(builder.Configuration.GetSection(SenhasOptions.SectionName))
+    .ValidateDataAnnotations().ValidateOnStart();
+builder.Services.AddSingleton<LimitadorTentativasSenha>();
+builder.Services.AddScoped<ContasSenha>();
+builder.Services.AddScoped<AlteracaoSenhaService>();
+builder.Services.AddScoped<RecuperacaoSenhaService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
 builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))
@@ -370,14 +379,16 @@ app.UseForwardedHeaders();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.Use((context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase))
+    // /api/Auth inteiro e as rotas com senha ou token fora dele ([ConteudoSensivel]), em toda resposta: sucesso, 401/403/429 e erros.
+    context.Response.OnStarting(static state =>
     {
-        context.Response.OnStarting(static state =>
+        var httpContext = (HttpContext)state;
+        if (httpContext.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase) || ConteudoSensivelAttribute.Aplica(httpContext))
         {
-            ((HttpContext)state).Response.Headers.CacheControl = "no-store";
-            return Task.CompletedTask;
-        }, context);
-    }
+            httpContext.Response.Headers.CacheControl = "no-store";
+        }
+        return Task.CompletedTask;
+    }, context);
     return next(context);
 });
 

@@ -45,10 +45,10 @@ public sealed class PermissoesUnitTests
     }
 
     [Theory]
-    [InlineData("ADM", new[] { "GestaoCadastros", "GestaoFinanceira", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento" })]
-    [InlineData("DIR", new[] { "GestaoCadastros", "GestaoFinanceira", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento" })]
+    [InlineData("ADM", new[] { "GestaoCadastros", "GestaoFinanceira", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento", "AlteracaoSenhaTerceiros" })]
+    [InlineData("DIR", new[] { "GestaoCadastros", "GestaoFinanceira", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento", "AlteracaoSenhaTerceiros" })]
     [InlineData("DIRA", new[] { "GestaoCadastros", "GestaoFinanceira", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento" })]
-    [InlineData("SEC", new[] { "GestaoCadastros", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento" })]
+    [InlineData("SEC", new[] { "GestaoCadastros", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento", "AlteracaoSenhaTerceiros" })]
     [InlineData("TES", new[] { "GestaoFinanceira", "GestaoEventos", "ConsultaMembros", "Painel", "Autoatendimento" })]
     [InlineData("DS", new[] { "Autoatendimento" })]
     [InlineData("TESU", new[] { "Autoatendimento" })]
@@ -59,7 +59,8 @@ public sealed class PermissoesUnitTests
         var autorizacao = services.GetRequiredService<IAuthorizationService>();
         var usuario = new ClaimsPrincipal(new ClaimsIdentity([new Claim("role", role)], "Bearer", "sub", "role"));
         var anonimo = new ClaimsPrincipal(new ClaimsIdentity());
-        string[] todas = [Policies.GestaoCadastros, Policies.GestaoFinanceira, Policies.GestaoEventos, Policies.ConsultaMembros, Policies.Painel, Policies.Autoatendimento];
+        string[] todas = [Policies.GestaoCadastros, Policies.GestaoFinanceira, Policies.GestaoEventos, Policies.ConsultaMembros, Policies.Painel, Policies.Autoatendimento,
+            Policies.AlteracaoSenhaTerceiros];
 
         var concedidas = new List<string>();
         foreach (var policy in todas)

@@ -11,6 +11,10 @@ public enum TipoNotificacao
 
     [Description("Evento cadastrado")]
     EventoCadastrado = 2,
+
+    /// <summary>Senha alterada por outra pessoa (troca administrativa ou recuperação assistida); nunca na troca própria.</summary>
+    [Description("Senha alterada")]
+    SenhaAlterada = 3,
 }
 
 /// <summary>Aviso em tempo real ainda não emitido para o destinatário.</summary>

@@ -23,6 +23,7 @@ seguir. O frontend ainda não foi implementado nem validado.
 | `POST /api/Lancamentos/Registrar` individual, `tipoFluxo: Entrada` | o `membroId` do lançamento | `DebitoCadastrado` | `lancamentoId` |
 | `POST /api/Lancamentos/Registrar` com `aplicarATodosOsMembros: true`, `Entrada` | cada usuário que recebeu um lançamento na operação (a regra atual não mudou: todos os usuários cadastrados), cada um com a própria notificação | `DebitoCadastrado` | `lancamentoId` do lançamento daquele usuário |
 | `POST /api/Eventos` (novo cadastro) | cada participante (`membros`) daquele cadastro, uma vez | `EventoCadastrado` | `eventoId` e `lancamentoId` |
+| `POST /api/Usuarios/{id}/alterar-senha` e `POST /api/Auth/recuperacao-senha/confirmar` (issue #159) | só o titular da senha alterada, quando quem agiu foi outra pessoa (a troca própria não notifica) | `SenhaAlterada` | nenhuma (`ChaveOrigem` = `senha:{id da auditoria}`) — ver [`senhas.md`](senhas.md#notificação-interna) |
 
 Regras:
 

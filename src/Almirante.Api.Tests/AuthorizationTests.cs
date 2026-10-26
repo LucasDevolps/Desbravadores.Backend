@@ -12,7 +12,7 @@ namespace Almirante.Api.Tests;
 /// </summary>
 public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
-    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento }
+    public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento, SenhasTerceiros }
 
     private static readonly Modulo[] Todos = Enum.GetValues<Modulo>();
 
@@ -21,8 +21,9 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
     {
         ["ADM"] = Todos,
         ["DIR"] = Todos,
-        ["DIRA"] = Todos,
-        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Formacao, Modulo.Autoatendimento],
+        // Issue #159: DIRA tem todos os módulos, menos a senha de terceiros e a recuperação assistida.
+        ["DIRA"] = [.. Todos.Except([Modulo.SenhasTerceiros])],
+        ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Formacao, Modulo.Autoatendimento, Modulo.SenhasTerceiros],
         ["TES"] = [Modulo.Financeiro, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento],
         ["DS"] = [Modulo.Autoatendimento],
         ["CONS"] = [Modulo.Autoatendimento],
@@ -81,6 +82,15 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("GET /api/Cep/{cep}", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Cep/04382160")),
         new("GET /api/Notificacoes/Pendentes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes/Pendentes")),
         new("POST /api/Notificacoes/{id}/Leitura", Modulo.Autoatendimento, () => new(HttpMethod.Post, $"/api/Notificacoes/{Guid.NewGuid()}/Leitura")),
+
+        // Issue #159: a própria senha para qualquer cargo; senha de terceiros e recuperação assistida só ADM, DIR e SEC (o par
+        // solicitante/alvo ainda passa pela matriz de PermissoesSenha, coberta em AlteracaoSenhaSqlServerTests).
+        new("POST /api/Auth/alterar-senha", Modulo.Autoatendimento, () => Json(HttpMethod.Post, "/api/Auth/alterar-senha", new { })),
+        new("POST /api/Usuarios/{usuarioId}/alterar-senha", Modulo.SenhasTerceiros,
+            () => Json(HttpMethod.Post, $"/api/Usuarios/{Guid.NewGuid()}/alterar-senha", new { })),
+        new("GET /api/Usuarios/recuperacao-senha/pendentes", Modulo.SenhasTerceiros, () => new(HttpMethod.Get, "/api/Usuarios/recuperacao-senha/pendentes")),
+        new("POST /api/Usuarios/{usuarioId}/recuperacao-senha/autorizacao", Modulo.SenhasTerceiros,
+            () => Json(HttpMethod.Post, $"/api/Usuarios/{Guid.NewGuid()}/recuperacao-senha/autorizacao", new { })),
 
         // Issue #125: catálogos e a própria formação para qualquer cargo; escrita e dados de outros membros só para ADM, DIR, DIRA e SEC.
         new("GET /api/Classes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Classes")),
@@ -165,8 +175,9 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
                     .Select(a => (Controller: t, Metodo: a.HttpMethods.Single(), a.Template))))
             .ToList();
 
-        // Login, refresh, logout e csrf são anônimos por desenho; os demais endpoints precisam estar na matriz.
-        var anonimos = new[] { "POST /api/Auth/login", "POST /api/Auth/refresh", "POST /api/Auth/logout", "GET /api/Auth/csrf" };
+        // Login, refresh, logout, csrf e a recuperação de senha sem login são anônimos por desenho; os demais precisam estar na matriz.
+        var anonimos = new[] { "POST /api/Auth/login", "POST /api/Auth/refresh", "POST /api/Auth/logout", "GET /api/Auth/csrf",
+            "POST /api/Auth/recuperacao-senha/solicitar", "POST /api/Auth/recuperacao-senha/confirmar" };
         var semMatriz = rotas
             .Select(r => $"{r.Metodo} /{((Microsoft.AspNetCore.Mvc.RouteAttribute)r.Controller.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RouteAttribute), true).Single()).Template}"
                 + (string.IsNullOrEmpty(r.Template) ? "" : "/" + r.Template))
