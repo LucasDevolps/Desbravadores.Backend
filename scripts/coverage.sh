@@ -5,9 +5,11 @@
 #   bash scripts/coverage.sh normalize <dir-fontes> <entrada.xml> <saida.xml>
 #   bash scripts/coverage.sh report <dir-com-coberturas> <dir-relatorio>
 #   bash scripts/coverage.sh gate <cobertura.xml> <baseline.json> [arquivo-resumo-markdown]
+#   bash scripts/coverage.sh lacunas <cobertura.xml> [arquivo-resumo-markdown]
 #
 # O gate compara contagens inteiras (coberto × 10000 ≥ mínimo_em_centésimos × válido): nenhum arredondamento
 # pode esconder uma regressão. Os percentuais exibidos são truncados (nunca arredondados para cima).
+# COVERAGE_TITULO e COVERAGE_SUITES mudam o título e a linha "Suítes" do resumo (relatório unitário x combinado).
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -133,9 +135,11 @@ gate() {
   assemblies=$(grep -o '<package name="[^"]*"' "$cobertura" | sed 's/<package name="//; s/"$//' | LC_ALL=C sort -u | paste -sd, - | sed 's/,/, /g')
   arquivos=$(grep -o '<class [^>]*filename="[^"]*"' "$cobertura" | grep -o 'filename="[^"]*"' | LC_ALL=C sort -u | wc -l | tr -d ' ')
 
+  local titulo=${COVERAGE_TITULO:-Test Coverage}
+  local suites=${COVERAGE_SUITES:-testes sem dependências externas + \`Category=RequiresSqlServer\`}
   local markdown
   markdown=$(cat <<EOF
-## Test Coverage
+## $titulo
 
 | Métrica | Atual | Cobertos/Válidos | Baseline | Mínimo permitido | Gate |
 |---|---:|---:|---:|---:|:---:|
@@ -145,7 +149,7 @@ gate() {
 - **Quality gate:** $status (tolerância: $(pct "$tol" | tr -d '%') p.p. abaixo do baseline)
 - **Commit medido:** \`$commit\`
 - **Assemblies:** $assemblies ($arquivos arquivos-fonte)
-- **Suítes:** testes sem dependências externas + \`Category=RequiresSqlServer\`
+- **Suítes:** $suites
 - Percentuais truncados em 2 casas; o gate compara as contagens exatas. Política: \`docs/test-coverage.md\`.
 EOF
 )
@@ -161,11 +165,66 @@ EOF
   return 1
 }
 
+# Arquivos com linhas ou branches descobertos, em Markdown: deixa verificável QUAL código falta cobrir. A mesma linha
+# aparece no método e na classe (e uma classe parcial em vários <class>): vale o maior número de hits/branches cobertos.
+lacunas() {
+  local cobertura="$1" resumo="${2:-}"
+  [[ -s "$cobertura" ]] || falhar "relatório consolidado inexistente ou vazio: $cobertura"
+  grep -q '<coverage ' "$cobertura" || falhar "arquivo não é um relatório Cobertura: $cobertura"
+  local titulo=${COVERAGE_TITULO:-Test Coverage} tabela
+  tabela=$(awk '
+    /<source>/ {
+      s = $0; sub(/.*<source>/, "", s); sub(/<\/source>.*/, "", s); gsub(/\\/, "/", s)
+      if (s != "" && s !~ /\/$/) s = s "/"
+      fontes[++nf] = s; next
+    }
+    /<class / {
+      f = ""; if (match($0, /filename="[^"]*"/)) f = substr($0, RSTART + 10, RLENGTH - 11)
+      gsub(/\\/, "/", f)
+      for (i = 1; i <= nf; i++) if (fontes[i] != "" && index(f, fontes[i]) == 1) { f = substr(f, length(fontes[i]) + 1); break }
+      next
+    }
+    /<line / && f != "" {
+      if (!match($0, /number="[0-9]+"/)) next; n = substr($0, RSTART + 8, RLENGTH - 9) + 0
+      if (!match($0, /hits="[0-9]+"/)) next; h = substr($0, RSTART + 6, RLENGTH - 7) + 0
+      k = f SUBSEP n
+      if (!(k in hits) || h > hits[k]) hits[k] = h
+      if (match($0, /\([0-9]+\/[0-9]+\)/)) {
+        split(substr($0, RSTART + 1, RLENGTH - 2), p, "/")
+        if (!(k in bc) || p[1] + 0 > bc[k]) { bc[k] = p[1] + 0; bt[k] = p[2] + 0 }
+      }
+    }
+    END {
+      for (k in hits) {
+        split(k, q, SUBSEP)
+        c = (k in bc) ? bc[k] : 0; t = (k in bt) ? bt[k] : 0
+        if (hits[k] == 0 || c < t) printf "%s\t%d\t%d\t%d\t%d\n", q[1], q[2], hits[k], c, t
+      }
+    }' "$cobertura" | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2n | awk -F '\t' '
+    function fecha_intervalo() { if (ini != "") { l = l (l == "" ? "" : ", ") (ini == fim ? ini : ini "-" fim); ini = "" } }
+    function emite() { fecha_intervalo(); if (arq != "") printf "| `%s` | %s | %s |\n", arq, (l == "" ? "—" : l), (b == "" ? "—" : b) }
+    $1 != arq { emite(); arq = $1; l = ""; b = ""; ini = "" }
+    {
+      if ($3 == 0) { if (ini != "" && $2 == fim + 1) fim = $2; else { fecha_intervalo(); ini = $2; fim = $2 } }
+      if ($4 < $5) b = b (b == "" ? "" : ", ") $2 " (" $4 "/" $5 ")"
+    }
+    END { emite() }')
+  local markdown
+  if [[ -z "$tabela" ]]; then
+    markdown="### Lacunas — $titulo"$'\n\n'"Nenhuma: todas as linhas e branches medidos estão cobertos."
+  else
+    markdown="### Lacunas — $titulo"$'\n\n'"| Arquivo | Linhas descobertas | Branches descobertos (linha: cobertos/total) |"$'\n'"|---|---|---|"$'\n'"$tabela"
+  fi
+  echo "$markdown"
+  [[ -z "$resumo" ]] || { echo; echo "$markdown"; } >> "$resumo"
+}
+
 comando="${1:-}"
 shift || true
 case "$comando" in
   normalize) (($# == 3)) || falhar "uso: coverage.sh normalize <dir-fontes> <entrada.xml> <saida.xml>"; normalize "$@" ;;
   report) (($# == 2)) || falhar "uso: coverage.sh report <dir-com-coberturas> <dir-relatorio>"; report "$@" ;;
   gate) (($# == 2 || $# == 3)) || falhar "uso: coverage.sh gate <cobertura.xml> <baseline.json> [resumo.md]"; gate "$@" ;;
-  *) falhar "comando desconhecido '${comando}'. Use normalize, report ou gate." ;;
+  lacunas) (($# == 1 || $# == 2)) || falhar "uso: coverage.sh lacunas <cobertura.xml> [resumo.md]"; lacunas "$@" ;;
+  *) falhar "comando desconhecido '${comando}'. Use normalize, report, gate ou lacunas." ;;
 esac

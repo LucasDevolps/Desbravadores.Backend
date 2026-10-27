@@ -1,0 +1,10 @@
+{
+  "lineCoverageBaseline": 49.20,
+  "branchCoverageBaseline": 62.64,
+  "allowedRegressionPercentagePoints": 1.00,
+  "measuredAtCommit": "20a450d303c6d87ea7f76a516980884d7edd136f",
+  "measuredAt": "2026-10-27",
+  "measuredLines": "7799/15849",
+  "measuredBranches": "2474/3949",
+  "notes": "Cobertura UNITÁRIA (só a suíte sem dependências externas), publicada separada da combinada. Baseline observado, truncado em 2 casas; não é a meta. Lacunas e motivos: docs/test-coverage.md."
+}

@@ -153,12 +153,112 @@ else
   falha "report sem relatórios de entrada é erro (cópia TRX em In/ não conta)" "$(cat "$TMP/out")"
 fi
 
-# O baseline versionado precisa ser válido para o gate (formato e faixas).
-cobertura "$TMP/c.xml" 1 1 1 1
-if COVERAGE_COMMIT=teste bash "$SCRIPT" gate "$TMP/c.xml" "$ROOT/src/coverage-baseline.json" > "$TMP/out" 2>&1; then
-  ok "src/coverage-baseline.json é lido pelo gate"
+# Rótulos do resumo: o relatório unitário e o combinado não podem sair com o mesmo título/suítes.
+baseline 52.00 60.00 2.00
+cobertura "$TMP/c.xml" 5000 10000 580 1000
+: > "$TMP/resumo.md"
+COVERAGE_TITULO="Cobertura unitária" COVERAGE_SUITES="só a suíte sem dependências" COVERAGE_COMMIT=teste \
+  bash "$SCRIPT" gate "$TMP/c.xml" "$TMP/baseline.json" "$TMP/resumo.md" > "$TMP/out" 2>&1
+if grep -q '^## Cobertura unitária$' "$TMP/resumo.md" && grep -qF -- '- **Suítes:** só a suíte sem dependências' "$TMP/resumo.md"; then
+  ok "gate usa COVERAGE_TITULO e COVERAGE_SUITES no resumo"
 else
-  falha "src/coverage-baseline.json é lido pelo gate" "$(cat "$TMP/out")"
+  falha "gate usa COVERAGE_TITULO e COVERAGE_SUITES no resumo" "$(cat "$TMP/resumo.md")"
+fi
+
+# Gate de 100% (baseline 100, tolerância 0): uma única linha ou branch descoberto reprova.
+baseline 100.00 100.00 0.00
+cobertura "$TMP/c.xml" 10000 10000 1000 1000
+gate_espera 0 "gate de 100% aprova cobertura total"
+cobertura "$TMP/c.xml" 9999 10000 1000 1000
+gate_espera 1 "gate de 100% reprova uma linha descoberta" "FALHOU: cobertura de linhas 99.99% < mínimo 100.00%"
+cobertura "$TMP/c.xml" 10000 10000 999 1000
+gate_espera 1 "gate de 100% reprova um branch descoberto" "FALHOU: cobertura de branches"
+
+# lacunas: lista por arquivo, relativa ao <source>, com a mesma linha no método e na classe contada uma vez
+# (vale o maior número de hits/branches cobertos) e linhas consecutivas agrupadas em intervalos.
+cat > "$TMP/lac.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<coverage lines-covered="3" lines-valid="8" branches-covered="3" branches-valid="6" version="0">
+  <sources>
+    <source>C:\repo\src\</source>
+  </sources>
+  <packages>
+    <package name="Almirante.Api">
+      <classes>
+        <class name="A" filename="C:\repo\src\Almirante.Api\Services\A.cs">
+          <methods><method name="M"><lines>
+            <line number="10" hits="0" branch="true" condition-coverage="0% (0/2)" />
+          </lines></method></methods>
+          <lines>
+            <line number="10" hits="3" branch="true" condition-coverage="50% (1/2)" />
+            <line number="11" hits="0" branch="false" />
+            <line number="12" hits="0" branch="false" />
+            <line number="13" hits="0" branch="false" />
+            <line number="20" hits="0" branch="false" />
+          </lines>
+        </class>
+        <class name="A+Parcial" filename="C:\repo\src\Almirante.Api\Services\A.cs">
+          <lines><line number="20" hits="0" branch="false" /></lines>
+        </class>
+        <class name="B" filename="C:\repo\src\Almirante.Api\B.cs">
+          <lines>
+            <line number="1" hits="1" branch="true" condition-coverage="100% (2/2)" />
+            <line number="2" hits="1" branch="false" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>
+EOF
+: > "$TMP/resumo.md"
+if COVERAGE_TITULO="Combinada" bash "$SCRIPT" lacunas "$TMP/lac.xml" "$TMP/resumo.md" > "$TMP/out" 2>&1 \
+  && grep -qF '### Lacunas — Combinada' "$TMP/out" \
+  && grep -qF '| `Almirante.Api/Services/A.cs` | 11-13, 20 | 10 (1/2) |' "$TMP/out" \
+  && ! grep -qF 'B.cs' "$TMP/out" \
+  && [[ "$(grep -c '^| `' "$TMP/out")" == 1 ]] \
+  && grep -qF '| `Almirante.Api/Services/A.cs` |' "$TMP/resumo.md"; then
+  ok "lacunas lista só os arquivos com algo descoberto, sem duplicar linhas, relativo ao <source>"
+else
+  falha "lacunas lista só os arquivos com algo descoberto, sem duplicar linhas, relativo ao <source>" "$(cat "$TMP/out")"
+fi
+
+sed -e 's/hits="0"/hits="1"/g' -e 's/(0\/2)/(2\/2)/; s/(1\/2)/(2\/2)/' "$TMP/lac.xml" > "$TMP/lac-total.xml"
+if bash "$SCRIPT" lacunas "$TMP/lac-total.xml" > "$TMP/out" 2>&1 && grep -qF 'Nenhuma: todas as linhas e branches medidos estão cobertos.' "$TMP/out"; then
+  ok "lacunas sem nada descoberto diz que não há lacunas"
+else
+  falha "lacunas sem nada descoberto diz que não há lacunas" "$(cat "$TMP/out")"
+fi
+
+if bash "$SCRIPT" lacunas "$TMP/nao-existe.xml" > "$TMP/out" 2>&1; then
+  falha "lacunas recusa relatório inexistente" "deveria falhar"
+else
+  ok "lacunas recusa relatório inexistente"
+fi
+
+# Os baselines versionados precisam ser válidos para o gate (formato e faixas).
+cobertura "$TMP/c.xml" 1 1 1 1
+for arquivo in coverage-baseline.json coverage-baseline-unit.json; do
+  if COVERAGE_COMMIT=teste bash "$SCRIPT" gate "$TMP/c.xml" "$ROOT/src/$arquivo" > "$TMP/out" 2>&1; then
+    ok "src/$arquivo é lido pelo gate"
+  else
+    falha "src/$arquivo é lido pelo gate" "$(cat "$TMP/out")"
+  fi
+done
+
+# Issue #160: o gate da cobertura combinada é 100% de linhas e branches, sem tolerância. Baixar a meta exige mudar este teste
+# no mesmo PR (e a política em docs/test-coverage.md), nunca só o JSON.
+cobertura "$TMP/c.xml" 15848 15849 3949 3949
+if COVERAGE_COMMIT=teste bash "$SCRIPT" gate "$TMP/c.xml" "$ROOT/src/coverage-baseline.json" > "$TMP/out" 2>&1; then
+  falha "src/coverage-baseline.json reprova uma única linha descoberta (meta de 100%)" "$(cat "$TMP/out")"
+else
+  ok "src/coverage-baseline.json reprova uma única linha descoberta (meta de 100%)"
+fi
+cobertura "$TMP/c.xml" 15849 15849 3948 3949
+if COVERAGE_COMMIT=teste bash "$SCRIPT" gate "$TMP/c.xml" "$ROOT/src/coverage-baseline.json" > "$TMP/out" 2>&1; then
+  falha "src/coverage-baseline.json reprova um único branch descoberto (meta de 100%)" "$(cat "$TMP/out")"
+else
+  ok "src/coverage-baseline.json reprova um único branch descoberto (meta de 100%)"
 fi
 
 if ((falhas > 0)); then
