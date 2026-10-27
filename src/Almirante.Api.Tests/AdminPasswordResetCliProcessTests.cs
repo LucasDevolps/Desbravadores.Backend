@@ -88,5 +88,16 @@ public sealed class AdminPasswordResetCliProcessTests
         var (codigoInexistente, _, erroInexistente) = await ExecutarCliAsync(ambiente, "ninguem@local.dev", novaSenha, novaSenha);
         Assert.Equal(1, codigoInexistente);
         Assert.Contains("Nenhum usuário encontrado com esse e-mail.", erroInexistente);
+
+        // Sem DbCredentials (como no IIS com autenticação do Windows), a CLI usa a própria conexão da aplicação.
+        var semCredenciais = ApiProcess.BaseEnvironment();
+        semCredenciais["ConnectionStrings__almirante"] = env.AdminCs;
+        const string outraSenha = "Outra frase de emergencia do operador 2026";
+        var (codigoSemCredenciais, saidaSemCredenciais, erroSemCredenciais) =
+            await ExecutarCliAsync(semCredenciais, ApiProcess.AdminEmail, outraSenha, outraSenha);
+        Assert.True(codigoSemCredenciais == 0, $"código {codigoSemCredenciais}. stdout:\n{saidaSemCredenciais}\nstderr:\n{erroSemCredenciais}");
+        NoSecret.Assert(saidaSemCredenciais + erroSemCredenciais, env.AdminPassword);
+        var regravado = (await ColumnAsync(verificacao, "SELECT SenhaHash FROM dbo.Usuarios WHERE EmailNormalizado = 'ADMIN@LOCAL.DEV'")).Single();
+        Assert.Equal(PasswordVerificationResult.Success, hasher.VerifyHashedPassword(null!, regravado, outraSenha));
     }
 }

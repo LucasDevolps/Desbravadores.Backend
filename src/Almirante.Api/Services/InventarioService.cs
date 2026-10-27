@@ -96,7 +96,7 @@ public sealed class InventarioService(AlmiranteDbContext db, TimeProvider clock,
         return inventarios.Select(i => new InventarioResumoDto
         {
             Id = i.Id, DataInventario = i.DataInventario,
-            Responsavel = pessoas.GetValueOrDefault(i.ResponsavelId) ?? new PessoaResumoDto(i.ResponsavelId, string.Empty),
+            Responsavel = AlmoxarifadoBanco.Pessoa(pessoas, i.ResponsavelId),
             Observacoes = i.Observacoes, TotalBens = i.TotalBens, TotalBensComValorComercial = i.TotalBensComValorComercial,
             ValorEstimadoPatrimonial = i.ValorEstimadoPatrimonial, Fechamento = AlmoxarifadoBanco.Registro(pessoas, i.FechadoPorUsuarioId, i.FechadoEmUtc),
             Votado = i.VotacaoRegistradaEmUtc is not null,

@@ -538,7 +538,7 @@ public sealed class PatrimonioService(AlmiranteDbContext db, TimeProvider clock,
         var hoje = dataCivil.Hoje();
         return emprestimos.Select(e => new EmprestimoDto
         {
-            Id = e.Id, Bem = bens[e.BemId], Membro = pessoas.GetValueOrDefault(e.MembroId) ?? new PessoaResumoDto(e.MembroId, string.Empty),
+            Id = e.Id, Bem = bens[e.BemId], Membro = AlmoxarifadoBanco.Pessoa(pessoas, e.MembroId),
             DataRetirada = e.DataRetirada, PrevisaoDevolucao = e.PrevisaoDevolucao, ConservacaoSaida = e.ConservacaoSaida,
             ConservacaoSaidaDescricao = RegrasAlmoxarifado.Descricao(e.ConservacaoSaida), ObservacoesSaida = e.ObservacoesSaida, Aberto = e.Aberto,
             Atrasado = RegrasAlmoxarifado.Atrasado(e, hoje), DiasAtraso = RegrasAlmoxarifado.DiasAtraso(e, hoje), Encerramento = e.Encerramento,

@@ -458,6 +458,46 @@ public sealed partial class FormacaoSqlServerTests
     }
 
     [Fact]
+    public async Task Lideranca_InicioSemLiderInvestidoComData_AgrupadaCancelada_EPrazoDoLiderMasterExcedido()
+    {
+        await PublicarAsync(new { classe = "LiderMaster" }, Item("1"));
+        async Task<string?[]> Recusa(Guid membro, string classe = "LiderMaster") =>
+            (await AssociarClasseAsync(membro, classe, Hoje, esperado: HttpStatusCode.Conflict))["preRequisitos"]!.AsArray()
+                .Select(p => (string?)p!["detalhe"]).ToArray();
+        async Task Lider(Guid membro, bool investido, DateOnly? data) => await Esperar(await Admin.PostAsJsonAsync("/api/Formacao/Classes/Historicos", new
+        {
+            membroId = membro, classe = "Lider", origemHistorica = "Cartão arquivado na secretaria", investiduraOuEntregaRealizada = investido,
+            dataConclusao = D(Hoje.AddYears(-7)), dataInvestiduraOuEntrega = data is { } d ? D(d) : null,
+        }), HttpStatusCode.Created);
+
+        var (_, semLider) = await MembroAsync(nascimento: Hoje.AddYears(-40));
+        Assert.Contains("classe Líder não concluída", await Recusa(semLider));
+
+        var (_, naoInvestido) = await MembroAsync(nascimento: Hoje.AddYears(-40));
+        await Lider(naoInvestido, investido: false, null);
+        Assert.Contains("investidura de Líder não registrada", await Recusa(naoInvestido));
+
+        var (_, semData) = await MembroAsync(nascimento: Hoje.AddYears(-40));
+        await Lider(semData, investido: true, null);
+        Assert.Contains("data da investidura de Líder desconhecida", await Recusa(semData));
+
+        var (_, atrasado) = await MembroAsync(nascimento: Hoje.AddYears(-40));
+        await Lider(atrasado, investido: true, Hoje.AddYears(-6));
+        var master = Id(await AssociarClasseAsync(atrasado, "LiderMaster", Hoje.AddYears(-4)));
+        var prazo = (await ObterAsync("Classes", master))["progressoDetalhado"]!["preRequisitos"]!.AsArray()
+            .Single(p => ((string)p!["descricao"]!).StartsWith("Concluir em até", StringComparison.Ordinal))!;
+        Assert.Equal(("prazo excedido", false), ((string?)prazo["detalhe"], (bool)prazo["atendido"]!));
+
+        // Classe agrupada cancelada não conta como "cumprindo classes agrupadas" para iniciar Líder.
+        var (_, cancelou) = await MembroAsync(nascimento: Hoje.AddYears(-20));
+        await PublicarAsync(new { classe = "AmigoDaNatureza" }, Item("1"));
+        var agrupada = await AssociarClasseAsync(cancelou, "AmigoDaNatureza", modalidade: "Agrupada");
+        await OperacaoAsync("Classes", Id(agrupada), "Cancelar");
+        await PublicarAsync(new { classe = "Lider" }, Item("1"));
+        Assert.Contains(await Recusa(cancelou, "Lider"), d => d?.StartsWith("faltam", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
     public async Task Operacoes_EmVinculoInexistente_Respondem404PorTipo()
     {
         foreach (var recurso in new[] { "Classes", "Especialidades" })

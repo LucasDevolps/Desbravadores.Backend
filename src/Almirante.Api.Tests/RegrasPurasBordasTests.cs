@@ -128,6 +128,31 @@ public sealed class RegrasPurasBordasTests
     }
 
     [Fact]
+    public void Email_AusenteNaoEValido_ELongoDemaisNaoCabeNaColuna()
+    {
+        Assert.False(UsuariosService.EmailValido(null));
+        Assert.False(UsuariosService.EmailArmazenavel(new string('A', UsuariosService.EmailMaximo - 8) + "@EX.COM.BR"));
+        Assert.True(UsuariosService.EmailArmazenavel("A@EX.COM"));
+    }
+
+    [Fact]
+    public async Task RecuperacoesPendentes_SolicitanteInexistenteOuInativo_TemAcessoNegado()
+    {
+        await using var factory = new AlmiranteApiFactory();
+        using var escopo = factory.Services.CreateScope();
+        var db = escopo.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
+        var admin = await db.Usuarios.SingleAsync(u => u.Email == AlmiranteApiFactory.AdminEmail);
+        var recuperacoes = escopo.ServiceProvider.GetRequiredService<RecuperacaoSenhaService>();
+        async Task Negado(Guid solicitante) => Assert.Equal(StatusCodes.Status403Forbidden, (await Assert.ThrowsAsync<ApiProblemException>(() =>
+            recuperacoes.ListarPendentesAsync(new ListarRecuperacoesSenhaPendentesQuery(solicitante, 20, null), default))).Status);
+
+        await Negado(Guid.NewGuid());
+        admin.Ativo = false;
+        await db.SaveChangesAsync();
+        await Negado(admin.Id);
+    }
+
+    [Fact]
     public async Task SolicitanteDeSenha_ComSessaoQueDeixouDeValer_Recebe401()
     {
         await using var factory = new AlmiranteApiFactory();

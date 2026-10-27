@@ -262,6 +262,21 @@ public sealed class AuditoriaHttpTests(AuditoriaHttpApiFactory factory) : IClass
     }
 
     [Fact]
+    public async Task UrlAcimaDoLimiteDaColuna_ETruncadaComReticencias()
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var marca = $"longa{Guid.NewGuid():N}";
+        var query = string.Join("&", Enumerable.Range(0, 300).Select(i => $"{marca}{i}=1"));
+
+        using var response = await client.GetAsync($"/api/Lancamentos?{query}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var registro = Assert.Single(await RegistrosAsync(factory, r => r.Url.Contains(marca)));
+        Assert.Equal(AuditoriaHttp.UrlMaximo, registro.Url.Length);
+        Assert.EndsWith("...", registro.Url);
+    }
+
+    [Fact]
     public async Task CorpoMaiorQueOLimite_ApiRecebeTudo_RegistroSoComMetadados()
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
