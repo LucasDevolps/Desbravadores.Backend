@@ -93,7 +93,8 @@ if [[ -f "$CI" ]]; then
   for job in build-and-test sqlserver-integration; do
     exige "$job" '--collect "XPlat Code Coverage"' "coleta cobertura"
     exige "$job" '--settings src/coverage.runsettings' "usa src/coverage.runsettings"
-    exige "$job" 'path: TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
+    exige "$job" 'TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
+    exige "$job" 'TestResults/*/coverage.opencover.xml' "publica o OpenCover bruto (união exata dos ramos)"
   done
   exige build-and-test 'Category!=RequiresDocker&Category!=RequiresSqlServer' "roda os testes sem dependências externas"
   exige sqlserver-integration 'Category=RequiresSqlServer' "roda os testes RequiresSqlServer"

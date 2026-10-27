@@ -50,11 +50,14 @@ jobs:
           retention-days: 14
 
       # Só a pasta do coletor (TestResults/<guid>/): a cópia que o logger TRX põe em <máquina>/In/ duplicaria a entrada.
+      # OpenCover é o que o job coverage une (ramos por offset no IL); o Cobertura fica para leitura direta.
       - name: Cobertura bruta dos testes sem dependências externas
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-unit-${{ github.event.pull_request.head.sha || github.sha }}
-          path: TestResults/*/coverage.cobertura.xml
+          path: |
+            TestResults/*/coverage.cobertura.xml
+            TestResults/*/coverage.opencover.xml
           if-no-files-found: error
           retention-days: 14
 
@@ -111,7 +114,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-sqlserver-${{ github.event.pull_request.head.sha || github.sha }}
-          path: TestResults/*/coverage.cobertura.xml
+          path: |
+            TestResults/*/coverage.cobertura.xml
+            TestResults/*/coverage.opencover.xml
           if-no-files-found: error
           retention-days: 14
 

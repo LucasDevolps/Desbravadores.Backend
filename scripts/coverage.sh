@@ -3,6 +3,7 @@
 # Bash puro + ReportGenerator do manifesto local (.config/dotnet-tools.json). Política em docs/test-coverage.md.
 #
 #   bash scripts/coverage.sh normalize <dir-fontes> <entrada.xml> <saida.xml>
+#   bash scripts/coverage.sh normalize-opencover <dir-fontes> <entrada.xml> <saida.xml>
 #   bash scripts/coverage.sh report <dir-com-coberturas> <dir-relatorio>
 #   bash scripts/coverage.sh gate <cobertura.xml> <baseline.json> [arquivo-resumo-markdown]
 #   bash scripts/coverage.sh lacunas <cobertura.xml> [arquivo-resumo-markdown]
@@ -42,14 +43,37 @@ normalize() {
       "$entrada" > "$saida"
 }
 
+# OpenCover identifica cada ramo pelo offset no IL; o Cobertura só diz "1 de 2" por linha, sem dizer qual. Ao unir as duas
+# suítes, só com OpenCover o ReportGenerator soma o ramo coberto por uma (ex.: banco em memória) ao coberto pela outra (SQL
+# Server). Os caminhos absolutos de cada máquina (fullPath) passam a apontar para <dir-fontes>, com "/".
+normalize_opencover() {
+  local fontes="$1" entrada="$2" saida="$3"
+  [[ -s "$entrada" ]] || falhar "relatório de cobertura inexistente ou vazio: $entrada"
+  grep -q '<CoverageSession' "$entrada" || falhar "arquivo não é um relatório OpenCover: $entrada"
+  fontes="${fontes%/}/"
+  local fontes_sed=${fontes//\\/\\\\}
+  fontes_sed=${fontes_sed//&/\\&}
+  fontes_sed=${fontes_sed//|/\\|}
+  sed -e "s|fullPath=\"[^\"]*[\\\\/]src[\\\\/]|fullPath=\"$fontes_sed|g" \
+      -e ':a' -e 's|\(fullPath="[^"\\]*\)\\|\1/|' -e 'ta' \
+      "$entrada" > "$saida"
+}
+
 report() {
   local entrada="$1" saida="$2"
   [[ -d "$entrada" ]] || falhar "diretório de entrada inexistente: $entrada"
-  # O logger TRX copia o anexo para <máquina>/In/...; só a cópia da pasta do coletor entra (evita duplicata).
+  # O logger TRX copia o anexo para <máquina>/In/...; só a cópia da pasta do coletor entra (evita duplicata). Com OpenCover
+  # presente (formato preferido, ver normalize_opencover), ele é usado; senão, o Cobertura.
+  local formato=opencover
   local -a arquivos=()
   while IFS= read -r arquivo; do arquivos+=("$arquivo"); done \
-    < <(find "$entrada" -name coverage.cobertura.xml -not -path '*/In/*' | LC_ALL=C sort)
-  ((${#arquivos[@]} > 0)) || falhar "nenhum coverage.cobertura.xml encontrado em $entrada."
+    < <(find "$entrada" -name coverage.opencover.xml -not -path '*/In/*' | LC_ALL=C sort)
+  if ((${#arquivos[@]} == 0)); then
+    formato=cobertura
+    while IFS= read -r arquivo; do arquivos+=("$arquivo"); done \
+      < <(find "$entrada" -name coverage.cobertura.xml -not -path '*/In/*' | LC_ALL=C sort)
+  fi
+  ((${#arquivos[@]} > 0)) || falhar "nenhum coverage.opencover.xml nem coverage.cobertura.xml encontrado em $entrada."
 
   rm -rf "$saida"
   mkdir -p "$saida/entradas"
@@ -57,9 +81,13 @@ report() {
   local i=0 relatorios=""
   for arquivo in "${arquivos[@]}"; do
     i=$((i + 1))
-    normalize "$REPO/src" "$arquivo" "$saida/entradas/$i.cobertura.xml"
-    relatorios+="${relatorios:+;}$saida/entradas/$i.cobertura.xml"
-    echo "entrada $i: $arquivo"
+    if [[ "$formato" == opencover ]]; then
+      normalize_opencover "$REPO/src" "$arquivo" "$saida/entradas/$i.opencover.xml"
+    else
+      normalize "$REPO/src" "$arquivo" "$saida/entradas/$i.cobertura.xml"
+    fi
+    relatorios+="${relatorios:+;}$saida/entradas/$i.$formato.xml"
+    echo "entrada $i ($formato): $arquivo"
   done
 
   (cd "$REPO" && dotnet tool run reportgenerator \
@@ -223,6 +251,7 @@ comando="${1:-}"
 shift || true
 case "$comando" in
   normalize) (($# == 3)) || falhar "uso: coverage.sh normalize <dir-fontes> <entrada.xml> <saida.xml>"; normalize "$@" ;;
+  normalize-opencover) (($# == 3)) || falhar "uso: coverage.sh normalize-opencover <dir-fontes> <entrada.xml> <saida.xml>"; normalize_opencover "$@" ;;
   report) (($# == 2)) || falhar "uso: coverage.sh report <dir-com-coberturas> <dir-relatorio>"; report "$@" ;;
   gate) (($# == 2 || $# == 3)) || falhar "uso: coverage.sh gate <cobertura.xml> <baseline.json> [resumo.md]"; gate "$@" ;;
   lacunas) (($# == 1 || $# == 2)) || falhar "uso: coverage.sh lacunas <cobertura.xml> [resumo.md]"; lacunas "$@" ;;

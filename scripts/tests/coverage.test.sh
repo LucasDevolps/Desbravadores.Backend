@@ -142,12 +142,35 @@ else
   ok "normalize recusa entrada inexistente"
 fi
 
+# normalize-opencover: caminhos absolutos do Windows e do Linux passam a apontar para os mesmos arquivos.
+cat > "$TMP/win.opencover.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<CoverageSession><Modules><Module><Files>
+  <File uid="1" fullPath="D:\a\Desbravadores.Backend\Desbravadores.Backend\src\Almirante.Api\Services\LoginLockout.cs" />
+  <File uid="2" fullPath="/home/runner/work/Desbravadores.Backend/Desbravadores.Backend/src/Almirante.Api/Program.cs" />
+</Files></Module></Modules></CoverageSession>
+EOF
+if bash "$SCRIPT" normalize-opencover /repo/src "$TMP/win.opencover.xml" "$TMP/norm.opencover.xml" > "$TMP/out" 2>&1 \
+  && grep -qF 'fullPath="/repo/src/Almirante.Api/Services/LoginLockout.cs"' "$TMP/norm.opencover.xml" \
+  && grep -qF 'fullPath="/repo/src/Almirante.Api/Program.cs"' "$TMP/norm.opencover.xml" \
+  && ! grep -q '\\' "$TMP/norm.opencover.xml"; then
+  ok "normalize-opencover troca o prefixo de cada máquina e os separadores do Windows"
+else
+  falha "normalize-opencover troca o prefixo de cada máquina e os separadores do Windows" "$(cat "$TMP/out" "$TMP/norm.opencover.xml" 2>/dev/null)"
+fi
+
+if bash "$SCRIPT" normalize-opencover /x "$TMP/lac.xml" "$TMP/norm.opencover.xml" > "$TMP/out" 2>&1; then
+  falha "normalize-opencover recusa arquivo que não é OpenCover" "deveria falhar"
+else
+  ok "normalize-opencover recusa arquivo que não é OpenCover"
+fi
+
 # Não chega a chamar o ReportGenerator: sem entrada, falha antes.
 mkdir -p "$TMP/vazio/maquina/In/x"
 cobertura "$TMP/vazio/maquina/In/x/coverage.cobertura.xml" 1 1 1 1
 if bash "$SCRIPT" report "$TMP/vazio" "$TMP/rel" > "$TMP/out" 2>&1; then
   falha "report sem relatórios de entrada é erro (cópia TRX em In/ não conta)" "deveria falhar"
-elif grep -q "nenhum coverage.cobertura.xml" "$TMP/out"; then
+elif grep -q "nenhum coverage.opencover.xml nem coverage.cobertura.xml" "$TMP/out"; then
   ok "report sem relatórios de entrada é erro (cópia TRX em In/ não conta)"
 else
   falha "report sem relatórios de entrada é erro (cópia TRX em In/ não conta)" "$(cat "$TMP/out")"
