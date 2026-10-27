@@ -39,6 +39,9 @@ public sealed class UsuariosCinExpiracaoEnderecoMigrationTests
         ExecAsync(cs, $"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@resp;
             EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='198.51.100.9';
+            -- O trigger grava AlteradoEmUtc = SYSUTCDATETIME(): sem a pausa, dois UPDATEs seguidos podem cair no mesmo
+            -- tique do relógio e o OrderBy(AlteradoEmUtc) dos asserts sai em ordem aleatória.
+            WAITFOR DELAY '00:00:00.020';
             UPDATE dbo.Usuarios SET {set} WHERE Id = @id;
             """, ("@resp", responsavel), ("@id", id));
 

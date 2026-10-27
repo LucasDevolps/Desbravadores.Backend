@@ -194,7 +194,9 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.27-alpine
+    # Tag exata (e não 1.27-alpine): o "server ... resolve" dos .conf exige nginx >= 1.27.3, e uma tag móvel já em
+    # cache no host poderia ser mais antiga. Trocar a tag também faz o "up -d" recriar o nginx.
+    image: nginx:1.27.5-alpine
     container_name: almirante-nginx
     depends_on:
       api:

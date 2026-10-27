@@ -104,15 +104,20 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (disposing && Directory.Exists(FotosPath))
+        if (disposing)
         {
-            Directory.Delete(FotosPath, recursive: true);
+            ApagarPastaTemporaria(FotosPath);
+            ApagarPastaTemporaria(AuditoriaPath);
         }
+    }
 
-        if (disposing && Directory.Exists(AuditoriaPath))
-        {
-            Directory.Delete(AuditoriaPath, recursive: true);
-        }
+    // Melhor esforço, como em ApiProcess: no Windows um arquivo ainda aberto (antivírus, indexador) faz o Delete lançar
+    // IOException, e uma sobra na pasta temporária não pode reprovar a classe de testes inteira.
+    private static void ApagarPastaTemporaria(string pasta)
+    {
+        try { if (Directory.Exists(pasta)) Directory.Delete(pasta, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private sealed class TestEndpointsStartupFilter : IStartupFilter
