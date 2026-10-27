@@ -78,12 +78,18 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
     public DbSet<ValidacaoExterna> ValidacoesExternas => Set<ValidacaoExterna>();
     public DbSet<HistoricoFormacao> HistoricoFormacao => Set<HistoricoFormacao>();
 
+    /// <summary>Tipos gravados de <see cref="TipoNotificacao"/>; um tipo novo exige migration que recrie a constraint.</summary>
+    public static string CheckNotificacoesTipo =>
+        $"[Tipo] IN ({string.Join(", ", Enum.GetValues<TipoNotificacao>().Select(t => (int)t))})";
+
     /// <summary>Valores gravados de <see cref="ClasseDesbravador"/> (CHECK das colunas Classe).</summary>
     public static string ValoresClasse => string.Join(", ", Enum.GetValues<ClasseDesbravador>().Select(c => (int)c));
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigurarFormacao(modelBuilder);
+        ConfigurarSenhas(modelBuilder);
+        ConfigurarAuditoriaHttp(modelBuilder);
         ConfigurarAlmoxarifado(modelBuilder);
 
         modelBuilder.Entity<Usuario>(entity =>
@@ -376,7 +382,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
         {
             entity.ToTable("notificacoes", table =>
             {
-                table.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2)");
+                table.HasCheckConstraint("CK_notificacoes_Tipo", CheckNotificacoesTipo);
                 table.HasCheckConstraint("CK_notificacoes_Aviso",
                     "([AvisoPendente] IS NULL AND [AvisoProximaTentativaEmUtc] IS NULL)" +
                     " OR ([AvisoPendente] IN (1, 2) AND [AvisoProximaTentativaEmUtc] IS NOT NULL)");

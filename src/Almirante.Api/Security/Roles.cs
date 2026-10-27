@@ -94,6 +94,12 @@ public static class Policies
     /// </summary>
     public const string Autoatendimento = "Autoatendimento";
 
+    /// <summary>
+    /// Filtro inicial das rotas de senha de terceiros e de recuperação assistida: ADM, DIR, SEC (<see cref="PermissoesSenha.Solicitantes"/>).
+    /// Não basta: o par solicitante/alvo é decidido com os cargos relidos do banco pela matriz de <see cref="PermissoesSenha"/>.
+    /// </summary>
+    public const string AlteracaoSenhaTerceiros = "AlteracaoSenhaTerceiros";
+
     public static void Registrar(AuthorizationOptions options)
     {
         options.AddPolicy(GestaoCadastros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Cadastros));
@@ -103,6 +109,7 @@ public static class Policies
         options.AddPolicy(Painel, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Gestao));
         options.AddPolicy(GestaoFormacao, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Formacao));
         options.AddPolicy(Autoatendimento, policy => policy.RequireAuthenticatedUser());
+        options.AddPolicy(AlteracaoSenhaTerceiros, policy => policy.RequireAuthenticatedUser().RequireRole(PermissoesSenha.Solicitantes));
         options.AddPolicy(GestaoAlmoxarifado, policy => policy.RequireAuthenticatedUser().AddRequirements(AcessoAlmoxarifadoRequirement.Gestao));
         options.AddPolicy(ConsultaAlmoxarifado, policy => policy.RequireAuthenticatedUser().AddRequirements(AcessoAlmoxarifadoRequirement.Consulta));
         options.AddPolicy(DesignacaoAlmoxarifado, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Cadastros));

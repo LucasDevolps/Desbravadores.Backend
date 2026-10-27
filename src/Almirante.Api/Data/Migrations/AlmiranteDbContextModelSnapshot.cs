@@ -22,6 +22,62 @@ namespace Almirante.Api.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("Almirante.Api.Entities.AlteracaoSenha", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("AlteradaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("IpResponsavel")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<Guid?>("SolicitacaoRecuperacaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("TipoAlteracao")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TraceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("UsuarioAfetadoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("UsuarioResponsavelId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SolicitacaoRecuperacaoId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Usuarios_alteracoes_senha_recuperacao")
+                        .HasFilter("[SolicitacaoRecuperacaoId] IS NOT NULL");
+
+                    b.HasIndex("UsuarioAfetadoId", "AlteradaEmUtc")
+                        .HasDatabaseName("IX_Usuarios_alteracoes_senha_afetado_data");
+
+                    b.HasIndex("UsuarioResponsavelId", "AlteradaEmUtc")
+                        .HasDatabaseName("IX_Usuarios_alteracoes_senha_responsavel_data");
+
+                    b.ToTable("Usuarios_alteracoes_senha", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Usuarios_alteracoes_senha_Responsavel", "([TipoAlteracao] = 1 AND [UsuarioResponsavelId] IS NOT NULL AND [UsuarioResponsavelId] = [UsuarioAfetadoId] AND [SolicitacaoRecuperacaoId] IS NULL) OR ([TipoAlteracao] = 2 AND [UsuarioResponsavelId] IS NOT NULL AND [UsuarioResponsavelId] <> [UsuarioAfetadoId]) OR ([TipoAlteracao] = 3 AND [UsuarioResponsavelId] IS NOT NULL AND [UsuarioResponsavelId] <> [UsuarioAfetadoId] AND [SolicitacaoRecuperacaoId] IS NOT NULL) OR ([TipoAlteracao] = 4 AND [UsuarioResponsavelId] IS NULL AND [SolicitacaoRecuperacaoId] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_Usuarios_alteracoes_senha_Tipo", "[TipoAlteracao] IN (1, 2, 3, 4)");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.AtendimentoBem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -139,6 +195,109 @@ namespace Almirante.Api.Data.Migrations
                             t.HasCheckConstraint("CK_almoxarifado_atendimentos_Origem", "[Origem] IN (1, 2)");
 
                             t.HasCheckConstraint("CK_almoxarifado_atendimentos_Quantidade", "[Quantidade] BETWEEN 1 AND 10000");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.AuditoriaHttp", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("DataRequestUtc")
+                        .HasColumnType("datetimeoffset(7)");
+
+                    b.Property<int>("DuracaoMs")
+                        .HasColumnType("int");
+
+                    b.Property<int>("EstadoCapturaRequest")
+                        .HasColumnType("int");
+
+                    b.Property<int>("EstadoCapturaResponse")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Exception")
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("Headers")
+                        .IsRequired()
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("IdentificacaoUsuario")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(36)");
+
+                    b.Property<string>("IpUsuario")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<string>("MetodoHttp")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("Request")
+                        .IsRequired()
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("Response")
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TraceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2048)");
+
+                    b.HasKey("Id");
+
+                    SqlServerKeyBuilderExtensions.IsClustered(b.HasKey("Id"), false);
+
+                    b.HasIndex("DataRequestUtc")
+                        .HasDatabaseName("CIX_auditoria_http_data");
+
+                    SqlServerIndexBuilderExtensions.IsClustered(b.HasIndex("DataRequestUtc"));
+
+                    b.HasIndex("TraceId")
+                        .HasDatabaseName("IX_auditoria_http_trace");
+
+                    b.HasIndex("IdentificacaoUsuario", "DataRequestUtc")
+                        .HasDatabaseName("IX_auditoria_http_usuario_data");
+
+                    b.HasIndex("StatusCode", "DataRequestUtc")
+                        .HasDatabaseName("IX_auditoria_http_status_data");
+
+                    b.ToTable("auditoria_http", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_auditoria_http_DuracaoMs", "[DuracaoMs] >= 0");
+
+                            t.HasCheckConstraint("CK_auditoria_http_Estados", "[EstadoCapturaRequest] IN (1, 2, 3, 4, 5, 6, 7, 8, 9) AND [EstadoCapturaResponse] IN (1, 2, 3, 4, 5, 6, 7, 8, 9)");
+
+                            t.HasCheckConstraint("CK_auditoria_http_Json", "ISJSON([Request]) = 1 AND ISJSON([Headers]) = 1 AND ([Response] IS NULL OR ISJSON([Response]) = 1) AND ([Exception] IS NULL OR ISJSON([Exception]) = 1)");
+
+                            t.HasCheckConstraint("CK_auditoria_http_StatusCode", "[StatusCode] IS NULL OR [StatusCode] BETWEEN 100 AND 999");
+
+                            t.HasCheckConstraint("CK_auditoria_http_Usuario", "[IdentificacaoUsuario] = 'ANONIMO' OR TRY_CONVERT(uniqueidentifier, [IdentificacaoUsuario]) IS NOT NULL");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
@@ -2072,7 +2231,7 @@ namespace Almirante.Api.Data.Migrations
 
                             t.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
 
-                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2)");
+                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2, 3)");
                         });
                 });
 
@@ -2153,6 +2312,115 @@ namespace Almirante.Api.Data.Migrations
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.RecuperacaoSenha", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("AutorizadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("EncerradaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiraEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("IpAutorizador")
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<string>("IpConclusao")
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<string>("IpSolicitacao")
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<int?>("MetodoVerificacao")
+                        .HasColumnType("int");
+
+                    b.Property<string>("MotivoEncerramento")
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<int>("Origem")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<long?>("SecurityVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Solicitacoes")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("SolicitadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("TokenExpiraEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("TokenHash")
+                        .HasColumnType("binary(32)");
+
+                    b.Property<DateTime>("UltimaSolicitacaoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("UsuarioAutorizadorId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Usuarios_recuperacoes_senha_token")
+                        .HasFilter("[TokenHash] IS NOT NULL");
+
+                    b.HasIndex("UsuarioAutorizadorId");
+
+                    b.HasIndex("UsuarioId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Usuarios_recuperacoes_senha_aberta")
+                        .HasFilter("[Status] IN (1, 2)");
+
+                    b.HasIndex("Status", "SolicitadaEmUtc", "Id")
+                        .IsDescending(false, true, true)
+                        .HasDatabaseName("IX_Usuarios_recuperacoes_senha_abertas")
+                        .HasFilter("[Status] IN (1, 2)");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("Status", "SolicitadaEmUtc", "Id"), new[] { "UsuarioId", "ExpiraEmUtc" });
+
+                    b.ToTable("Usuarios_recuperacoes_senha", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Usuarios_recuperacoes_senha_Autorizacao", "([TokenHash] IS NULL AND [TokenExpiraEmUtc] IS NULL AND [SecurityVersion] IS NULL) OR ([TokenHash] IS NOT NULL AND [TokenExpiraEmUtc] IS NOT NULL AND [SecurityVersion] IS NOT NULL AND [UsuarioAutorizadorId] IS NOT NULL AND [IpAutorizador] IS NOT NULL AND [MetodoVerificacao] IS NOT NULL AND [AutorizadaEmUtc] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_Usuarios_recuperacoes_senha_Metodo", "[MetodoVerificacao] IS NULL OR [MetodoVerificacao] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_Usuarios_recuperacoes_senha_Origem", "([Origem] = 1 AND [IpSolicitacao] IS NOT NULL) OR ([Origem] = 2 AND [IpSolicitacao] IS NULL)");
+
+                            t.HasCheckConstraint("CK_Usuarios_recuperacoes_senha_Solicitacoes", "[Solicitacoes] >= 1");
+
+                            t.HasCheckConstraint("CK_Usuarios_recuperacoes_senha_Status", "([Status] = 1 AND [TokenHash] IS NULL AND [EncerradaEmUtc] IS NULL AND [MotivoEncerramento] IS NULL) OR ([Status] = 2 AND [TokenHash] IS NOT NULL AND [EncerradaEmUtc] IS NULL AND [MotivoEncerramento] IS NULL) OR ([Status] IN (3, 4) AND [EncerradaEmUtc] IS NOT NULL AND [MotivoEncerramento] IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>
@@ -2907,6 +3175,25 @@ namespace Almirante.Api.Data.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.AlteracaoSenha", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.RecuperacaoSenha", null)
+                        .WithMany()
+                        .HasForeignKey("SolicitacaoRecuperacaoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("UsuarioAfetadoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("UsuarioResponsavelId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.AtendimentoBem", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.AtendimentoDesejo", null)
@@ -3458,6 +3745,20 @@ namespace Almirante.Api.Data.Migrations
                         .WithMany()
                         .HasForeignKey("ValidadoPorUsuarioId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.RecuperacaoSenha", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("UsuarioAutorizadorId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("UsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.RefreshToken", b =>

@@ -380,6 +380,14 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `POST` | `/api/Auth/refresh` | rotaciona o refresh cookie e retorna novo access token |
 | `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
 | `GET` | `/api/Auth/Me` | retorna o perfil do usuário autenticado (qualquer cargo) |
+| `POST` | `/api/Auth/alterar-senha` | troca a própria senha com a senha atual; revoga todas as sessões (novo login obrigatório) |
+| `POST` | `/api/Auth/recuperacao-senha/solicitar` | pedido de ajuda sem login; sempre `202` genérico, sem e-mail nem token |
+| `POST` | `/api/Auth/recuperacao-senha/confirmar` | conclui a recuperação com a autorização entregue pessoalmente pelo responsável |
+
+Troca de senha de outro usuário e recuperação assistida (`/api/Usuarios/{id}/alterar-senha`, `/api/Usuarios/recuperacao-senha/pendentes`,
+`/api/Usuarios/{id}/recuperacao-senha/autorizacao`) seguem uma matriz explícita (ADM e DIR → SEC, TES e DS; SEC → DS), confirmada com a
+senha do responsável. Política de senha (15 a 128 caracteres), auditoria, concorrência, notificação e limites em
+[`docs/senhas.md`](docs/senhas.md). Nenhum e-mail é enviado: não há provedor configurado.
 | `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC) |
 | `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`; ADM, DIR, DIRA, SEC) |
 | `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API; ADM, DIR, DIRA, SEC) |
@@ -913,6 +921,27 @@ com nova tentativa e retomada após reinício. A API REST é a fonte da verdade.
 IIS) e o runtime mínimo (ASP.NET Core 10.0.13, garantido pelo `Dockerfile` e pelo deploy Windows) estão
 no documento.
 
+## Auditoria HTTP (issue #158)
+
+A API grava na tabela `auditoria_http` uma linha por chamada HTTP que chega ao pipeline: sucesso,
+redirecionamento, validação, 401, 403, 404, 429, exceções, health checks, Swagger e o HTTP do hub
+SignalR. Não há amostragem. O login (`/api/Auth/login`) fica totalmente fora. Cada linha traz a URL, o
+método, o status, a duração, o IP observado depois do proxy confiável, o id do usuário autenticado (ou
+`ANONIMO`), o trace, os cabeçalhos permitidos, os corpos e a exceção.
+
+Tudo é sanitizado antes de sair da memória da requisição, por uma lista explícita de campos revisados.
+CPF, e-mail, telefone, dados de responsáveis, RG, saúde, endereço, fotos, arquivos, senhas, tokens e
+cookies nunca são gravados, nem em caminho, query, cabeçalho, corpo ou exceção. As rotas de credenciais
+gravam só metadados.
+
+Os registros passam por um diário em disco antes do banco. Por isso sobrevivem a banco fora do ar, a
+reinício e ao rollback do negócio, sem duplicar. A tabela só aceita inserção.
+
+O guia completo está em [`docs/auditoria-http.md`](docs/auditoria-http.md): política de sanitização,
+estados de captura, limites de cobertura, garantia de entrega, configuração (`AuditoriaHttp:*`, todas
+opcionais), custos e consultas. A decisão está no
+[ADR-0016](docs/architecture/adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
+
 ## Banco de dados e migrations
 
 Migrations são aplicadas incrementalmente no startup.
@@ -1092,7 +1121,30 @@ O projeto `Almirante.ServiceDefaults` configura:
 - `/health` para readiness;
 - `/alive` para liveness.
 
-As requisições aos health checks são excluídas dos traces.
+As requisições aos health checks são excluídas dos traces. O `/health` inclui a verificação
+`auditoria-http`, que fica `Degraded` (ainda 200) quando a auditoria HTTP perde garantias: diário em
+disco indisponível, banco recusando a gravação ou registros descartados ([`docs/auditoria-http.md`](docs/auditoria-http.md)).
+
+### Console do Aspire nos deploys
+
+Os dois deploys publicam o **console do Aspire** (dashboard standalone, versão 13.5.2, a mesma do AppHost) ao lado da
+API, que envia para ele logs, traces e métricas por OTLP. A telemetria fica só em memória: reiniciar o console a apaga.
+A interface escuta **só no loopback** da máquina e exige um token de login; a porta OTLP não é exposta para fora.
+
+| Deploy | Endereço | Token de login | Como roda |
+|---|---|---|---|
+| Linux (Docker Compose) | `http://127.0.0.1:18888` (`ASPIRE_DASHBOARD_HOST_PORT`) | `docker logs almirante-aspire-dashboard 2>&1 \| grep 'login?t='` (novo a cada início do container) | serviço `aspire-dashboard` do `compose.yaml`, imagem fixada por digest, sem capabilities |
+| Windows (IIS) | `http://127.0.0.1:18888` | `C:\desbravadores\aspire-dashboard\browser-token.txt` (só administradores; fixo entre reinícios) | tarefa agendada `AspireDashboardAlmirante` como `LOCAL SERVICE`, binários do pacote NuGet `Aspire.Dashboard.Sdk.win-x64` com SHA256 conferido |
+
+- Abra `http://127.0.0.1:18888/login?t=<token>`. De outra máquina, use túnel SSH (`ssh -L 18888:127.0.0.1:18888 <host>`);
+  nunca publique a porta.
+- O token nunca aparece no log do GitHub Actions.
+- O console é opcional para a API: fora do ar, a exportação falha em silêncio, e uma falha ao instalá-lo ou iniciá-lo
+  só gera um aviso no deploy, sem bloquear nem derrubar a API.
+- No Windows, o deploy só cria `OTEL_EXPORTER_OTLP_ENDPOINT` e `OTEL_SERVICE_NAME` no app pool quando ainda não
+  existem. Para desligar a exportação, remova essas variáveis do pool; um valor ajustado à mão é preservado.
+- O AppHost (`dotnet run --project src/Almirante.AppHost`) continua sendo o caminho de desenvolvimento, com o próprio
+  console. Nos deploys ele não é usado, porque subiria outro SQL Server.
 
 ## Swagger
 

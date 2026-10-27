@@ -33,6 +33,9 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     public string FotosPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N"));
 
+    /// <summary>Diário da auditoria HTTP desta factory: o padrão é derivado da connection string, igual em todas as factories em memória.</summary>
+    public string AuditoriaPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-auditoria", Guid.NewGuid().ToString("N"));
+
     protected virtual string EnvironmentName => "Development";
     protected virtual void ConfigureSettings(IDictionary<string, string?> settings) { }
 
@@ -57,7 +60,11 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
                 ["SeedAdmin:Senha"] = AdminSenha,
                 ["LoginProtection:RateLimit:PermitLimit"] = "10000",
                 ["LoginProtection:Lockout:MaxFailedAttempts"] = "1000",
+                ["Senhas:TentativasPorUsuario"] = "10000",
+                ["Senhas:TentativasPorIp"] = "10000",
+                ["Senhas:RecuperacoesPorIp"] = "10000",
                 ["Media:Storage:Path"] = FotosPath,
+                ["AuditoriaHttp:DiretorioPendentes"] = AuditoriaPath,
                 ["ViaCep:TimeoutMs"] = "600",
             };
             ConfigureSettings(settings);
@@ -97,10 +104,20 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (disposing && Directory.Exists(FotosPath))
+        if (disposing)
         {
-            Directory.Delete(FotosPath, recursive: true);
+            ApagarPastaTemporaria(FotosPath);
+            ApagarPastaTemporaria(AuditoriaPath);
         }
+    }
+
+    // Melhor esforço, como em ApiProcess: no Windows um arquivo ainda aberto (antivírus, indexador) faz o Delete lançar
+    // IOException, e uma sobra na pasta temporária não pode reprovar a classe de testes inteira.
+    private static void ApagarPastaTemporaria(string pasta)
+    {
+        try { if (Directory.Exists(pasta)) Directory.Delete(pasta, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private sealed class TestEndpointsStartupFilter : IStartupFilter
