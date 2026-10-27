@@ -105,7 +105,7 @@ public sealed class SqlIdentityEnvironment : IAsyncDisposable
         SqlConnection.ClearAllPools();
         await using var connection = await OpenHarnessAsync();
         foreach (var database in _extraDatabases.Append(Database))
-            await ExecAsync(connection, $"IF DB_ID(N'{database}') IS NOT NULL BEGIN ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}]; END");
+            await BancosDeTeste.RemoverAsync(connection, database);
         foreach (var login in _extraLogins.Append(AdminUser).Append(AppUser))
             await ExecAsync(connection, $"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}];");
     }

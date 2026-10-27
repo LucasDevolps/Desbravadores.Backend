@@ -145,7 +145,9 @@ public sealed class UsuariosResponsavelFotoMigrationTests
         finally
         {
             SqlConnection.ClearAllPools();
-            await ExecAsync(master, $"ALTER DATABASE [{banco}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{banco}]");
+            await using var conexaoMaster = new SqlConnection(master);
+            await conexaoMaster.OpenAsync();
+            await BancosDeTeste.RemoverAsync(conexaoMaster, banco);
         }
     }
 }

@@ -18,7 +18,11 @@ public sealed class ServicosDeInfraestruturaSqlServerTests
     [Fact]
     public async Task LimpezaDeSessoes_RemoveSoAsSessoesVencidasHaMaisDeUmaHora()
     {
-        using var factory = new SqlServerApiFactory();
+        // Sem a limpeza do próprio host: a primeira iteração dela poderia rodar depois das inserções e apagar a sessão antes do teste.
+        using var factory = new SqlServerApiFactory(configureServices: s =>
+        {
+            foreach (var limpeza in s.Where(d => d.ImplementationType == typeof(AuthSessionCleanupService)).ToList()) s.Remove(limpeza);
+        });
         factory.CreateClient();
         var admin = await TestHelpers.WithDbAsync(factory, db => db.Usuarios.Where(u => u.EmailNormalizado == "ADMIN@LOCAL.DEV").Select(u => u.Id).SingleAsync());
         var agora = DateTimeOffset.UtcNow;
@@ -154,9 +158,7 @@ public sealed class ServicosDeInfraestruturaSqlServerTests
             SqlConnection.ClearAllPools();
             await using var conexao = new SqlConnection(harness);
             await conexao.OpenAsync();
-            await using var remover = new SqlCommand(
-                $"IF DB_ID(N'{database}') IS NOT NULL BEGIN ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}]; END", conexao);
-            await remover.ExecuteNonQueryAsync();
+            await BancosDeTeste.RemoverAsync(conexao, database);
         }
     }
 }

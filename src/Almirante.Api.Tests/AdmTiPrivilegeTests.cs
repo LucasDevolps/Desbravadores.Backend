@@ -30,10 +30,8 @@ public sealed class AdmTiPrivilegeTests : IAsyncLifetime
         SqlConnection.ClearAllPools();
         await using var connection = new SqlConnection(new SqlConnectionStringBuilder(_server) { InitialCatalog = "master" }.ConnectionString);
         await connection.OpenAsync();
-        await ExecAsync(connection, $"""
-            IF DB_ID(N'{Database}') IS NOT NULL BEGIN ALTER DATABASE [{Database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{Database}]; END
-            IF SUSER_ID(N'{Login}') IS NOT NULL DROP LOGIN [{Login}];
-            """);
+        await BancosDeTeste.RemoverAsync(connection, Database);
+        await ExecAsync(connection, $"IF SUSER_ID(N'{Login}') IS NOT NULL DROP LOGIN [{Login}];");
     }
 
     private async Task<SqlConnection> OpenAdminAsync()
