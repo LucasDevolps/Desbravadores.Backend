@@ -12,7 +12,6 @@ public sealed class LoginResponse { public required TokenDto Token { get; set; }
 public sealed class MeCargoDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Role { get; set; } }
 public sealed class MeDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public required MeCargoDto Cargo { get; set; } }
 
-public class UsuarioDto { public Guid Id { get; set; } public required string Nome { get; set; } public required string Email { get; set; } public required CargoDto Cargo { get; set; } }
 public class UsuarioListItemDto
 {
     public Guid Id { get; set; }

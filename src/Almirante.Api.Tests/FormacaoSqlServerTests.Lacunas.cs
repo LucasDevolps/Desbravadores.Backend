@@ -354,4 +354,55 @@ public sealed partial class FormacaoSqlServerTests
             new { motivo = "rascunho abandonado", versao = Versao(rascunho) }));
         Assert.Equal(HttpStatusCode.NotFound, (await desbravador.GetAsync($"/api/RevisoesRequisitos/{Id(descartada)}")).StatusCode);
     }
+
+    private Task<HttpResponseMessage> VincularEvidenciaAsync(Guid classe, Guid requisito, Guid especialidade) =>
+        Admin.PostAsJsonAsync($"/api/Formacao/Classes/{classe}/Requisitos/{requisito}/Evidencias", new { membroEspecialidadeId = especialidade });
+
+    [Fact]
+    public async Task Evidencias_RemocaoEMigracaoDeRevisao_DesativamAEvidencia_ERequisitoSemExigenciaRecusa()
+    {
+        var area = AreaUnica();
+        var (_, membro) = await MembroAsync(nascimento: Hoje.AddYears(-12));
+        var (_, primeira) = await EspecialidadeConcluidaAsync(membro, area, Hoje.AddDays(-1));
+        var (_, segunda) = await EspecialidadeConcluidaAsync(membro, area, Hoje.AddDays(-1));
+        var exigencia = new { quantidade = 1, area };
+        await PublicarAsync(new { classe = "Companheiro" }, Item("1", exigencia), Item("2"));
+        var classe = await AssociarClasseAsync(membro, "Companheiro", Hoje.AddDays(-10));
+        var id = Id(classe);
+
+        var semExigencia = await Esperar(await VincularEvidenciaAsync(id, Req(classe, "2"), primeira), HttpStatusCode.Conflict);
+        Assert.Equal("O requisito não exige especialidades.", (string)semExigencia["title"]!);
+
+        await Esperar(await VincularEvidenciaAsync(id, Req(classe, "1"), primeira));
+        await Esperar(await Admin.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Formacao/Classes/{id}/Requisitos/{Req(classe, "1")}/Evidencias/{primeira}")
+        {
+            Content = JsonContent.Create(new { justificativa = "vinculada por engano" }),
+        }));
+        var removida = await Db(db => db.EvidenciasEspecialidades.AsNoTracking().SingleAsync(e => e.MembroClasseId == id && e.MembroEspecialidadeId == primeira));
+        Assert.False(removida.Ativo);
+        Assert.NotNull(removida.RemovidaPorUsuarioId);
+        Assert.NotNull(removida.RemovidaEmUtc);
+
+        await Esperar(await VincularEvidenciaAsync(id, Req(classe, "1"), segunda));
+        var nova = await PublicarAsync(new { classe = "Companheiro" }, Item("1", exigencia), Item("2"), Item("3"));
+        await Esperar(await Admin.PostAsJsonAsync($"/api/Formacao/Classes/{id}/MigrarRevisao",
+            new { revisaoId = Id(nova), justificativa = "nova edição do cartão", versao = Versao(await ObterAsync("Classes", id)) }));
+        Assert.False((await Db(db => db.EvidenciasEspecialidades.AsNoTracking()
+            .SingleAsync(e => e.MembroClasseId == id && e.MembroEspecialidadeId == segunda && e.RemovidaEmUtc != null))).Ativo);
+
+        var historico = await Db(db => db.HistoricoFormacao.AsNoTracking().Where(h => h.VinculoId == id).ToListAsync());
+        Assert.Contains(historico, h => h.Acao == "MIGRAR_REVISAO" && h.Motivo == "nova edição do cartão");
+        Assert.All(historico, h => Assert.Equal(FormacaoSqlFixture.Ip, h.IpResponsavel));
+    }
+
+    [Fact]
+    public async Task Operacoes_EmVinculoInexistente_Respondem404PorTipo()
+    {
+        foreach (var recurso in new[] { "Classes", "Especialidades" })
+        {
+            var resposta = await Esperar(await Admin.PostAsJsonAsync($"/api/Formacao/{recurso}/{Guid.NewGuid()}/Cancelar",
+                new { justificativa = "teste", versao = "AAAAAAAAAAA=" }), HttpStatusCode.NotFound);
+            Assert.Equal(recurso == "Classes" ? "Vínculo de classe não encontrado." : "Vínculo de especialidade não encontrado.", (string)resposta["title"]!);
+        }
+    }
 }
