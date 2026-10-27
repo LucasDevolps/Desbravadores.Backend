@@ -264,4 +264,94 @@ public sealed partial class FormacaoSqlServerTests
         var recusa = await AssociarClasseAsync(membro, "Lider", Hoje, esperado: HttpStatusCode.Conflict);
         Assert.Contains(recusa["preRequisitos"]!.AsArray(), p => (string?)p!["detalhe"] == "data de nascimento não cadastrada");
     }
+
+    // O cadastro é um DTO fechado (versao não existe nele): campos nulos ficam fora do corpo.
+    private static Dictionary<string, object?> ConteudoEspecialidade(string area, string? versao = null, string modalidade = "Basica",
+        Guid[]? preRequisitos = null)
+    {
+        var corpo = new Dictionary<string, object?>
+        {
+            ["nome"] = $"Especialidade {Guid.NewGuid():N}"[..40], ["area"] = area, ["fonteOficial"] = "Manual de especialidades (teste)",
+            ["edicaoRevisao"] = "2024", ["nivelDificuldade"] = 1, ["modalidade"] = modalidade,
+        };
+        if (preRequisitos is not null) corpo["preRequisitos"] = preRequisitos;
+        if (versao is not null) corpo["versao"] = versao;
+        return corpo;
+    }
+
+    private Task<HttpResponseMessage> AlterarSituacaoAsync(Guid id, bool ativar, string versao) => ativar
+        ? Admin.PostAsJsonAsync($"/api/Especialidades/{id}/Reativar", new { versao })
+        : Admin.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Especialidades/{id}")
+        {
+            Content = JsonContent.Create(new { motivo = "retirada no teste", versao }),
+        });
+
+    [Fact]
+    public async Task Catalogo_ModalidadePreRequisitosESituacaoDasEspecialidades()
+    {
+        var area = AreaUnica();
+        var semPreRequisitos = await Esperar(await Admin.PostAsJsonAsync("/api/Especialidades", ConteudoEspecialidade(area)), HttpStatusCode.Created);
+        Assert.Empty(semPreRequisitos["preRequisitos"]!.AsArray());
+        var avancada = await Esperar(await Admin.PostAsJsonAsync("/api/Especialidades", ConteudoEspecialidade(area, modalidade: "Avancada")), HttpStatusCode.Created);
+        var filtradas = (await Esperar(await Admin.GetAsync($"/api/Especialidades?area={Uri.EscapeDataString(area)}&modalidade=Avancada")))["items"]!.AsArray();
+        Assert.Equal([Id(avancada)], filtradas.Select(Id));
+
+        var id = Id(semPreRequisitos);
+        var a = Id(await EspecialidadeAsync(area));
+        var b = Id(await EspecialidadeAsync(area));
+        async Task<JsonObject> PreRequisitosAsync(HttpStatusCode esperado, params Guid[] ids) =>
+            await Esperar(await Admin.PutAsJsonAsync($"/api/Especialidades/{id}",
+                ConteudoEspecialidade(area, Versao(await ObterEspecialidadeAsync(id)), preRequisitos: ids)), esperado);
+
+        Assert.NotNull((await PreRequisitosAsync(HttpStatusCode.BadRequest, id))["errors"]!["PreRequisitos"]);
+        Assert.NotNull((await PreRequisitosAsync(HttpStatusCode.BadRequest, Guid.NewGuid()))["errors"]!["PreRequisitos"]);
+        Assert.Equal([a], (await PreRequisitosAsync(HttpStatusCode.OK, a))["preRequisitos"]!.AsArray().Select(Id));
+        Assert.Equal([b], (await PreRequisitosAsync(HttpStatusCode.OK, b))["preRequisitos"]!.AsArray().Select(Id));
+        Assert.Equal(new[] { a, b }.Order(), (await PreRequisitosAsync(HttpStatusCode.OK, a, b))["preRequisitos"]!.AsArray().Select(Id).Order());
+
+        var jaAtiva = await Esperar(await AlterarSituacaoAsync(id, ativar: true, Versao(await ObterEspecialidadeAsync(id))), HttpStatusCode.Conflict);
+        Assert.Equal("A especialidade já está ativa.", (string)jaAtiva["title"]!);
+        await Esperar(await AlterarSituacaoAsync(id, ativar: false, Versao(await ObterEspecialidadeAsync(id))));
+        var jaInativa = await Esperar(await AlterarSituacaoAsync(id, ativar: false, Versao(await ObterEspecialidadeAsync(id))), HttpStatusCode.Conflict);
+        Assert.Equal("A especialidade já está inativa.", (string)jaInativa["title"]!);
+
+        var inexistente = Guid.NewGuid();
+        await Esperar(await Admin.PutAsJsonAsync($"/api/Especialidades/{inexistente}", ConteudoEspecialidade(area, "AAAAAAAAAAA=")), HttpStatusCode.NotFound);
+        await Esperar(await AlterarSituacaoAsync(inexistente, ativar: false, "AAAAAAAAAAA="), HttpStatusCode.NotFound);
+    }
+
+    private async Task<JsonObject> ObterEspecialidadeAsync(Guid id) => await Esperar(await Admin.GetAsync($"/api/Especialidades/{id}"));
+
+    [Fact]
+    public async Task Revisoes_AlvoInexistenteOuInativo_ExigenciaInvalida_ERascunhoSoParaQuemGerencia()
+    {
+        var area = AreaUnica();
+        async Task<JsonObject> CriarAsync(object alvo, HttpStatusCode esperado, params object[] requisitos)
+        {
+            var corpo = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(alvo, System.Text.Json.JsonSerializerOptions.Web))!.AsObject();
+            corpo["edicao"] = "teste";
+            corpo["fonteOficial"] = "Cartão oficial (teste)";
+            corpo["requisitos"] = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(requisitos, System.Text.Json.JsonSerializerOptions.Web));
+            return await Esperar(await Admin.PostAsJsonAsync("/api/RevisoesRequisitos", corpo), esperado);
+        }
+
+        await CriarAsync(new { especialidadeId = Guid.NewGuid() }, HttpStatusCode.NotFound, Item("1"));
+        var inativa = Id(await EspecialidadeAsync(area));
+        await Esperar(await AlterarSituacaoAsync(inativa, ativar: false, Versao(await ObterEspecialidadeAsync(inativa))));
+        Assert.Equal("Especialidade inativa.", (string)(await CriarAsync(new { especialidadeId = inativa }, HttpStatusCode.Conflict, Item("1")))["title"]!);
+        var exigenciaInvalida = await CriarAsync(new { classe = "Amigo" }, HttpStatusCode.BadRequest,
+            Item("1", new { quantidade = 1, especialidadeId = inativa }));
+        Assert.NotNull(exigenciaInvalida["errors"]!["Requisitos"]);
+
+        await Esperar(await Admin.PostAsJsonAsync($"/api/RevisoesRequisitos/{Guid.NewGuid()}/Publicar", new { versao = "AAAAAAAAAAA=" }), HttpStatusCode.NotFound);
+
+        var alvo = Id(await EspecialidadeAsync(area));
+        var rascunho = await CriarAsync(new { especialidadeId = alvo }, HttpStatusCode.Created, Item("1"));
+        var (desbravador, _) = await MembroAsync();
+        Assert.Equal(HttpStatusCode.NotFound, (await desbravador.GetAsync($"/api/RevisoesRequisitos/{Id(rascunho)}")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Admin.GetAsync($"/api/RevisoesRequisitos/{Id(rascunho)}")).StatusCode);
+        var descartada = await Esperar(await Admin.PostAsJsonAsync($"/api/RevisoesRequisitos/{Id(rascunho)}/Descartar",
+            new { motivo = "rascunho abandonado", versao = Versao(rascunho) }));
+        Assert.Equal(HttpStatusCode.NotFound, (await desbravador.GetAsync($"/api/RevisoesRequisitos/{Id(descartada)}")).StatusCode);
+    }
 }
