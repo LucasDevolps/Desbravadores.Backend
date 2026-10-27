@@ -36,7 +36,7 @@ public sealed class FormacaoSqlFixture : IAsyncLifetime
 /// participante e auditoria por trigger.
 /// </summary>
 [Trait("Category", "RequiresSqlServer")]
-public sealed class FormacaoSqlServerTests(FormacaoSqlFixture fx) : IClassFixture<FormacaoSqlFixture>
+public sealed partial class FormacaoSqlServerTests(FormacaoSqlFixture fx) : IClassFixture<FormacaoSqlFixture>
 {
     private static readonly DateOnly Hoje = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
 

@@ -490,12 +490,10 @@ public sealed partial class FormacaoService(AlmiranteDbContext db, TimeProvider 
             ExigirEmAndamento(vinculo, "migrar de revisão");
             var destino = await db.RevisoesRequisitos.AsNoTracking().SingleOrDefaultAsync(x => x.Id == r.RevisaoId, ct)
                 ?? throw ApiProblemException.NotFound("Revisão não encontrada.");
-            var mesmoAlvo = vinculo switch
-            {
-                MembroClasse c => destino.Classe == c.Classe,
-                MembroEspecialidade e => destino.EspecialidadeId == e.EspecialidadeId,
-                _ => false,
-            };
+            // Só existem os dois tipos de vínculo (classe e especialidade).
+            var mesmoAlvo = vinculo is MembroClasse c
+                ? destino.Classe == c.Classe
+                : destino.EspecialidadeId == ((MembroEspecialidade)vinculo).EspecialidadeId;
             if (!mesmoAlvo || destino.Situacao != SituacaoRevisao.Publicada || destino.Id == vinculo.RevisaoId)
             {
                 throw ApiProblemException.Conflict("Revisão de destino inválida.",
@@ -546,14 +544,12 @@ public sealed partial class FormacaoService(AlmiranteDbContext db, TimeProvider 
                 "Registro histórico cancelado não é retomado: registre-o novamente.");
         }
 
-        var duplicado = vinculo switch
-        {
-            MembroClasse c => await db.MembrosClasses.AnyAsync(x => x.Id != c.Id && x.MembroId == c.MembroId && x.Classe == c.Classe
-                && x.Situacao != SituacaoVinculo.Cancelada, ct),
-            MembroEspecialidade e => await db.MembrosEspecialidades.AnyAsync(x => x.Id != e.Id && x.MembroId == e.MembroId
-                && x.EspecialidadeId == e.EspecialidadeId && x.Situacao != SituacaoVinculo.Cancelada, ct),
-            _ => false,
-        };
+        var e = vinculo as MembroEspecialidade;
+        var duplicado = vinculo is MembroClasse c
+            ? await db.MembrosClasses.AnyAsync(x => x.Id != c.Id && x.MembroId == c.MembroId && x.Classe == c.Classe
+                && x.Situacao != SituacaoVinculo.Cancelada, ct)
+            : await db.MembrosEspecialidades.AnyAsync(x => x.Id != e!.Id && x.MembroId == e.MembroId
+                && x.EspecialidadeId == e.EspecialidadeId && x.Situacao != SituacaoVinculo.Cancelada, ct);
         if (duplicado)
         {
             throw ConflitoVinculoAtivo(tipo);
