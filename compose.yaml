@@ -161,6 +161,10 @@ services:
       # Swagger/OpenAPI expõem o mapa completo da API (rotas, DTOs, parâmetros). Fora de Development
       # fica desligado por padrão; ligue conscientemente com SWAGGER_ENABLED=true se precisar.
       Swagger__Enabled: ${SWAGGER_ENABLED:-}
+      # Logs, métricas e traces (Almirante.ServiceDefaults) para o console do Aspire (serviço aspire-dashboard abaixo),
+      # só pela rede interna. Com o console fora do ar, a exportação falha em silêncio e a API segue normal.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+      OTEL_SERVICE_NAME: almirante-api
     networks:
       - almirante-net
     # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
@@ -219,6 +223,31 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+
+  # Console do Aspire (dashboard standalone): logs, traces e métricas da API em tempo real, só em memória (some ao
+  # reiniciar). A interface fica SÓ no loopback do host e exige o token de login que o próprio console gera a cada
+  # início (docker logs almirante-aspire-dashboard 2>&1 | grep 'login?t='); de outra máquina, use túnel SSH
+  # (ssh -L 18888:127.0.0.1:18888 host). A porta OTLP (18889) não é publicada: só a API, pela rede interna, envia
+  # telemetria, então ela fica sem autenticação. Versão e digest fixados (mesma versão do Aspire do AppHost no
+  # deploy Windows); a API não depende deste serviço para subir.
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.5.2@sha256:0ef531119b8073aed12b0db2b4e4ab02866c6c69b7a52264269abd00cfb48a34
+    container_name: almirante-aspire-dashboard
+    environment:
+      Dashboard__Frontend__AuthMode: BrowserToken
+      Dashboard__Otlp__AuthMode: Unsecured
+    networks:
+      - almirante-net
+    ports:
+      - "127.0.0.1:${ASPIRE_DASHBOARD_HOST_PORT:-18888}:18888"
+    expose:
+      - "18889"
+    # A imagem já roda como usuário sem privilégio, nas portas 18888/18889: nenhuma capability é necessária.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 volumes:
