@@ -498,6 +498,21 @@ public sealed partial class FormacaoSqlServerTests
     }
 
     [Fact]
+    public async Task RevisaoInexistente_404_EFormacaoDoMembroComClasseEEspecialidade()
+    {
+        Assert.Equal(HttpStatusCode.NotFound, (await Admin.GetAsync($"/api/RevisoesRequisitos/{Guid.NewGuid()}")).StatusCode);
+
+        var (_, membro) = await MembroAsync();
+        await PublicarAsync(new { classe = "Amigo" }, Item("1"));
+        var classe = Id(await AssociarClasseAsync(membro, "Amigo"));
+        var (_, especialidade) = await EspecialidadeConcluidaAsync(membro, AreaUnica());
+
+        var formacao = await Esperar(await Admin.GetAsync($"/api/Formacao/Membros/{membro}"));
+        Assert.Equal([classe], formacao["classes"]!.AsArray().Select(c => Id(c!)));
+        Assert.Equal([especialidade], formacao["especialidades"]!.AsArray().Select(e => Id(e!)));
+    }
+
+    [Fact]
     public async Task Operacoes_EmVinculoInexistente_Respondem404PorTipo()
     {
         foreach (var recurso in new[] { "Classes", "Especialidades" })

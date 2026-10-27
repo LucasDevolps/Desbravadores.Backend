@@ -359,6 +359,47 @@ public sealed class AuditoriaHttpResilienciaTests
     }
 
     [Fact]
+    public async Task Gravador_FalhaQueNaoEhCancelamentoDuranteODesligamento_ERegistrada_ESaiDoLaco()
+    {
+        var opcoes = new AuditoriaHttpOptions { TamanhoLote = 10 };
+        var (diario, pasta) = DiarioTemporario(opcoes);
+        var chegou = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repositorio = new RepositorioRoteirizado(async (chamada, _, token) =>
+        {
+            if (chamada == 1)
+            {
+                chegou.SetResult();
+                await Task.Delay(Timeout.Infinite, token).ContinueWith(_ => { }, TaskScheduler.Default);
+                throw new InvalidOperationException("conexão encerrada pelo desligamento (simulado)");
+            }
+        });
+        var logs = new CapturingLoggerFactory();
+        var relogio = new RelogioManualDeTeste();
+        try
+        {
+            using var gravador = new GravadorAuditoriaHttp(diario, repositorio, Microsoft.Extensions.Options.Options.Create(opcoes), relogio,
+                logs.CreateLogger<GravadorAuditoriaHttp>());
+            await diario.RegistrarAsync(Registro());
+            await gravador.StartAsync(CancellationToken.None);
+            await relogio.AguardarTimerAsync();
+            relogio.Disparar();
+            await chegou.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            await gravador.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+
+            Assert.True(gravador.ExecuteTask!.IsCompletedSuccessfully);
+            Assert.Contains(logs.Entries, e => e.StartsWith("Error Falha inesperada no gravador da auditoria HTTP (System.InvalidOperationException)",
+                StringComparison.Ordinal));
+            Assert.Equal(2, repositorio.Chamadas);
+        }
+        finally
+        {
+            diario.Dispose();
+            Directory.Delete(pasta, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Gravador_EncerramentoSemTempoParaAUltimaGravacao_DeixaOsPendentesEmDisco_EAvisa()
     {
         var opcoes = new AuditoriaHttpOptions();

@@ -224,6 +224,20 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Registro_ComChave_CommitComConfirmacaoPerdida_RetentativaReconheceAPropriaOperacao()
+    {
+        var membro = (await EventosSqlSupport.MembrosAsync(_factory, 1))[0];
+
+        _falha.Armar(MomentoDaFalha.DepoisDoCommit);
+        var resposta = await NotificacoesTestKit.RegistrarDebitoAsync(_client, membro, chave: Guid.NewGuid().ToString());
+        _falha.Desarmar();
+
+        Assert.Equal(HttpStatusCode.Created, resposta.StatusCode);
+        Assert.Equal(1, await Sql<int>("SELECT COUNT(*) FROM Lancamentos WHERE MembroId = @m", ("@m", membro)));
+        Assert.Equal(1, await Sql<int>("SELECT COUNT(*) FROM LancamentosOperacoes"));
+    }
+
+    [Fact]
     public async Task Listagem_PorVencimento_EAlteracaoDeFinalidadeEVencimento()
     {
         var membro = (await EventosSqlSupport.MembrosAsync(_factory, 1))[0];

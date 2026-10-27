@@ -79,6 +79,23 @@ public sealed partial class AlmoxarifadoSqlServerTests
     }
 
     [Fact]
+    public async Task Atendimento_ComBemDeDataDeAquisicaoDesconhecida_EAceito()
+    {
+        var categoria = Categoria();
+        var recebedor = await MembroAsync("SEC");
+        var desejo = Id(await DesejoAsync(categoria, quantidade: 1));
+        var acervo = BemCorpo(categoria, nome: "Lampião antigo");
+        acervo["dataAquisicao"] = null;
+        acervo["dataAquisicaoDesconhecida"] = true;
+        acervo["justificativaDataDesconhecida"] = "Doação antiga sem registro";
+        var bem = Id(await Esperar(await Admin.PostAsJsonAsync("/api/Almoxarifado/Bens", acervo), HttpStatusCode.Created));
+
+        await Esperar(await AtenderAsync(desejo, new { quantidade = 1, data = D(Hoje), responsavelId = recebedor, origem = "Doacao", bensExistentes = new[] { bem } }),
+            HttpStatusCode.Created);
+        Assert.Equal(1, await ScalarAsync("SELECT COUNT(*) FROM dbo.almoxarifado_atendimentos WHERE DesejoId = @d", ("@d", desejo)));
+    }
+
+    [Fact]
     public async Task Bem_TrocaDeGuardaConfereOMembro_CsvTrazGuardaEDataDesconhecida_EEmprestimoEmDiaNaoEhAtrasado()
     {
         var categoria = Categoria();

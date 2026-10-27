@@ -153,6 +153,24 @@ public sealed class RegrasPurasBordasTests
     }
 
     [Fact]
+    public async Task FalhaDeLogin_DeContaJaBloqueada_NaoMexeNoContadorNemNoBloqueio()
+    {
+        await using var factory = new AlmiranteApiFactory();
+        using var escopo = factory.Services.CreateScope();
+        var db = escopo.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
+        var admin = await db.Usuarios.SingleAsync(u => u.Email == AlmiranteApiFactory.AdminEmail);
+        var agora = DateTime.UtcNow;
+        var bloqueioAte = agora.AddMinutes(10);
+        admin.LoginBloqueadoAteUtc = bloqueioAte;
+        admin.FalhasLoginConsecutivas = 10;
+        await db.SaveChangesAsync();
+
+        await escopo.ServiceProvider.GetRequiredService<LoginLockout>().RegistrarFalhaAsync(admin, agora, default);
+
+        Assert.Equal((10, (DateTime?)bloqueioAte), (admin.FalhasLoginConsecutivas, admin.LoginBloqueadoAteUtc));
+    }
+
+    [Fact]
     public async Task SolicitanteDeSenha_ComSessaoQueDeixouDeValer_Recebe401()
     {
         await using var factory = new AlmiranteApiFactory();

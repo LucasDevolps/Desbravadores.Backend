@@ -256,7 +256,8 @@ internal sealed partial class ChamadaAuditada
         var captura = _capturaRequest!;
         if (captura.Excedeu)
         {
-            return (EstadoCapturaHttp.OmitidaPorTamanho, SanitizadorAuditoriaHttp.MarcadorCorpo(MotivoTamanho, request.ContentType, request.ContentLength ?? captura.Bytes));
+            // Só um corpo sem Content-Length chega aqui: o declarado acima do limite já foi omitido na entrada, e o declarado dentro dele não excede.
+            return (EstadoCapturaHttp.OmitidaPorTamanho, SanitizadorAuditoriaHttp.MarcadorCorpo(MotivoTamanho, request.ContentType, captura.Bytes));
         }
 
         var completa = _leitura!.FimAtingido || (request.ContentLength is { } tamanho && captura.Bytes >= tamanho);
