@@ -4,7 +4,7 @@ Este documento abre a caixa do [contexto](c4-context.md) e mostra os containers 
 as unidades que executam ou armazenam dados separadamente (processos, containers Docker e bancos). É
 o nível 2 do modelo C4.
 
-Retrato do commit `57f24dd` da `main`, levantado em 2026-09-23.
+Levantado em 2026-09-23 (`57f24dd`) e conferido de novo em 2026-10-27 (issue #160, `20a450d`).
 
 O sistema roda em três topologias diferentes. Elas são mostradas separadamente para não misturar o
 que é deploy com o que é desenvolvimento:
@@ -36,25 +36,33 @@ muda são os overlays e o `.env`.
 ```mermaid
 flowchart TB
     accTitle: Containers do Almirante Backend no Docker Compose
-    accDescr: O cliente acessa somente o nginx. O nginx repassa para a API na rede interna. A API usa o SQL Server e um volume de chaves. O sql-bootstrap prepara o banco uma vez por execução.
+    accDescr: O cliente acessa somente o nginx. O nginx repassa para a API na rede interna. A API usa o SQL Server, volumes de chaves, fotos e diário de auditoria, consulta o ViaCEP e envia telemetria ao console do Aspire. O sql-bootstrap prepara o banco uma vez por execução.
 
     cliente["Frontend Almirante e outros clientes HTTP<br/>[Sistema externo]"]
     operador["Operador<br/>[Pessoa]"]
 
     subgraph host["Host Docker: projeto Compose almirante"]
         subgraph rede["Rede almirante-net 172.30.0.0/24"]
-            nginx["nginx<br/>[Container: nginx 1.27-alpine]<br/>Reverse proxy, TLS e rate limit<br/>de login e refresh"]
+            nginx["nginx<br/>[Container: nginx 1.27.5-alpine]<br/>Reverse proxy, TLS e rate limit<br/>de login e refresh"]
             api["api<br/>[Container: ASP.NET Core, .NET 10]<br/>API REST/JSON, autenticação,<br/>regras de negócio e migrations"]
             bootstrap["sql-bootstrap<br/>[Container efêmero: sqlcmd]<br/>Cria o banco e as identidades SQL<br/>e encerra"]
             sql[("sqlserver<br/>[Container: SQL Server 2022]<br/>Banco almirante<br/>volume almirante-sqlserver-data")]
+            aspire["aspire-dashboard<br/>[Container: console do Aspire 13.5.2]<br/>Logs, traces e métricas em memória<br/>UI só em 127.0.0.1:18888"]
         end
         dp[("almirante-dataprotection<br/>[Volume Docker]<br/>Chaves do Data Protection")]
+        fotos[("almirante-fotos ou FOTOS_HOST_PATH<br/>[Volume/pasta]<br/>Fotos de usuários (WebP)")]
+        diario[("almirante-auditoria-http<br/>[Volume Docker]<br/>Diário da auditoria HTTP")]
     end
+    viacep["ViaCEP<br/>[Sistema externo]"]
 
     cliente -->|"HTTP API_HOST_PORT, padrão 8090<br/>HTTPS 443 ou 8443 com overlay"| nginx
     nginx -->|"HTTP api:8080<br/>X-Forwarded-For e X-Forwarded-Proto"| api
     api -->|"SQL Server TDS :1433 com TLS<br/>identidades administrativa e de runtime"| sql
     api -->|"Lê e grava chaves"| dp
+    api -->|"Grava e lê fotos"| fotos
+    api -->|"Diário antes do banco"| diario
+    api -->|"OTLP :18889, rede interna"| aspire
+    api -->|"HTTPS: consulta de CEP"| viacep
     bootstrap -.->|"TDS :1433 como sa<br/>uma vez por docker compose up"| sql
     operador -.->|"Ferramentas SQL locais<br/>127.0.0.1:14330"| sql
 
@@ -66,8 +74,9 @@ flowchart TB
     class operador pessoa
     class nginx,api container
     class bootstrap efemero
-    class sql,dp dados
-    class cliente externo
+    class sql,dp,fotos,diario dados
+    class aspire container
+    class cliente,viacep externo
 ```
 
 Legenda: retângulos são processos, cilindros são armazenamento de dados e o tipo aparece entre
@@ -78,11 +87,14 @@ colchetes. Linha contínua é uso durante a operação normal. Linha tracejada �
 
 | Container | Tecnologia | Responsabilidade | Exposição | Evidência |
 | --- | --- | --- | --- | --- |
-| `nginx` | `nginx:1.27-alpine` | Único ponto de entrada HTTP. Termina TLS nos overlays, limita login e refresh por IP, repassa o IP e o esquema originais e, no modo TLS, aceita só o host canônico. | Porta `API_HOST_PORT` (padrão 8090) para a 80. `compose.https.yaml` publica `127.0.0.1:8443` para a 443. `compose.tls.yaml` publica 443 e faz a 80 só redirecionar. | [`compose.yaml`](../../compose.yaml), [`nginx/`](../../nginx), [ADR-0002](adr/0002-usar-nginx-como-reverse-proxy-e-ponto-de-entrada.md) |
-| `api` | ASP.NET Core em .NET 10 ([`Dockerfile`](../../src/Almirante.Api/Dockerfile)), usuário não-root `app` | API REST/JSON: autenticação e sessões, RBAC, usuários, cargos, lançamentos e eventos. Aplica migrations e rotaciona a credencial SQL de runtime. | Só `expose: 8080` na rede interna. Não publica porta no host. | [`compose.yaml`](../../compose.yaml), [`Program.cs`](../../src/Almirante.Api/Program.cs) |
+| `nginx` | `nginx:1.27.5-alpine` (resolve `api` de novo a cada recriação, `resolver 127.0.0.11`) | Único ponto de entrada HTTP. Termina TLS nos overlays, limita login e refresh por IP, repassa o IP e o esquema originais e, no modo TLS, aceita só o host canônico. | Porta `API_HOST_PORT` (padrão 8090) para a 80. `compose.https.yaml` publica `127.0.0.1:8443` para a 443. `compose.tls.yaml` publica 443 e faz a 80 só redirecionar. | [`compose.yaml`](../../compose.yaml), [`nginx/`](../../nginx), [ADR-0002](adr/0002-usar-nginx-como-reverse-proxy-e-ponto-de-entrada.md) |
+| `api` | ASP.NET Core em .NET 10 ([`Dockerfile`](../../src/Almirante.Api/Dockerfile)), usuário não-root `app` | API REST/JSON e hub SignalR: autenticação e sessões, senhas, RBAC, usuários, cargos, lançamentos, eventos, dashboard, notificações, formação, almoxarifado e auditoria HTTP. Aplica migrations e rotaciona a credencial SQL de runtime. | Só `expose: 8080` na rede interna. Não publica porta no host. | [`compose.yaml`](../../compose.yaml), [`Program.cs`](../../src/Almirante.Api/Program.cs) |
 | `sqlserver` | `mcr.microsoft.com/mssql/server:2022-latest` (edição Developer) | Sistema de registro: todas as tabelas da aplicação, triggers de auditoria e histórico de migrations. | `127.0.0.1:14330` (padrão), apenas para ferramentas locais. A API usa `sqlserver:1433` pela rede interna. | [`compose.yaml`](../../compose.yaml) |
 | `sql-bootstrap` | Mesma imagem do SQL Server, usando só o `sqlcmd` | Cria ou atualiza o banco e as identidades SQL da API e sai. É o único serviço, além do `sqlserver`, que conhece a senha do `sa`. | Nenhuma. | [`compose.yaml`](../../compose.yaml), [`scripts/sql-bootstrap.sh`](../../scripts/sql-bootstrap.sh), [ADR-0005](adr/0005-separar-identidades-sql-e-rotacionar-credenciais.md) |
 | `almirante-dataprotection` | Volume Docker | Chaves do Data Protection usadas pelo antiforgery. Sobrevivem à recriação do container da API. | Montado em `/var/lib/almirante/dataprotection` na API. | [`compose.yaml`](../../compose.yaml), [`Dockerfile`](../../src/Almirante.Api/Dockerfile) |
+| `almirante-fotos` | Volume Docker (ou a pasta `FOTOS_HOST_PATH`) | Fotos de perfil regravadas em WebP pela API ([ADR-0011](adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md)). | Só a API monta; nenhum servidor web publica a pasta. | [`compose.yaml`](../../compose.yaml) |
+| `almirante-auditoria-http` | Volume Docker | Diário em disco da auditoria HTTP, já sanitizado, antes da gravação em `auditoria_http` ([ADR-0016](adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md)). | Só a API monta. | [`compose.yaml`](../../compose.yaml), [`auditoria-http.md`](../auditoria-http.md) |
+| `aspire-dashboard` | Console standalone do Aspire 13.5.2 (imagem fixada por digest) | Recebe logs, traces e métricas da API por OTLP e os mostra numa UI com token. Telemetria só em memória. | UI em `127.0.0.1:18888` (`ASPIRE_DASHBOARD_HOST_PORT`); OTLP só na rede interna. | [`compose.yaml`](../../compose.yaml), [README](../../README.md#console-do-aspire-nos-deploys) |
 
 ### Relações
 
@@ -92,6 +104,8 @@ colchetes. Linha contínua é uso durante a operação normal. Linha tracejada �
 | `nginx` | `api` | HTTP para `api:8080`, com `Host`, `X-Real-IP`, `X-Forwarded-For` e `X-Forwarded-Proto`. A API só confia nesses headers vindos de `API_TRUSTED_PROXY_CIDR`. | [`nginx/nginx.conf`](../../nginx/nginx.conf), `ForwardedHeadersOptions` em [`Program.cs`](../../src/Almirante.Api/Program.cs) |
 | `api` | `sqlserver` | TDS com `Encrypt=True`. A identidade de runtime é usada nas requisições; a administrativa, no startup. `TrustServerCertificate` vem de `SQL_TRUST_SERVER_CERTIFICATE` (padrão `False`); o valor `True` é recusado em Production e com `Security:RequireTrustedSqlServerCertificate=true`, padrão do `compose.tls.yaml`. | `ConnectionStrings__*` em [`compose.yaml`](../../compose.yaml), [`SqlServerConnectionSecurityValidator.cs`](../../src/Almirante.Api/Infrastructure/SqlServerConnectionSecurityValidator.cs) |
 | `api` | `almirante-dataprotection` | Leitura e escrita das chaves em disco. | `DataProtection__KeysPath` em [`compose.yaml`](../../compose.yaml) |
+| `api` | `aspire-dashboard` | OTLP em `http://aspire-dashboard:18889`. Fora do ar, a exportação falha em silêncio. | `OTEL_EXPORTER_OTLP_ENDPOINT` em [`compose.yaml`](../../compose.yaml) |
+| `api` | ViaCEP | HTTPS, prazo `ViaCep:TimeoutMs` e uma nova tentativa rápida; sem log da URL (que contém o CEP). | [`ViaCepClient.cs`](../../src/Almirante.Api/Services/ViaCepClient.cs), [`Program.cs`](../../src/Almirante.Api/Program.cs) |
 | `sql-bootstrap` | `sqlserver` | `sqlcmd` como `sa`, com senha por variável de ambiente, executando [`criar-usuario-admin-app.sql`](../sql/criar-usuario-admin-app.sql). | [`scripts/sql-bootstrap.sh`](../../scripts/sql-bootstrap.sh) |
 | Operador | `sqlserver` | Ferramentas SQL pela porta publicada só em loopback. Para acesso remoto, o `compose.yaml` recomenda túnel SSH. | comentário do serviço `sqlserver` em [`compose.yaml`](../../compose.yaml) |
 
@@ -158,6 +172,8 @@ flowchart LR
   do servidor e, quando ausente ou `*`, também `AllowedHosts`.
 - As migrations rodam no primeiro startup depois da publicação. O workflow não espera `/health` e
   termina com um aviso para conferência manual.
+- As fotos ficam em `Media__Storage__Path` (padrão `C:\desbravadores\fotos`, fora do site) e o console do Aspire roda como tarefa
+  agendada `AspireDashboardAlmirante` em `127.0.0.1:18888`; o deploy só cria as variáveis `OTEL_*` no app pool quando ausentes.
 - Não determinável pelo repositório: onde fica o SQL Server desse ambiente e qual identidade a API usa.
   O código prevê que, sem `DbCredentials:AppUser`, a API use a identidade da connection string (por
   exemplo, autenticação do Windows) e audite os privilégios dela conforme `Security:DbPrivilegeCheck`
@@ -217,15 +233,14 @@ compilado na API. O que muda é para onde a telemetria vai.
 
 | Sinal | O que a API produz | Compose e IIS (versionados) | Aspire |
 | --- | --- | --- | --- |
-| Logs | `ILogger`, com provedor OpenTelemetry (mensagem formatada e escopos) | Saída padrão: `docker compose logs` no Linux, log stdout do ANCM no IIS (habilitado pelo workflow) | Dashboard |
-| Métricas | ASP.NET Core, `HttpClient` e runtime | Nenhum exportador configurado | Dashboard (inferido) |
-| Traces | Fonte da aplicação, ASP.NET Core (sem `/health` e `/alive`) e `HttpClient` | Nenhum exportador configurado | Dashboard (inferido) |
-| `/health` | Todos os health checks: `self` e, com `DbCredentials:AppUser`, `almirante-db`. Sem ele, inferido do comentário de `DbConnectivityHealthCheck`: o health check padrão do componente Aspire do EF Core | Healthchecks do Compose (API e nginx) e espera do deploy Linux | Disponível |
+| Logs | `ILogger`, com provedor OpenTelemetry (mensagem formatada e escopos) | Saída padrão (`docker compose logs`, log stdout do ANCM) e console do Aspire | Dashboard |
+| Métricas | ASP.NET Core, `HttpClient` e runtime | Console do Aspire (OTLP) | Dashboard |
+| Traces | Fonte da aplicação, ASP.NET Core (sem `/health`, `/alive` e `/hubs`) e `HttpClient` | Console do Aspire (OTLP) | Dashboard |
+| `/health` | `self`, `auditoria-http` (`Degraded` quando a auditoria perde garantias) e, com `DbCredentials:AppUser`, `almirante-db` | Healthchecks do Compose (API e nginx) e espera do deploy Linux | Disponível |
 | `/alive` | Só checks com tag `live` (`self`) | Disponível; nenhum consumidor versionado | Disponível |
 
-Não existe coletor OTLP, Prometheus, Grafana, Jaeger, Zipkin, Application Insights ou similar no
-repositório. Para exportar telemetria num deploy, basta definir `OTEL_EXPORTER_OTLP_ENDPOINT`, que hoje
-não aparece no `compose.yaml` nem no `.env.example`.
+O único destino de telemetria versionado é o console do Aspire, só em memória e só no loopback. Não existe Prometheus, Grafana,
+Jaeger, Zipkin, Application Insights ou similar no repositório.
 
 ## Inicialização da API
 
@@ -247,28 +262,24 @@ Sequência em [`Program.cs`](../../src/Almirante.Api/Program.cs), relevante para
    cargos, administrador inicial e lançamento demonstrativo, se ainda não existirem
    ([ADR-0009](adr/0009-aplicar-migrations-na-inicializacao-da-api.md)).
 6. Sem `DbCredentials:AppUser`, audita os privilégios da identidade conectada (`DbPrivilegeCheck`).
-7. Começa a atender. Em segundo plano, rodam `AuthSessionCleanupService` (a cada 6 h) e, com
-   `DbCredentials:AppUser`, `DbCredentialRotationService` (padrão 24 h).
+7. Começa a atender. Em segundo plano, rodam `AuthSessionCleanupService` (a cada 6 h), `FotosCleanupService` (faxina diária das
+   fotos), `GravadorAuditoriaHttp` (diário → `auditoria_http`), `PublicadorAvisosNotificacoes` (outbox → SignalR),
+   `MonitorSessoesNotificacoes` (revalida as conexões do hub) e, com `DbCredentials:AppUser`, `DbCredentialRotationService`
+   (padrão 24 h).
 
 Premissa operacional: uma única instância da API por banco. Cada startup rotaciona a senha de runtime
 e aplica migrations ([ADR-0005](adr/0005-separar-identidades-sql-e-rotacionar-credenciais.md)).
 
 ## Superfície HTTP da API
 
-| Rota | Acesso |
-| --- | --- |
-| `GET /api/Auth/csrf`, `POST /api/Auth/login`, `POST /api/Auth/refresh`, `POST /api/Auth/logout` | anônimo, com antiforgery nos `POST` |
-| `GET /api/Auth/Me` | qualquer usuário autenticado |
-| `/api/Usuarios` (`GET`, `POST`, `PUT`, `DELETE` lógico), `GET /api/Cargos` | policy `GestaoCadastros` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`) |
-| `/api/Lancamentos` (`GET`, `POST Registrar`, `PUT`, `DELETE`) e `/api/Eventos` (`GET`, `POST`, `PUT`, `DELETE`) | policy `GestaoFinanceira` (mesmos cargos) |
-| `/health`, `/alive` | anônimo |
-| `/swagger` | anônimo; habilitado por padrão só em `Development`, ou por `Swagger:Enabled` |
+São 130 rotas REST em `/api/...`, o hub SignalR `/hubs/notificacoes`, `/health`, `/alive` e o Swagger (quando habilitado). A lista
+completa, com policy, código e testes de cada rota, está em [`rastreabilidade.md`](../rastreabilidade.md) (verificada por teste),
+e a matriz de acesso por cargo em [`authentication-security.md`](../authentication-security.md#perfis-e-matriz-de-acesso-31-127).
 
 Organização interna, sem detalhar componentes:
 
-- `Auth`, `Usuarios` e `Cargos` chamam serviços diretamente.
-- `Lancamentos` e `Eventos` passam pelo MediatR, com validação FluentValidation no pipeline
-  (`ValidationBehavior`), antes dos serviços.
+- `Auth` e `Cargos` chamam serviços diretamente; os demais controllers passam pelo MediatR, com validação FluentValidation no
+  pipeline (`ValidationBehavior`), antes dos serviços.
 - A persistência usa `AlmiranteDbContext` (EF Core) e SQL direto onde o comportamento depende do SQL
   Server: locks, `SESSION_CONTEXT` e exclusão lógica.
 - Erros saem em Problem Details (`ValidationExceptionHandler`, `ApiProblemExceptionHandler`).
@@ -280,7 +291,7 @@ aparecem nos diagramas acima.
 
 | Workflow | Gatilho | Onde roda | O que faz |
 | --- | --- | --- | --- |
-| [`backend-ci.yml`](../../.github/workflows/backend-ci.yml) | push e PR para `main` e `develop` | runners hospedados pelo GitHub | Build. Testes com InMemory (Windows). Testes com SQL Server 2022 descartável (Linux). Testes de scripts, Compose e nginx. Cobertura com quality gate. |
+| [`backend-ci.yml`](../../.github/workflows/backend-ci.yml) | push e PR para `main` e `develop` | runners hospedados pelo GitHub | Build. Testes sem dependências externas (Windows). Testes com SQL Server 2022 descartável (Linux). Testes de scripts, Compose e nginx. Cobertura unitária e combinada, com gate de 100% na combinada. |
 | [`codeql.yml`](../../.github/workflows/codeql.yml) | push e PR para `main` e `develop`, e semanal | runner hospedado | Análise CodeQL de C#. |
 | [`container-security.yml`](../../.github/workflows/container-security.yml) | push e PR para `main` e `develop`, e semanal | runner hospedado | Build da imagem da API, scan com Trivy e SBOM CycloneDX. |
 | [`backend-deploy.yml`](../../.github/workflows/backend-deploy.yml) | push em `develop` que altere backend ou infraestrutura | runners self-hosted: Linux (`popos-lucas`) e Windows | `docker compose up` no modo `http` ou `tls`, e publicação no IIS com nginx nativo. |
@@ -295,12 +306,12 @@ O Dependabot ([`.github/dependabot.yml`](../../.github/dependabot.yml)) abre PRs
 
 Não há, no repositório:
 
-- filas ou mensageria;
+- filas ou mensageria externas (as notificações usam outbox na própria linha e um `Channel` em processo);
 - cache distribuído;
-- balanceador de carga ou múltiplas réplicas da API;
-- integrações HTTP de saída;
-- provedor de identidade externo;
-- armazenamento de arquivos além do volume de chaves do Data Protection;
-- plataforma de observabilidade.
+- balanceador de carga ou múltiplas réplicas da API (premissa: uma instância por banco);
+- integrações HTTP de saída além do ViaCEP;
+- provedor de identidade externo ou envio de e-mail;
+- armazenamento de arquivos além das chaves do Data Protection, das fotos e do diário da auditoria HTTP;
+- plataforma de observabilidade além do console do Aspire em memória.
 
 Uma nova peça desse tipo deve entrar neste documento e, se for uma decisão arquitetural, num ADR.

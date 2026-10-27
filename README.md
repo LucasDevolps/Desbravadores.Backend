@@ -1089,7 +1089,7 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
 Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
 Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
 
-O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
+O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`). O job Linux só reporta sucesso quando o endpoint `/health` responde; o job Windows termina depois de publicar e deixa um aviso para conferir o `/health` manualmente (as migrations podem demorar mais que qualquer espera razoável do job).
 
 O deploy de `develop` continua construindo a imagem na própria máquina e não gera versão. Versões
 numeradas são publicadas pelo `.github/workflows/release.yml`, a partir de tags SemVer em `main`, em
