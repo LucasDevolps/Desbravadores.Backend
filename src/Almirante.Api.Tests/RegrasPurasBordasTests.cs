@@ -128,6 +128,16 @@ public sealed class RegrasPurasBordasTests
     }
 
     [Fact]
+    public void PedidoDeRecuperacao_SoUnicidadeDoSqlServerContaComoPedidoSimultaneo()
+    {
+        Assert.True(RecuperacaoSenhaService.ViolouUnicidade(SqlExceptionDeTeste.Criar(2601)));
+        Assert.True(RecuperacaoSenhaService.ViolouUnicidade(SqlExceptionDeTeste.Criar(2627)));
+        Assert.False(RecuperacaoSenhaService.ViolouUnicidade(SqlExceptionDeTeste.Criar(547)));
+        Assert.False(RecuperacaoSenhaService.ViolouUnicidade(new InvalidOperationException("não é do SQL Server")));
+        Assert.False(RecuperacaoSenhaService.ViolouUnicidade(null));
+    }
+
+    [Fact]
     public void Email_AusenteNaoEValido_ELongoDemaisNaoCabeNaColuna()
     {
         Assert.False(UsuariosService.EmailValido(null));
