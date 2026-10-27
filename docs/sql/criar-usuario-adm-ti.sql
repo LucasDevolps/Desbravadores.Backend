@@ -167,6 +167,14 @@ CREATE OR ALTER VIEW [ti].[AuthSessions] AS
     SELECT Id, UsuarioId, CreatedAtUtc, LastRenewedAtUtc, AbsoluteExpiresAtUtc, RevokedAtUtc, RevocationReason
     FROM dbo.AuthSessions;
 GO
+-- Auditoria HTTP (issue #158): conteúdo já sanitizado na gravação (docs/auditoria-http.md). Só existe depois da migration
+-- AddAuditoriaHttp; antes dela, a view não é criada e o resto do script segue igual.
+IF OBJECT_ID(N'dbo.auditoria_http', N'U') IS NOT NULL
+    EXEC(N'CREATE OR ALTER VIEW [ti].[auditoria_http] AS
+    SELECT Id, Url, MetodoHttp, Request, Response, StatusCode, Headers, Exception, DataRequestUtc, DuracaoMs, IpUsuario,
+           IdentificacaoUsuario, TraceId, EstadoCapturaRequest, EstadoCapturaResponse
+    FROM dbo.auditoria_http;');
+GO
 
 GRANT SELECT ON SCHEMA::[ti] TO [almirante_ti_leitura];
 -- Defesa em profundidade: nenhuma leitura direta das tabelas, mesmo que alguém conceda algo por engano.

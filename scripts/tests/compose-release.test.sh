@@ -71,6 +71,11 @@ for combo in "-f compose.yaml -f compose.release.yaml" "-f compose.yaml -f compo
   if grep -q 'target: /var/lib/almirante/fotos' <<<"$api" && grep -q 'Media__Storage__Path: /var/lib/almirante/fotos' <<<"$api"; then
     ok "volume e pasta das fotos preservados ($combo)"
   else falha "fotos ($combo)" "$api"; fi
+  # Auditoria HTTP (issue #158): o diário de pendentes fica num volume nomeado, para sobreviver a redeploy.
+  if grep -B2 -A2 'target: /var/lib/almirante/auditoria-http' <<<"$api" | grep -q 'source: almirante-auditoria-http' \
+    && grep -q 'AuditoriaHttp__DiretorioPendentes: /var/lib/almirante/auditoria-http' <<<"$api"; then
+    ok "volume do diário da auditoria HTTP preservado ($combo)"
+  else falha "auditoria HTTP ($combo)" "$api"; fi
 done
 
 # 4. O overlay não fixa tag móvel nem imagem padrão.

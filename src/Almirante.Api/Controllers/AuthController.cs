@@ -23,7 +23,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     public IActionResult Csrf() => Ok(new { csrfToken = antiforgery.GetAndStoreTokens(HttpContext).RequestToken });
 
     [HttpPost("login"), AllowAnonymous, ValidateAntiForgeryToken]
-    [EnableRateLimiting(LoginRateLimiting.PolicyName)]
+    [EnableRateLimiting(LoginRateLimiting.PolicyName), SemAuditoriaHttp]
     [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]

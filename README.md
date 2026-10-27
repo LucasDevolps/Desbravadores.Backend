@@ -896,6 +896,27 @@ com nova tentativa e retomada após reinício. A API REST é a fonte da verdade.
 IIS) e o runtime mínimo (ASP.NET Core 10.0.13, garantido pelo `Dockerfile` e pelo deploy Windows) estão
 no documento.
 
+## Auditoria HTTP (issue #158)
+
+A API grava na tabela `auditoria_http` uma linha por chamada HTTP que chega ao pipeline: sucesso,
+redirecionamento, validação, 401, 403, 404, 429, exceções, health checks, Swagger e o HTTP do hub
+SignalR. Não há amostragem. O login (`/api/Auth/login`) fica totalmente fora. Cada linha traz a URL, o
+método, o status, a duração, o IP observado depois do proxy confiável, o id do usuário autenticado (ou
+`ANONIMO`), o trace, os cabeçalhos permitidos, os corpos e a exceção.
+
+Tudo é sanitizado antes de sair da memória da requisição, por uma lista explícita de campos revisados.
+CPF, e-mail, telefone, dados de responsáveis, RG, saúde, endereço, fotos, arquivos, senhas, tokens e
+cookies nunca são gravados, nem em caminho, query, cabeçalho, corpo ou exceção. As rotas de credenciais
+gravam só metadados.
+
+Os registros passam por um diário em disco antes do banco. Por isso sobrevivem a banco fora do ar, a
+reinício e ao rollback do negócio, sem duplicar. A tabela só aceita inserção.
+
+O guia completo está em [`docs/auditoria-http.md`](docs/auditoria-http.md): política de sanitização,
+estados de captura, limites de cobertura, garantia de entrega, configuração (`AuditoriaHttp:*`, todas
+opcionais), custos e consultas. A decisão está no
+[ADR-0015](docs/architecture/adr/0015-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
+
 ## Banco de dados e migrations
 
 Migrations são aplicadas incrementalmente no startup.
@@ -1075,7 +1096,9 @@ O projeto `Almirante.ServiceDefaults` configura:
 - `/health` para readiness;
 - `/alive` para liveness.
 
-As requisições aos health checks são excluídas dos traces.
+As requisições aos health checks são excluídas dos traces. O `/health` inclui a verificação
+`auditoria-http`, que fica `Degraded` (ainda 200) quando a auditoria HTTP perde garantias: diário em
+disco indisponível, banco recusando a gravação ou registros descartados ([`docs/auditoria-http.md`](docs/auditoria-http.md)).
 
 ### Console do Aspire nos deploys
 
