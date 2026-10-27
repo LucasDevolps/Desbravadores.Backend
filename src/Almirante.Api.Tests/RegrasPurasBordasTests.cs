@@ -127,6 +127,48 @@ public sealed class RegrasPurasBordasTests
             "Teste", null, _ => Task.FromResult(1), ApiProblemException.Conflict("Conflito."), default));
     }
 
+    private sealed class DeteccaoDeCorpo(bool podeTer) : Microsoft.AspNetCore.Http.Features.IHttpRequestBodyDetectionFeature
+    {
+        public bool CanHaveBody => podeTer;
+    }
+
+    [Fact]
+    public void Auditoria_CorpoSemContentLengthNemChunked_SoNoHttp2ComCorpoDetectado()
+    {
+        static HttpRequest Requisicao(string protocolo, bool? podeTerCorpo)
+        {
+            var contexto = new DefaultHttpContext();
+            contexto.Request.Protocol = protocolo;
+            if (podeTerCorpo is { } pode) contexto.Features.Set<Microsoft.AspNetCore.Http.Features.IHttpRequestBodyDetectionFeature>(new DeteccaoDeCorpo(pode));
+            return contexto.Request;
+        }
+
+        Assert.False(ChamadaAuditada.TemCorpo(Requisicao("HTTP/1.1", true)));
+        Assert.True(ChamadaAuditada.TemCorpo(Requisicao("HTTP/2", true)));
+        Assert.False(ChamadaAuditada.TemCorpo(Requisicao("HTTP/2", false)));
+        Assert.False(ChamadaAuditada.TemCorpo(Requisicao("HTTP/2", null)));
+    }
+
+    [Fact]
+    public void Auditoria_PrincipalAutenticadoSemIdDeUsuario_ContaComoAnonimo()
+    {
+        var contexto = new DefaultHttpContext
+        {
+            User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity([new System.Security.Claims.Claim("role", "DS")], "Teste")),
+        };
+        Assert.Equal(AuditoriaHttp.Anonimo, ChamadaAuditada.Usuario(contexto));
+    }
+
+    [Fact]
+    public void LockDoPasseio_RetornoDoSqlServer_ConcedidoErroDeParametroOuEmUso()
+    {
+        var grupo = Guid.NewGuid();
+        EventosService.ConferirLockDoGrupo(0, grupo, NullLogger.Instance);
+        Assert.Throws<InvalidOperationException>(() => EventosService.ConferirLockDoGrupo(-999, grupo, NullLogger.Instance));
+        Assert.Equal(StatusCodes.Status409Conflict,
+            Assert.Throws<ApiProblemException>(() => EventosService.ConferirLockDoGrupo(-1, grupo, NullLogger.Instance)).Status);
+    }
+
     [Fact]
     public void PedidoDeRecuperacao_SoUnicidadeDoSqlServerContaComoPedidoSimultaneo()
     {

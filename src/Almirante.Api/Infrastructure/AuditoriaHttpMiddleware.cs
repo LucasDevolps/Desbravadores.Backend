@@ -361,7 +361,7 @@ internal sealed partial class ChamadaAuditada
     }
 
     /// <summary>HTTP/1.x só tem corpo com Content-Length ou Transfer-Encoding; HTTP/2 e 3 dizem pelo próprio protocolo.</summary>
-    private bool TemCorpo(HttpRequest request)
+    internal static bool TemCorpo(HttpRequest request)
     {
         if (request.ContentLength is { } tamanho)
         {
@@ -374,7 +374,7 @@ internal sealed partial class ChamadaAuditada
         }
 
         return !HttpProtocol.IsHttp10(request.Protocol) && !HttpProtocol.IsHttp11(request.Protocol)
-            && Contexto.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
+            && request.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
     }
 
     private string MontarUrl(HttpContext context)
@@ -397,7 +397,7 @@ internal sealed partial class ChamadaAuditada
 
     private int Duracao() => (int)Math.Min(int.MaxValue, _tempo.GetElapsedTime(_inicio).TotalMilliseconds);
 
-    private static string Usuario(HttpContext context) =>
+    internal static string Usuario(HttpContext context) =>
         context.User.Identity?.IsAuthenticated == true && context.User.TentarObterUsuarioId(out var id) ? id.ToString("D") : AuditoriaHttp.Anonimo;
 
     /// <summary>IP já resolvido por UseForwardedHeaders (nunca lido de X-Forwarded-For aqui); sem escopo de interface IPv6.</summary>
