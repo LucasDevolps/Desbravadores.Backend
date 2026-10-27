@@ -869,6 +869,31 @@ Tesoureiro, instrutor e demais cargos só consultam os catálogos e a própria f
 só com `SELECT` para o runtime) sem alterar dados existentes. Não há carga inicial de especialidades nem de cartões de
 requisitos: o clube os cadastra a partir da fonte oficial, como explicado nas limitações do documento.
 
+## Patrimônio e lista de desejos do almoxarifado (issue #126)
+
+Gestão patrimonial do clube e lista de desejos do almoxarifado:
+- cadastro de bens físicos com tombo gerado pelo sistema, incluindo bens sem valor comercial e acervo antigo com
+  data de aquisição desconhecida;
+- empréstimos com atraso calculado, devoluções, perda ou furto, manutenção, baixa justificada e exclusão lógica;
+- histórico por trigger, relatórios em JSON e CSV, e inventário imutável com registro posterior da votação da Comissão;
+- necessidades de aquisição com três níveis de urgência e atendimentos parciais idempotentes, que criam ou vinculam
+  os bens recebidos.
+
+Nada disso gera lançamento financeiro nem altera o dashboard. O contrato completo está em
+[`docs/almoxarifado.md`](docs/almoxarifado.md) e a decisão, no
+[ADR-0015](docs/architecture/adr/0015-gerir-patrimonio-e-lista-de-desejos-com-auditoria-por-trigger.md).
+
+| Rotas | Quem |
+|---|---|
+| `GET /api/Almoxarifado/…` (bens, empréstimos, inventários, desejos, históricos, relatórios, CSV, enums, responsáveis) | `ConsultaAlmoxarifado`: qualquer cargo ativo exceto DS, e o responsável designado |
+| escrita em `/api/Almoxarifado/Bens…`, `Emprestimos…`, `Manutencoes…`, `Inventarios…`, `Desejos…` | `GestaoAlmoxarifado`: ADM, DIR, DIRA, SEC, ALM e o responsável designado |
+| `POST /api/Almoxarifado/Responsaveis…` (designar/revogar) | `DesignacaoAlmoxarifado`: ADM, DIR, DIRA, SEC |
+
+A migration `AddAlmoxarifadoPatrimonio` cria dez tabelas, os triggers de histórico (`almoxarifado_historico`, tabela de
+auditoria só com `SELECT` para o runtime) e os triggers de imutabilidade do inventário. Ela só altera dados numa
+instalação já semeada sem o cargo `ALM`: nesse caso, cria o cargo `Almoxarife` (`ALM`). Nenhuma variável de ambiente
+nova.
+
 ## Notificações (issue #130)
 
 Cada usuário autenticado (inclusive desbravadores) consulta e marca como lidas **as próprias**
@@ -915,7 +940,7 @@ reinício e ao rollback do negócio, sem duplicar. A tabela só aceita inserçã
 O guia completo está em [`docs/auditoria-http.md`](docs/auditoria-http.md): política de sanitização,
 estados de captura, limites de cobertura, garantia de entrega, configuração (`AuditoriaHttp:*`, todas
 opcionais), custos e consultas. A decisão está no
-[ADR-0015](docs/architecture/adr/0015-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
+[ADR-0016](docs/architecture/adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
 
 ## Banco de dados e migrations
 
