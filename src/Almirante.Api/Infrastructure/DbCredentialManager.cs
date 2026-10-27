@@ -63,7 +63,7 @@ public sealed partial class DbCredentialManager(
             }
 
             ClearPool(previous);
-            await VerifyLeastPrivilegeAsync(user, cancellationToken);
+            await VerifyLeastPrivilegeAsync(user, provider.Current!, cancellationToken);
             logger.LogInformation("Senha do usuário SQL da aplicação ({User}) rotacionada.", user);
         }
         finally
@@ -114,17 +114,19 @@ public sealed partial class DbCredentialManager(
 
     private static InvalidOperationException Sanitize(SqlException exception, string action, string? secret)
     {
-        var hint = exception.Number switch
-        {
-            18456 or 4060 => " Confirme SQL_ADMIN_USER/SQL_ADMIN_PASSWORD e execute o bootstrap (docs/sql/criar-usuario-admin-app.sql; no Compose, o serviço sql-bootstrap).",
-            15151 or 15247 or 229 or 262 or 297 => " A identidade administrativa não tem a permissão prevista: reaplique o bootstrap (docs/sql/criar-usuario-admin-app.sql).",
-            51001 => " Execute o bootstrap (docs/sql/criar-usuario-admin-app.sql; no Compose, o serviço sql-bootstrap).",
-            _ => string.Empty,
-        };
-        var text = $"Falha ao {action} (erro SQL {exception.Number}, estado {exception.State}).{hint}";
+        var text = $"Falha ao {action} (erro SQL {exception.Number}, estado {exception.State}).{DicaDeDiagnostico(exception.Number)}";
         if (!string.IsNullOrEmpty(secret)) text = text.Replace(secret, "***", StringComparison.Ordinal);
         return new InvalidOperationException(text);
     }
+
+    /// <summary>Orientação ao operador para os erros SQL esperados da identidade administrativa (texto anexado à mensagem sanitizada).</summary>
+    public static string DicaDeDiagnostico(int numeroErroSql) => numeroErroSql switch
+    {
+        18456 or 4060 => " Confirme SQL_ADMIN_USER/SQL_ADMIN_PASSWORD e execute o bootstrap (docs/sql/criar-usuario-admin-app.sql; no Compose, o serviço sql-bootstrap).",
+        15151 or 15247 or 229 or 262 or 297 => " A identidade administrativa não tem a permissão prevista: reaplique o bootstrap (docs/sql/criar-usuario-admin-app.sql).",
+        51001 => " Execute o bootstrap (docs/sql/criar-usuario-admin-app.sql; no Compose, o serviço sql-bootstrap).",
+        _ => string.Empty,
+    };
 
     private void ClearPool(SqlCredential? previous)
     {
@@ -179,9 +181,9 @@ public sealed partial class DbCredentialManager(
             """;
     }
 
-    private async Task VerifyLeastPrivilegeAsync(string user, CancellationToken cancellationToken)
+    /// <param name="credential">A credencial que acabou de ser publicada no provider, sob o mesmo lock da rotação.</param>
+    private async Task VerifyLeastPrivilegeAsync(string user, SqlCredential credential, CancellationToken cancellationToken)
     {
-        var credential = provider.Current ?? throw new InvalidOperationException("Credencial de runtime ausente.");
         try
         {
             await using var connection = new SqlConnection(GetRuntimeConnectionString(), credential);
