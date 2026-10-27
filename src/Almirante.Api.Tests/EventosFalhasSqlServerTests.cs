@@ -9,48 +9,15 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
-/// <summary>Falhas que só aparecem sob concorrência real; aqui são injetadas na hora certa para o resultado ser determinístico.</summary>
-public sealed class FalhasInjetaveisDeEventos : SaveChangesInterceptor
-{
-    private Func<Exception>? _proximoSave;
-    private Func<string, bool>? _comandoSemEfeito;
-
-    public void FalharProximoSave(Func<Exception> excecao) => _proximoSave = excecao;
-
-    /// <summary>O próximo comando que passar no filtro roda sem efeito (como se outra transação tivesse alterado a linha antes).</summary>
-    public void AnularProximoComando(Func<string, bool> filtro) => _comandoSemEfeito = filtro;
-
-    public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result,
-        CancellationToken cancellationToken = default)
-    {
-        if (Interlocked.Exchange(ref _proximoSave, null) is { } excecao) throw excecao();
-        return ValueTask.FromResult(result);
-    }
-
-    public sealed class Comandos(FalhasInjetaveisDeEventos falhas) : DbCommandInterceptor
-    {
-        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command, CommandEventData eventData,
-            InterceptionResult<int> result, CancellationToken cancellationToken = default)
-        {
-            if (falhas._comandoSemEfeito is { } filtro && filtro(command.CommandText))
-            {
-                falhas._comandoSemEfeito = null;
-                command.CommandText = "SELECT 1 WHERE 1 = 0";
-            }
-            return ValueTask.FromResult(result);
-        }
-    }
-}
-
 public sealed class EventosFalhasFixture : IAsyncLifetime
 {
-    public FalhasInjetaveisDeEventos Falhas { get; } = new();
+    public FalhasInjetaveisNoBanco Falhas { get; } = new();
     public SqlServerApiFactory Factory { get; private set; } = null!;
     public HttpClient Client { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
-        Factory = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(Falhas, new FalhasInjetaveisDeEventos.Comandos(Falhas)));
+        Factory = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(Falhas, new FalhasInjetaveisNoBanco.Comandos(Falhas)));
         Client = await TestHelpers.CreateAuthenticatedClientAsync(Factory);
     }
 
