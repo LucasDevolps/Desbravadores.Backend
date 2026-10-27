@@ -4,7 +4,8 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 
 Backend (API HTTP) do projeto **Almirante**, que centraliza a gestão dos Desbravadores:
-autenticação e gestão de usuários, eventos com cobranças por membro e lançamentos financeiros.
+autenticação e gestão de usuários, senhas, eventos com cobranças por membro, lançamentos financeiros, dashboard,
+notificações em tempo real, formação (classes e especialidades), almoxarifado e auditoria HTTP.
 
 - **Stack:** .NET 10 / ASP.NET Core, SQL Server com Entity Framework Core, autenticação JWT Bearer.
 - **Estado:** MVP funcional, com CI no GitHub Actions — detalhes em [Estado atual](#estado-atual).
@@ -15,12 +16,14 @@ autenticação e gestão de usuários, eventos com cobranças por membro e lanç
 O backend está em fase de **MVP funcional** e possui:
 
 - login com e-mail e senha e emissão de token JWT;
+- cadastro, edição, exclusão lógica e listagem de usuários (CPF, RG/CIN, endereço consultado no ViaCEP, responsável, saúde e foto),
+  com histórico por trigger;
+- troca de senha própria e de terceiros por matriz de cargos, e recuperação assistida sem e-mail ([`docs/senhas.md`](docs/senhas.md));
 - consulta dos dados do usuário autenticado e autoatendimento (dados pessoais, foto e eventos do próprio usuário);
 - permissões por perfil (cadastros, financeiro, eventos, painel e autoatendimento) com hierarquia de cargos;
 - acompanhamento de classes (regulares, avançadas e de liderança) e especialidades por membro, requisito por requisito,
   com revisões de requisitos, conclusão, investidura/entrega, registros históricos e relatórios;
 - sessões persistidas, refresh rotativo e logout com revogação efetiva;
-- listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
 - registro e correção do pagamento efetivo (data e valor liquidados) de cada lançamento;
 - dashboard administrativo com saldo realizado, entradas, saídas, desbravadores ativos e próximos eventos;
@@ -31,12 +34,16 @@ O backend está em fase de **MVP funcional** e possui:
 - validação dos dados recebidos e respostas de erro no padrão Problem Details;
 - migrações do banco executadas na inicialização;
 - carga inicial idempotente de um administrador e de lançamentos demonstrativos;
-- Swagger/OpenAPI com suporte a Bearer Token, disponível em todos os ambientes;
+- Swagger/OpenAPI com suporte a Bearer Token, ligado por padrão só em Development (`Swagger:Enabled` / `SWAGGER_ENABLED`);
+- patrimônio e lista de desejos do almoxarifado ([`docs/almoxarifado.md`](docs/almoxarifado.md));
+- auditoria de toda chamada HTTP com sanitização e diário em disco ([`docs/auditoria-http.md`](docs/auditoria-http.md));
 - health checks de prontidão e atividade;
-- telemetria com OpenTelemetry por meio do Service Defaults do Aspire;
+- telemetria com OpenTelemetry por meio do Service Defaults do Aspire, exportada para o console do Aspire nos deploys;
 - Nginx como reverse proxy no Docker Compose, com rate limit no login e encaminhamento do IP real do cliente;
 - execução local com Docker Compose ou .NET Aspire;
-- testes de integração da autenticação, dos lançamentos e do encaminhamento de IP real;
+- testes unitários, de componente e de integração com SQL Server real, cobertura de 100% de linhas e branches na medição
+  combinada como gate do CI ([`docs/test-coverage.md`](docs/test-coverage.md)) e matriz de rastreabilidade
+  ([`docs/rastreabilidade.md`](docs/rastreabilidade.md));
 - integração contínua com GitHub Actions em runners hospedados e descartáveis.
 - releases SemVer a partir de tags, com a imagem da API publicada no GHCR e rollback por digest.
 
@@ -72,13 +79,22 @@ O backend está em fase de **MVP funcional** e possui:
 │       └── release.yml             # release: tag SemVer → imagem no GHCR + GitHub Release
 ├── src/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
-│   ├── Almirante.Api.Tests/        # testes de integração
+│   ├── Almirante.Api.Tests/        # testes unitários, de componente e de integração (SQL Server real)
 │   ├── Almirante.AppHost/          # orquestração local com Aspire
 │   ├── Almirante.ServiceDefaults/  # health checks, telemetria e service discovery
+│   ├── coverage.runsettings        # coleta de cobertura (Coverlet)
+│   ├── coverage-baseline*.json     # gates de cobertura combinada (100%) e unitária
 │   └── Almirante.slnx
+├── docs/                           # guias por módulo, segurança, cobertura, rastreabilidade, arquitetura (C4 e ADRs), SQL
 ├── nginx/
-│   └── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
+│   ├── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
+│   ├── https.conf                  # listener HTTPS local (compose.https.yaml)
+│   ├── nginx.tls.conf              # ambiente publicado com certificado real (compose.tls.yaml)
+│   └── nginx.windows.conf          # nginx nativo do deploy Windows/IIS
+├── scripts/                        # bootstrap SQL, preflight do deploy, cobertura e seus testes (scripts/tests)
 ├── compose.yaml
+├── compose.https.yaml              # overlay: HTTPS local com certificado autoassinado
+├── compose.tls.yaml                # overlay: TLS publicado com certificado real
 ├── compose.release.yaml            # overlay: API a partir da imagem de uma release (GHCR)
 ├── .env.example
 ├── CONTRIBUTING.md
@@ -124,7 +140,7 @@ Com os valores do `.env.example`, os serviços ficam disponíveis em:
 
 - API (HTTPS, obrigatório para autenticação): `https://localhost:8443`;
 - API (HTTP): `http://localhost:8090`;
-- Swagger: `http://localhost:8090/swagger`;
+- Swagger: `http://localhost:8090/swagger` (só em Development ou com `SWAGGER_ENABLED=true`);
 - readiness: `http://localhost:8090/health`;
 - liveness: `http://localhost:8090/alive`;
 - SQL Server: `localhost,14330`.
@@ -338,13 +354,21 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.https.yaml` (desenvolvimento local, certificado autoassinado) | `8443` |
 | `NGINX_CONF_FILE` | arquivo em `nginx/` montado como config do nginx; `nginx.tls.conf` ativa TLS publicado (redirect 80→443) com `compose.tls.yaml` | `nginx.conf` |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | caminhos, fora do Git, do certificado/chave privada reais montados por `compose.tls.yaml` | obrigatórias só com `compose.tls.yaml` |
-| `TLS_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.tls.yaml` (ambiente publicado, certificado real) | `443` |
+| `DEPLOY_MODE` | modo do deploy Linux: `http`, `https` (HTTPS local em `API_HTTPS_HOST_PORT`) ou `tls` (`compose.tls.yaml`) | `http` |
+| `TLS_PUBLIC_HOST` | nome DNS do certificado real; o nginx só aceita esse host no modo `tls` (a porta HTTPS é sempre 443) | obrigatória só com `compose.tls.yaml` |
+| `API_ALLOWED_HOSTS` | `AllowedHosts` da API; defina num ambiente publicado em modo `http` | `*` |
+| `SQL_BIND_ADDRESS` | interface onde a porta do SQL Server é publicada | `127.0.0.1` |
+| `SQL_REQUIRE_TRUSTED_CERTIFICATE` | com `compose.tls.yaml`, exige certificado confiável do SQL Server (`TrustServerCertificate=False`) | `true` no overlay TLS |
+| `SWAGGER_ENABLED` | liga/desliga o Swagger; vazio segue o padrão (ligado só em Development) | vazio (`false` no overlay TLS) |
+| `FOTOS_HOST_PATH` | pasta do host para as fotos de usuários; sem ela, o volume nomeado `almirante-fotos` | `almirante-fotos` |
+| `ASPIRE_DASHBOARD_HOST_PORT` | porta do console do Aspire, só em `127.0.0.1` | `18888` |
 | `API_TRUSTED_PROXY_CIDR` | rede (CIDR) confiável para os headers X-Forwarded-For/X-Forwarded-Proto enviados pelo nginx; deve corresponder à subnet de `almirante-net` no `compose.yaml` | `172.30.0.0/24` |
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
 | `JWT_AUDIENCE` | audiência do token JWT | `Almirante.Frontend` |
 | `JWT_ACTIVE_KEY_ID` | `kid` usado para novas assinaturas | `v1` |
 | `JWT_KEY_V1` | chave HS256 Base64 associada a `v1` | obrigatória |
+| `JWT_KEY_V2` | segunda chave, só durante/depois de uma rotação ([`docs/authentication-security.md`](docs/authentication-security.md#rotação-de-valores-expostos-pendência-operacional)) | vazia |
 | `JWT_ACCESS_TOKEN_MINUTES` | duração máxima do access token | `10` |
 | `AUTH_SESSION_DAYS` | limite absoluto da sessão | `7` |
 | `AUTH_REFRESH_INACTIVITY_HOURS` | inatividade máxima entre login/refresh | `24` |
@@ -355,7 +379,7 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
 | `CORS_ORIGIN_1` | primeira origem permitida pelo CORS | `http://localhost:4200` |
 | `CORS_ORIGIN_2` | segunda origem permitida pelo CORS | `http://localhost:4201` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint opcional para exportação OTLP | não definido |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint OTLP; o Compose aponta para o console do Aspire (`http://aspire-dashboard:18889`) | definido pelo `compose.yaml` |
 
 A chave decodificada deve possuir pelo menos 32 bytes aleatórios e ser diferente em cada ambiente.
 
@@ -388,7 +412,19 @@ Troca de senha de outro usuário e recuperação assistida (`/api/Usuarios/{id}/
 `/api/Usuarios/{id}/recuperacao-senha/autorizacao`) seguem uma matriz explícita (ADM e DIR → SEC, TES e DS; SEC → DS), confirmada com a
 senha do responsável. Política de senha (15 a 128 caracteres), auditoria, concorrência, notificação e limites em
 [`docs/senhas.md`](docs/senhas.md). Nenhum e-mail é enviado: não há provedor configurado.
+
+Cadastros, autoatendimento e rotas de apoio (a lista completa de rotas, com código e testes, está em
+[`docs/rastreabilidade.md`](docs/rastreabilidade.md)):
+
+| Método | Rota | Comportamento |
+| --- | --- | --- |
 | `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC) |
+| `POST` | `/api/Usuarios` | cadastra um usuário (`201`; CPF obrigatório e único, RG conforme `ehCin`, endereço pelo ViaCEP) |
+| `PUT` | `/api/Usuarios/{id}` | atualiza; campo omitido mantém o valor, `null` remove (regras abaixo) |
+| `DELETE` | `/api/Usuarios/{id}` | exclusão lógica: inativa o usuário e revoga as sessões dele |
+| `POST` | `/api/Usuarios/{usuarioId}/alterar-senha` | troca a senha de outro usuário pela matriz de cargos ([`docs/senhas.md`](docs/senhas.md)) |
+| `GET` | `/api/Usuarios/recuperacao-senha/pendentes` | pedidos de recuperação que o responsável pode atender |
+| `POST` | `/api/Usuarios/{usuarioId}/recuperacao-senha/autorizacao` | emite a autorização de recuperação entregue pessoalmente |
 | `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`; ADM, DIR, DIRA, SEC) |
 | `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API; ADM, DIR, DIRA, SEC) |
 | `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto (ADM, DIR, DIRA, SEC) |
@@ -968,47 +1004,45 @@ antiga e nova da API simultaneamente contra o schema convertido.
 ## Testes
 
 ```bash
-dotnet test src/Almirante.slnx
+dotnet test src/Almirante.slnx --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"   # sem dependências externas
+ALMIRANTE_TEST_SQLSERVER="..." dotnet test src/Almirante.slnx --filter "Category=RequiresSqlServer" # SQL Server real
 ```
 
-A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
-conflito de chave, soft delete, contrato de login/`/Me`, validação do JWT (assinatura, emissor,
-audiência, algoritmo, expiração, tamanho), matriz RBAC (401/403/sucesso por cargo), rate limiting e
-lockout, forwarded headers, segredos/política de senha, cabeçalhos de segurança e descoberta das
-migrations.
+O projeto `src/Almirante.Api.Tests` tem duas suítes:
 
-Os testes de eventos (`EventosRegrasTests`, `EventosApiTests`) e `ModelBindingErrorsTests` (sanitização dos erros `400` de
-model binding, sem nomes de tipos CLR) rodam sem banco; `EventosSqlServerTests`,
-`EventosMigrationTests` e `ApiProcessEventosTests` (`Category=RequiresSqlServer`) exigem `ALMIRANTE_TEST_SQLSERVER`
-e provam transação/rollback, `rowversion`, índice único filtrado, triggers, `SESSION_CONTEXT`, concorrência,
-Up/Down da migration e o fluxo no processo real da API com a identidade de runtime de menor privilégio.
-A corrida entre mudança de status de um lançamento e o PUT que remove o participante também é coberta: o status nunca
-é gravado em lançamento já desativado (o `Ativo` é relido do banco depois do lock do evento).
+- **Sem dependências externas** (~1.380 casos, job `build-and-test`): regras e validadores puros, e a API em processo
+  (`WebApplicationFactory`) com EF InMemory e ViaCEP simulado: contratos HTTP, matriz de autorização por cargo (`AuthorizationTests`),
+  JWT, CSRF, rate limit e lockout, cabeçalhos de segurança, forwarded headers, auditoria HTTP (sanitização, diário em disco,
+  resiliência), fotos, notificações, CLI de reset de senha, startup e serviços em segundo plano com relógio manual.
+- **`Category=RequiresSqlServer`** (~450 casos, job `sqlserver-integration`): SQL Server 2022 real, com migrations completas (inclusive
+  o `Down` de todas até o banco vazio), triggers de auditoria e `SESSION_CONTEXT`, transações e rollback, `rowversion`,
+  `sp_getapplock`, índices únicos filtrados, concorrência e corridas injetadas, identidades SQL de menor privilégio e a API no
+  processo real (`ApiProcess*`).
 
-Sem `ALMIRANTE_TEST_SQLSERVER`, todos os testes `RequiresSqlServer` falham de propósito com `Defina ALMIRANTE_TEST_SQLSERVER`
-(no `dotnet test` puro isso aparece como ~145 falhas). Para rodar localmente sem tocar na instância do Windows, use um SQL Server
-descartável em contêiner e a conexão `sa` no formato do CI:
+A medição de cobertura (unitária separada da combinada, gate de 100% na combinada) está em
+[`docs/test-coverage.md`](docs/test-coverage.md), e a matriz que liga cada endpoint e regra aos testes em
+[`docs/rastreabilidade.md`](docs/rastreabilidade.md) (verificada por `RastreabilidadeTests`).
+
+Sem `ALMIRANTE_TEST_SQLSERVER`, os testes `RequiresSqlServer` falham de propósito com `Defina ALMIRANTE_TEST_SQLSERVER`. Para rodá-los
+localmente sem tocar na instância do Windows, use um SQL Server descartável em contêiner e a conexão `sa` no formato do CI:
 
 ```bash
-ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx
+ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True"   dotnet test src/Almirante.slnx --filter Category=RequiresSqlServer -- xUnit.MaxParallelThreads=2
 ```
 
-Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
-lockout concorrente, corrida login/reset, modelo de identidades SQL sem `sa`, rotação de senha com pools,
-privilégios e auditoria por trigger, startup real da API). Cada teste cria e remove bancos exclusivos e os
-usuários/logins de teste. A conexão de `ALMIRANTE_TEST_SQLSERVER` é do *harness* (cria e remove o ambiente, como o
-bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o CI usa um contêiner com `sa` descartável).
-A API sob teste nunca usa essa conexão. Exemplo com Windows Auth:
+Cada teste cria e remove bancos exclusivos e os usuários/logins de teste. A conexão de `ALMIRANTE_TEST_SQLSERVER` é do *harness* (cria e
+remove o ambiente, como o bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o CI usa um contêiner com `sa`
+descartável). A API sob teste nunca usa essa conexão. Com pouca memória (SQL Server no WSL com ~4 GB), rode essa suíte sozinha e com
+`MaxParallelThreads=2`.
 
-```bash
-ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx --filter Category=RequiresSqlServer
-```
+Os scripts de infraestrutura têm testes próprios (`scripts/tests/*.test.sh`, job `deploy-scripts`), inclusive o nginx real com HTTP,
+HTTPS, TLS e o `429` do login (`nginx.test.sh`).
 
 ### Cenários manuais do rate limit do Nginx
 
-O rate limit em si (`limit_req` do Nginx) não é coberto pela suíte automatizada acima — ela roda
-sobre `WebApplicationFactory`, sem o Nginx. Depois de `docker compose up --build`, valide
-manualmente contra `http://localhost:8090` (ajuste para o valor de `API_HOST_PORT` se alterado):
+O rate limit em si (`limit_req` do Nginx) não é coberto pela suíte .NET, que roda sem o Nginx; `scripts/tests/nginx.test.sh`
+o verifica em contêineres descartáveis (HTTP, HTTPS e `429`). Para conferir um ambiente já publicado, depois de
+`docker compose up --build`, valide manualmente contra `http://localhost:8090` (ajuste para o valor de `API_HOST_PORT` se alterado):
 
 1. **Login válido** — 1ª tentativa com credenciais corretas → `200 OK` e token JWT.
 2. **Credenciais inválidas** — 1ª tentativa incorreta → `401 Unauthorized` (nunca `429`).
@@ -1047,9 +1081,9 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
   com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
 - `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
   com certificados de teste e containers descartáveis.
-- `coverage`: consolida a cobertura (Coverlet) das duas suítes de teste com o ReportGenerator, mostra
-  linhas e branches no Job Summary, publica o relatório HTML/Cobertura (`coverage-<sha>`) e aplica um
-  quality gate contra regressão em relação ao baseline medido. Detalhes, baseline e política em
+- `coverage`: publica a cobertura unitária (só a suíte sem dependências) separada da combinada (as duas suítes,
+  unidas pelo OpenCover), com as lacunas por arquivo no Job Summary e os relatórios no artifact `coverage-<sha>`. A
+  combinada exige **100% de linhas e branches**; a unitária não pode regredir. Detalhes em
   [docs/test-coverage.md](docs/test-coverage.md).
 
 Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
@@ -1073,7 +1107,8 @@ branch, `enforcement: active`). As demais branches (`feature/*`, `fix/*`, `chore
 - Não há aprovação humana obrigatória (0 aprovações) enquanto o projeto é mantido
   individualmente; o quality gate é o CI.
 - Checks obrigatórios, todos verdes, publicados pelo GitHub Actions: `build-and-test`,
-  `sqlserver-integration` e `deploy-scripts`. Os jobs de `backend-deploy.yml` não são checks de PR.
+  `sqlserver-integration` e `deploy-scripts`. O `coverage` (gates de cobertura) só bloqueia o merge se for
+  incluído nos rulesets, o que é configuração do repositório. Os jobs de `backend-deploy.yml` não são checks de PR.
 - A branch do PR precisa estar atualizada com a branch de destino (`strict`).
 - Sem bypass: nenhum usuário, admin, app ou deploy key ignora as regras. Mudanças de política
   são feitas conscientemente nas configurações do ruleset.
@@ -1148,9 +1183,10 @@ A interface escuta **só no loopback** da máquina e exige um token de login; a 
 
 ## Swagger
 
-O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
+O Swagger UI fica em `/swagger` quando habilitado: por padrão só em `Development`; fora dele, só com `Swagger:Enabled=true`
+(`SWAGGER_ENABLED` no Compose). O overlay `compose.tls.yaml` o desliga por padrão, mesmo com a API em `Development`.
 
-O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
+O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato completo da API, mantenha-o desligado em ambiente exposto.
 
 ## Segurança (issues #29, #31, #33, #34, #35, #36 e #127)
 
