@@ -1,6 +1,7 @@
 using System.Data.Common;
 using Almirante.Api.Data;
 using Almirante.Api.Entities;
+using Almirante.Api.Hubs;
 using Almirante.Api.Infrastructure;
 using Almirante.Api.Options;
 using Almirante.Api.Services;
@@ -144,6 +145,31 @@ public sealed class ServicosDeInfraestruturaTests
 
         await servico.StopAsync(CancellationToken.None);
         Assert.True(servico.ExecuteTask!.IsCompletedSuccessfully);
+    }
+
+    // --- MonitorSessoesNotificacoes ---
+
+    [Fact]
+    public async Task MonitorDoHub_BancoFora_RegistraAFalhaSemDerrubarOLaco_NemEncerrarAConexao()
+    {
+        var logs = new CapturingLoggerFactory();
+        var relogio = new RelogioManualDeTeste();
+        var conexoes = new ConexoesNotificacoes();
+        var encerrada = false;
+        conexoes.Registrar(new ConexaoNotificacoes("c1", Guid.NewGuid(), Guid.NewGuid(), "DS", () => encerrada = true));
+        using var monitor = new Almirante.Api.Services.MonitorSessoesNotificacoes(conexoes, Escopos(o => o.UseSqlServer(SqlInalcancavel)), relogio,
+            Microsoft.Extensions.Options.Options.Create(new NotificacoesOptions()), logs.CreateLogger<Almirante.Api.Services.MonitorSessoesNotificacoes>());
+
+        await monitor.StartAsync(CancellationToken.None);
+        Assert.Equal(TimeSpan.FromMilliseconds(new NotificacoesOptions().VerificacaoSessoesMs), await relogio.AguardarTimerAsync());
+        relogio.Disparar();
+        await relogio.AguardarTimerAsync();
+
+        Assert.StartsWith("Error Falha ao revalidar as sessões das conexões do hub de notificações.", Assert.Single(logs.Entries));
+        Assert.False(encerrada);
+        Assert.Single(conexoes.Abertas());
+        await monitor.StopAsync(CancellationToken.None);
+        Assert.True(monitor.ExecuteTask!.IsCompletedSuccessfully);
     }
 
     // --- AuthSessionCleanupService ---

@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Almirante.Api.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Almirante.Api.Tests;
 
@@ -393,6 +395,66 @@ public sealed partial class FormacaoSqlServerTests
         var historico = await Db(db => db.HistoricoFormacao.AsNoTracking().Where(h => h.VinculoId == id).ToListAsync());
         Assert.Contains(historico, h => h.Acao == "MIGRAR_REVISAO" && h.Motivo == "nova edição do cartão");
         Assert.All(historico, h => Assert.Equal(FormacaoSqlFixture.Ip, h.IpResponsavel));
+    }
+
+    [Fact]
+    public async Task Catalogo_ClasseForaDoCatalogo_RevisaoDescartadaSoParaAGestao_EMembroSemFormacao()
+    {
+        // Pela rota, o model binding já recusa o valor fora do enum (400); o serviço tem o próprio guarda para quem o chama direto.
+        Assert.Equal(HttpStatusCode.BadRequest, (await Admin.GetAsync("/api/Classes/99")).StatusCode);
+        using (var escopo = fx.Factory.Services.CreateScope())
+        {
+            var catalogo = escopo.ServiceProvider.GetRequiredService<Almirante.Api.Services.CatalogoFormacaoService>();
+            Assert.Null(await catalogo.ObterClasseAsync((ClasseDesbravador)99, default));
+            Assert.Null(await catalogo.ListarRevisoesAsync(new Almirante.Api.Dtos.ListarRevisoesQuery((ClasseDesbravador)99, null, true), default));
+        }
+
+        var especialidade = await EspecialidadeAsync(AreaUnica());
+        var rascunho = await Esperar(await Admin.PostAsJsonAsync("/api/RevisoesRequisitos", new
+        {
+            especialidadeId = Id(especialidade), edicao = "descartada", fonteOficial = "f", requisitos = new[] { Item("1") },
+        }), HttpStatusCode.Created);
+        await Esperar(await Admin.PostAsJsonAsync($"/api/RevisoesRequisitos/{Id(rascunho)}/Descartar", new { motivo = "Edição errada", versao = Versao(rascunho) }));
+        var (participante, membro) = await MembroAsync();
+        Assert.Equal(HttpStatusCode.NotFound, (await participante.GetAsync($"/api/RevisoesRequisitos/{Id(rascunho)}")).StatusCode);
+        Assert.Equal("Descartada", (string)(await Esperar(await Admin.GetAsync($"/api/RevisoesRequisitos/{Id(rascunho)}")))["situacao"]!);
+
+        var semFormacao = await Esperar(await Admin.GetAsync($"/api/Formacao/Membros/{membro}"));
+        Assert.Empty(semFormacao["classes"]!.AsArray());
+        Assert.Empty(semFormacao["especialidades"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task Gravacao_QuePerdeACorridaDeRowversion_Responde409SemGravar_EHistoricoApontaOVinculoDono()
+    {
+        var especialidade = await EspecialidadeAsync(AreaUnica());
+        await PublicarAsync(new { especialidadeId = Id(especialidade) }, Item("1"));
+        var (_, membro) = await MembroAsync();
+
+        fx.Falhas.FalharProximoSave(() => new DbUpdateConcurrencyException("outra operação gravou antes (simulado)"));
+        var conflito = await AssociarEspecialidadeAsync(membro, Id(especialidade), esperado: HttpStatusCode.Conflict);
+        Assert.Equal("Conflito de concorrência.", (string)conflito["title"]!);
+        Assert.False(await Db(db => db.MembrosEspecialidades.AnyAsync(v => v.MembroId == membro)));
+
+        var vinculo = Id(await AssociarEspecialidadeAsync(membro, Id(especialidade)));
+        await Esperar(await RequisitoAsync("Especialidades", vinculo, Req(await ObterAsync("Especialidades", vinculo), "1"), "Validado"));
+        var progresso = await Db(db => db.ProgressoRequisitos.Where(p => p.MembroEspecialidadeId == vinculo).Select(p => p.Id).SingleAsync());
+        var linhas = await Db(db => db.HistoricoFormacao.AsNoTracking().Where(h => h.RegistroId == vinculo || h.RegistroId == progresso).ToListAsync());
+        Assert.Contains(linhas, h => h.RegistroId == progresso);
+        Assert.All(linhas, h => Assert.Equal(vinculo, h.VinculoId));
+
+        Assert.Equal([vinculo], (await ItensAsync($"/api/Formacao/Especialidades?membroId={membro}&aguardandoInvestiduraOuEntrega=false")).Select(Id));
+        Assert.Empty(await ItensAsync($"/api/Formacao/Especialidades?membroId={membro}&aguardandoInvestiduraOuEntrega=true"));
+    }
+
+    [Fact]
+    public async Task RelatorioDeClasses_FiltradoPorGrupoOuPorClasse()
+    {
+        var lideranca = (await Esperar(await Admin.GetAsync("/api/Formacao/Relatorios/Participantes?tipo=Classe&grupo=Lideranca")))["items"]!.AsArray();
+        Assert.Equal(["Lider", "LiderMaster", "LiderMasterAvancado"], lideranca.Select(l => (string)l!["classe"]!["codigo"]!));
+
+        var amigo = (await Esperar(await Admin.GetAsync("/api/Formacao/Relatorios/Participantes?tipo=Classe&classe=Amigo")))["items"]!.AsArray();
+        Assert.Equal("Amigo", (string)Assert.Single(amigo)!["classe"]!["codigo"]!);
     }
 
     [Fact]

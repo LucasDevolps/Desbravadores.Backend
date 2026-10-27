@@ -86,7 +86,7 @@ public static class SqlIdentityPolicy
         if (runtime is not null && !string.IsNullOrWhiteSpace(runtime.InitialCatalog) && !string.IsNullOrWhiteSpace(admin.InitialCatalog) &&
             !string.Equals(runtime.InitialCatalog, admin.InitialCatalog, StringComparison.OrdinalIgnoreCase))
             failures.Add($"{ConnectionStringsOptions.SectionName}:{DbCredentialManager.AdminConnectionName} e almirante precisam apontar para o mesmo banco.");
-        if (string.Equals(admin.UserID?.Trim(), appUser.Trim(), StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(admin.UserID.Trim(), appUser.Trim(), StringComparison.OrdinalIgnoreCase))
             failures.Add($"{ConnectionStringsOptions.SectionName}:{DbCredentialManager.AdminConnectionName}: a identidade administrativa não pode ser a de " +
                 "runtime (DbCredentials:AppUser); use credenciais distintas.");
 

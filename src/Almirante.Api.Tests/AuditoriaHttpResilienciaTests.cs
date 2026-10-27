@@ -358,6 +358,33 @@ public sealed class AuditoriaHttpResilienciaTests
         }
     }
 
+    [Fact]
+    public async Task Gravador_EncerramentoSemTempoParaAUltimaGravacao_DeixaOsPendentesEmDisco_EAvisa()
+    {
+        var opcoes = new AuditoriaHttpOptions();
+        var (diario, pasta) = DiarioTemporario(opcoes);
+        var repositorio = new RepositorioRoteirizado((_, _, _) => Task.CompletedTask);
+        var logs = new CapturingLoggerFactory();
+        try
+        {
+            using var gravador = new GravadorAuditoriaHttp(diario, repositorio, Microsoft.Extensions.Options.Options.Create(opcoes), TimeProvider.System,
+                logs.CreateLogger<GravadorAuditoriaHttp>());
+            await diario.RegistrarAsync(Registro());
+
+            await gravador.StopAsync(new CancellationToken(canceled: true));
+
+            Assert.Equal(0, repositorio.Chamadas);
+            Assert.Contains(logs.Entries, e => e.StartsWith("Warning Última gravação da auditoria HTTP no encerramento não terminou (TaskCanceledException)",
+                StringComparison.Ordinal));
+            Assert.NotEmpty(Directory.GetFiles(pasta)); // o registro continua no segmento do diário, para o próximo início
+        }
+        finally
+        {
+            diario.Dispose();
+            Directory.Delete(pasta, recursive: true);
+        }
+    }
+
     // --- Contratos dos streams da captura e da política ---
 
     [Fact]

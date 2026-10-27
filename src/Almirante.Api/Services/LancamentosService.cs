@@ -244,31 +244,35 @@ public sealed class LancamentosService(
                 commitIncerto = false;
             }
 
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            var tocados = await db.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE dbo.eventos SET AtualizadoEmUtc = {agora} WHERE Id = {eventoId} AND Ativo = 1", ct);
-            if (tocados == 0)
+            LancamentoDto dto;
+            await using (var tx = await db.Database.BeginTransactionAsync(ct))
             {
-                throw ApiProblemException.NotFound("Lançamento não encontrado.");
+                var tocados = await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE dbo.eventos SET AtualizadoEmUtc = {agora} WHERE Id = {eventoId} AND Ativo = 1", ct);
+                if (tocados == 0)
+                {
+                    throw ApiProblemException.NotFound("Lançamento não encontrado.");
+                }
+
+                var entity = await db.Lancamentos.Include(l => l.Membro)
+                    .SingleOrDefaultAsync(l => l.Id == lancamentoId && l.Ativo && l.EventoId == eventoId, ct);
+                if (entity is null ||
+                    !await db.EventosMembros.AsNoTracking().AnyAsync(m => m.EventoId == eventoId && m.LancamentoId == lancamentoId && m.Ativo, ct))
+                {
+                    throw ApiProblemException.NotFound("Lançamento não encontrado.");
+                }
+
+                alterar(entity, agora);
+                entity.DataAtualizacao = agora;
+                entity.AtualizadoPorUsuarioId = usuarioId;
+                await SalvarAsync(ct);
+
+                dto = LancamentoMapping.ToDto(entity);
+                commitIncerto = true;
+                await tx.CommitAsync(ct);
+                commitIncerto = false;
             }
 
-            var entity = await db.Lancamentos.Include(l => l.Membro)
-                .SingleOrDefaultAsync(l => l.Id == lancamentoId && l.Ativo && l.EventoId == eventoId, ct);
-            if (entity is null ||
-                !await db.EventosMembros.AsNoTracking().AnyAsync(m => m.EventoId == eventoId && m.LancamentoId == lancamentoId && m.Ativo, ct))
-            {
-                throw ApiProblemException.NotFound("Lançamento não encontrado.");
-            }
-
-            alterar(entity, agora);
-            entity.DataAtualizacao = agora;
-            entity.AtualizadoPorUsuarioId = usuarioId;
-            await SalvarAsync(ct);
-
-            var dto = LancamentoMapping.ToDto(entity);
-            commitIncerto = true;
-            await tx.CommitAsync(ct);
-            commitIncerto = false;
             return dto;
         });
     }

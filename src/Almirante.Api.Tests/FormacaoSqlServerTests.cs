@@ -14,10 +14,11 @@ public sealed class FormacaoSqlFixture : IAsyncLifetime
 
     public SqlServerApiFactory Factory { get; private set; } = null!;
     public HttpClient Admin { get; private set; } = null!;
+    public FalhasInjetaveisNoBanco Falhas { get; } = new();
 
     public async Task InitializeAsync()
     {
-        Factory = new SqlServerApiFactory();
+        Factory = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(Falhas));
         Admin = await TestHelpers.CreateAuthenticatedClientAsync(Factory);
         Admin.DefaultRequestHeaders.Add(AlmiranteApiFactory.TestRemoteIpHeader, Ip);
     }

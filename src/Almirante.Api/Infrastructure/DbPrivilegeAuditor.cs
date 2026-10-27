@@ -184,7 +184,7 @@ public static class DbPrivilegeAuditor
     {
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken) ?? 0);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)); // toda consulta daqui devolve uma linha; nulo também vale 0
     }
 }
 

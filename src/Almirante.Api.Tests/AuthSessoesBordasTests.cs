@@ -95,6 +95,24 @@ public sealed class AuthSessoesBordasTests
     }
 
     [Fact]
+    public async Task ReusoDoRefreshJaConsumido_RevogaASessaoInteira_ETokenDesconhecidoSoRecebe401()
+    {
+        await using var factory = new AlmiranteApiFactory();
+        var (client, _, primeiro) = await LoginAsync(factory);
+        var renovado = await PostComRefreshAsync(client, "/api/Auth/refresh", primeiro);
+        Assert.Equal(HttpStatusCode.OK, renovado.StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await PostComRefreshAsync(client, "/api/Auth/refresh", primeiro)).StatusCode);
+        var sessao = await SessaoAsync(factory);
+        Assert.Equal("refresh-token-reuse", sessao.RevocationReason);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await PostComRefreshAsync(client, "/api/Auth/refresh", Cookie(renovado))).StatusCode);
+
+        var desconhecido = Microsoft.AspNetCore.WebUtilities.Base64UrlTextEncoder.Encode(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await PostComRefreshAsync(client, "/api/Auth/refresh", desconhecido)).StatusCode);
+        Assert.Equal(1, await TestHelpers.WithDbAsync(factory, db => db.AuthSessions.CountAsync()));
+    }
+
+    [Fact]
     public async Task DoisRefreshAoMesmoTempo_ORetardatarioRevogaASessao()
     {
         await using var factory = new FactoryComCorrida();

@@ -418,7 +418,8 @@ public sealed partial class FormacaoService(AlmiranteDbContext db, TimeProvider 
                 if (pendentes.Count > 0)
                 {
                     throw new ApiProblemException(StatusCodes.Status409Conflict, "Investidura bloqueada.",
-                        string.Join(" ", pendentes.Select(p => p.Descricao + (p.Detalhe is null ? "." : $": {p.Detalhe}."))),
+                        // Pendência de investidura (idade ou validação externa) sempre traz o detalhe.
+                        string.Join(" ", pendentes.Select(p => $"{p.Descricao}: {p.Detalhe}.")),
                         extensions: new Dictionary<string, object?> { ["preRequisitos"] = pendentes });
                 }
             }

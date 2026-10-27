@@ -66,10 +66,12 @@ public class SqlServerConnectionSecurityTests
         Assert.Equal(2, falhas.Count);
     }
 
-    [Fact]
-    public void Validate_ConnectionStringInvalida_NaoLancaEDeixaFalhaParaOutroLugar()
+    [Theory]
+    [InlineData("isto não é uma connection string ; ; ;=")]
+    [InlineData("Palavra Desconhecida=1")] // o SqlConnectionStringBuilder lança ArgumentException para palavra-chave desconhecida
+    public void Validate_ConnectionStringInvalida_NaoLancaEDeixaFalhaParaOutroLugar(string conexao)
     {
-        Assert.Empty(SqlServerConnectionSecurityValidator.Validate("isto não é uma connection string ; ; ;=", isProduction: true));
+        Assert.Empty(SqlServerConnectionSecurityValidator.Validate(conexao, isProduction: true));
     }
 
     [Fact]

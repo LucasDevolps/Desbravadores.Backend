@@ -97,6 +97,31 @@ public sealed class ViaCepClientTests
         Assert.Equal(StatusConsultaCep.RespostaInvalida, (await Cliente(handler).ConsultarAsync("04382160", CancellationToken.None)).Status);
     }
 
+    /// <summary>Corpo sem Content-Length (como numa resposta chunked): o tamanho só é conhecido durante a leitura.</summary>
+    private sealed class ConteudoSemTamanho(byte[] corpo) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) => stream.WriteAsync(corpo).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    [Fact]
+    public async Task Consultar_ConteudoSemContentLengthQuePassaDoLimite_EDescartadoDuranteALeitura()
+    {
+        var handler = new ViaCepFalso
+        {
+            Responder = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ConteudoSemTamanho(new byte[ViaCepClient.TamanhoMaximoResposta + 1]),
+            }),
+        };
+        Assert.Equal(StatusConsultaCep.RespostaInvalida, (await Cliente(handler).ConsultarAsync("04382160", CancellationToken.None)).Status);
+    }
+
     [Theory]
     [InlineData("""{ "erro": true }""", StatusConsultaCep.NaoEncontrado)]
     [InlineData("""{ "erro": "true" }""", StatusConsultaCep.NaoEncontrado)]

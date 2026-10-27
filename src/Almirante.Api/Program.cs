@@ -84,7 +84,7 @@ if (dbCredentialOptions.Enabled)
     builder.Services.AddHealthChecks().AddCheck<DbConnectivityHealthCheck>("almirante-db");
     builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante",
         configureSettings: settings => settings.DisableHealthChecks = true,
-        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider)));
+        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider, TimeProvider.System)));
 }
 else
 {
