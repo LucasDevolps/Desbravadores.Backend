@@ -1077,6 +1077,27 @@ O projeto `Almirante.ServiceDefaults` configura:
 
 As requisições aos health checks são excluídas dos traces.
 
+### Console do Aspire nos deploys
+
+Os dois deploys publicam o **console do Aspire** (dashboard standalone, versão 13.5.2, a mesma do AppHost) ao lado da
+API, que envia para ele logs, traces e métricas por OTLP. A telemetria fica só em memória: reiniciar o console a apaga.
+A interface escuta **só no loopback** da máquina e exige um token de login; a porta OTLP não é exposta para fora.
+
+| Deploy | Endereço | Token de login | Como roda |
+|---|---|---|---|
+| Linux (Docker Compose) | `http://127.0.0.1:18888` (`ASPIRE_DASHBOARD_HOST_PORT`) | `docker logs almirante-aspire-dashboard 2>&1 \| grep 'login?t='` (novo a cada início do container) | serviço `aspire-dashboard` do `compose.yaml`, imagem fixada por digest, sem capabilities |
+| Windows (IIS) | `http://127.0.0.1:18888` | `C:\desbravadores\aspire-dashboard\browser-token.txt` (só administradores; fixo entre reinícios) | tarefa agendada `AspireDashboardAlmirante` como `LOCAL SERVICE`, binários do pacote NuGet `Aspire.Dashboard.Sdk.win-x64` com SHA256 conferido |
+
+- Abra `http://127.0.0.1:18888/login?t=<token>`. De outra máquina, use túnel SSH (`ssh -L 18888:127.0.0.1:18888 <host>`);
+  nunca publique a porta.
+- O token nunca aparece no log do GitHub Actions.
+- O console é opcional para a API: fora do ar, a exportação falha em silêncio, e uma falha ao instalá-lo ou iniciá-lo
+  só gera um aviso no deploy, sem bloquear nem derrubar a API.
+- No Windows, o deploy só cria `OTEL_EXPORTER_OTLP_ENDPOINT` e `OTEL_SERVICE_NAME` no app pool quando ainda não
+  existem. Para desligar a exportação, remova essas variáveis do pool; um valor ajustado à mão é preservado.
+- O AppHost (`dotnet run --project src/Almirante.AppHost`) continua sendo o caminho de desenvolvimento, com o próprio
+  console. Nos deploys ele não é usado, porque subiria outro SQL Server.
+
 ## Swagger
 
 O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
