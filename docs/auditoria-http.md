@@ -124,7 +124,10 @@ cabeçalhos e exceções, inclusive em objetos e listas aninhados.
    guardam no máximo 200 itens, e a profundidade é limitada a 32 níveis.
 8. **URL.** Os segmentos literais da rota resolvida (ou de qualquer rota da API) ficam. Os parâmetros
    da rota seguem a categoria do nome: `{id:guid}` mantém o GUID e `{cep}` vira `[omitido]`. Num
-   caminho desconhecido (404), só ficam GUIDs e inteiros curtos. A query mantém a ordem, e cada
+   caminho desconhecido (404), só ficam GUIDs e inteiros curtos (até 9 dígitos). **Divergência em aberto (issue #160):** isso
+   inclui um CEP de 8 dígitos digitado numa rota inexistente (ex.: `/api/Cep2/01001000`), enquanto o README afirma que endereço
+   nunca é gravado em caminho; nas rotas reais `{cep}` sempre vira `[omitido]`. A decisão (reduzir o tamanho aceito ou ajustar o
+   texto) fica com o mantenedor; ver [`rastreabilidade.md`](rastreabilidade.md#6-divergências-e-pendências). A query mantém a ordem, e cada
    parâmetro segue a mesma política (`access_token`, `busca` e `cpf` viram `[omitido]`). O host só passa
    se tiver formato de nome ou IP.
 9. **Cabeçalhos por lista permitida.** Da requisição: `Accept`, `Accept-Language`, `Content-Type`,

@@ -1,137 +1,158 @@
 # Cobertura de testes e quality gate
 
-O CI mede a cobertura de testes do backend em todo push e PR para `main` e `develop`, publica o
-relatório e bloqueia regressões significativas. O objetivo **não** é perseguir um percentual estético:
-é não deixar a cobertura atual piorar silenciosamente (issue #67).
+O CI mede a cobertura do backend em todo push e PR para `main` e `develop`, publica os relatórios e aplica dois gates
+(issues #67 e #160):
+
+- **cobertura combinada** (as duas suítes juntas): **100% de linhas e de branches** do código próprio medido, sem tolerância;
+- **cobertura unitária** (só a suíte sem dependências externas): publicada separada e protegida contra regressão em relação ao
+  baseline observado. Ela não chega a 100% por desenho (seção [Lacunas da cobertura unitária](#lacunas-da-cobertura-unitária)), e a
+  cobertura de integração nunca é usada para declarar 100% unitário.
+
+Cobertura não prova correção: os testes precisam afirmar resultados e efeitos persistidos, não apenas executar código. A matriz que
+liga cada endpoint e regra aos testes está em [`rastreabilidade.md`](rastreabilidade.md).
+
+## Unitária x combinada
+
+| Medição | Suítes | Onde roda | Gate |
+|---|---|---|---|
+| Unitária | `Category!=RequiresDocker&Category!=RequiresSqlServer`: testes puros e de componente em processo (`WebApplicationFactory` com EF InMemory, ViaCEP simulado) | job `build-and-test` (Windows) | não regredir mais de 1 p.p. abaixo de `src/coverage-baseline-unit.json` |
+| Combinada | a unitária **+** `Category=RequiresSqlServer` (SQL Server 2022 real e descartável, API em processo real) | job `sqlserver-integration` (Linux) + job `coverage` | 100% de linhas e branches (`src/coverage-baseline.json`) |
+
+Não há testes `Category=RequiresDocker` hoje: o filtro só reserva a categoria.
 
 ## Como funciona no CI
 
 ```text
-build-and-test (Windows)          sqlserver-integration (Linux + SQL Server 2022 descartável)
-  testes sem dependências           testes Category=RequiresSqlServer
-  + Coverlet  → coverage-unit-<sha>   + Coverlet  → coverage-sqlserver-<sha>
-                    \                   /
-                     coverage (Linux)
-                       normaliza caminhos → ReportGenerator → HTML + Cobertura + resumo
-                       quality gate contra src/coverage-baseline.json
-                       → Job Summary + artifact coverage-<sha>
+build-and-test (Windows)                   sqlserver-integration (Linux + SQL Server 2022 descartável)
+  testes sem dependências externas           testes Category=RequiresSqlServer
+  Coverlet: Cobertura + OpenCover            Coverlet: Cobertura + OpenCover
+  → coverage-unit-<sha>                      → coverage-sqlserver-<sha>
+                      \                         /
+                       coverage (Linux)
+                         unitária  = só coverage-unit         → coverage-report/unitaria
+                         combinada = as duas, unidas          → coverage-report/combinada
+                         gate 100% na combinada; não regressão na unitária
+                         Job Summary com números, lacunas (arquivo/linha/branch) e detalhe por classe
+                         artifact coverage-<sha>
 ```
 
-1. **Coleta:** os dois jobs de teste rodam `dotnet test` com `--settings src/coverage.runsettings
-   --collect "XPlat Code Coverage"` (`coverlet.collector`, já referenciado pelo projeto de testes). A
-   coleta não muda os filtros nem os testes: o `sqlserver-integration` continua rodando todos os
-   `Category=RequiresSqlServer` contra o SQL Server descartável, com senha aleatória e porta em loopback.
-2. **Publicação bruta:** cada job publica só o `TestResults/<guid>/coverage.cobertura.xml` do coletor
-   (`coverage-unit-<sha>` e `coverage-sqlserver-<sha>`). O logger TRX copia o mesmo arquivo para
-   `TestResults/<máquina>/In/...`; essa cópia é ignorada para não duplicar a entrada. Os artifacts TRX
-   (`unit-<sha>`, `sqlserver-<sha>`) continuam como antes.
-3. **Consolidação:** o job `coverage` (depende dos dois anteriores) roda
-   `bash scripts/coverage.sh report`, que:
-   - normaliza cada relatório: o Coverlet grava um `<source>` absoluto da máquina e, no Windows,
-     caminhos com `\`. Sem normalizar, o ReportGenerator trataria o mesmo arquivo medido no Windows e no
-     Linux como dois arquivos e somaria as linhas em dobro;
-   - mescla os relatórios com o [ReportGenerator](https://reportgenerator.io/) fixado em
-     `.config/dotnet-tools.json` (`dotnet tool restore`, sem versão flutuante). Linhas e branches são a
-     **união** das duas suítes: uma linha coberta pelas duas conta uma vez.
-4. **Quality gate:** `bash scripts/coverage.sh gate` compara o Cobertura consolidado com
-   `src/coverage-baseline.json`, escreve a tabela no Job Summary e falha o job se houver regressão.
-5. **Relatório:** o artifact `coverage-<sha>` (14 dias, como os demais) é publicado mesmo quando o gate
-   reprova.
+1. **Coleta:** os dois jobs rodam `dotnet test` com `--settings src/coverage.runsettings --collect "XPlat Code Coverage"`
+   (`coverlet.collector`), nos formatos Cobertura e OpenCover.
+2. **Publicação bruta:** cada job publica só a pasta do coletor (`TestResults/<guid>/coverage.*.xml`); a cópia que o logger TRX põe
+   em `<máquina>/In/` é ignorada para não duplicar a entrada.
+3. **Consolidação** (`bash scripts/coverage.sh report <entrada> <saida>`): normaliza os caminhos de cada máquina (o mesmo arquivo
+   medido no Windows e no Linux precisa ser o mesmo arquivo para o ReportGenerator) e une os relatórios com o
+   [ReportGenerator](https://reportgenerator.io/) fixado em `.config/dotnet-tools.json`. O job gera duas saídas: `unitaria` (só a
+   suíte sem dependências) e `combinada` (as duas).
+4. **Gates** (`bash scripts/coverage.sh gate`): comparam as contagens inteiras do Cobertura consolidado com o baseline de cada
+   medição e escrevem a tabela no Job Summary. O gate unitário roda mesmo se o combinado reprovar, para os dois números saírem sempre.
+5. **Lacunas** (`bash scripts/coverage.sh lacunas`): lista, por arquivo, as linhas e os branches descobertos (`linha (cobertos/total)`)
+   das duas medições, no Job Summary e em `coverage-report/<medição>/Lacunas.md`.
+
+### Por que a união usa OpenCover
+
+O Cobertura só informa "N de M branches" por linha, sem dizer quais. Um `if (db.Database.IsRelational())` coberto do lado falso
+pela suíte em memória e do lado verdadeiro pela suíte SQL Server aparecia como 1/2 na combinada, porque o ReportGenerator não
+consegue unir ramos que não sabe identificar. O OpenCover identifica cada ramo pelo offset no IL, e a união soma o que cada suíte
+cobriu. Na medição local do `LoginLockout`, por exemplo, a linha acima passa de 1/2 (Cobertura) para 2/2 (OpenCover).
+O Cobertura continua sendo gerado, para leitura direta e para o gate (o ReportGenerator o produz a partir da união).
+
+### Processos filhos
+
+O Coverlet instrumenta as DLLs do diretório de testes. Um processo filho que carrega essas DLLs (a CLI `reset-admin-password` e a
+API dos testes `ApiProcess*`) grava a própria cobertura **ao encerrar normalmente**. Por isso o `ApiProcess` encerra a API com
+`SIGTERM` no Linux (desligamento gracioso, como o Docker faz) e só usa `Kill` como último recurso; no Windows o `Kill` é o único
+caminho e a cobertura desse processo se perde (a suíte SQL Server do CI roda em Linux).
 
 ### Onde ver o resultado
 
-- **Job Summary:** na aba *Summary* do run do workflow *Backend CI* (ou em *Checks* do PR → job
-  `coverage`). Mostra linhas e branches (atual, cobertos/válidos, baseline, mínimo, status), commit
-  medido, assemblies e, recolhido, o detalhamento por assembly e por classe (com namespace).
-- **Artifact `coverage-<sha>`:** na mesma página do run, seção *Artifacts*. Contém:
-  - `index.html` — relatório navegável (por assembly, classe e arquivo, com as linhas destacadas);
-  - `Cobertura.xml` — relatório consolidado em formato de máquina;
-  - `SummaryGithub.md` — resumo em Markdown;
-  - `entradas/` — os relatórios Cobertura normalizados de cada suíte.
+- **Job Summary** do job `coverage` (aba *Summary* do run do *Backend CI* ou *Checks* do PR): as duas tabelas (unitária e
+  combinada), as lacunas e o detalhamento por assembly e classe.
+- **Artifact `coverage-<sha>`**: `combinada/` e `unitaria/`, cada uma com `index.html` navegável, `Cobertura.xml`,
+  `SummaryGithub.md`, `Lacunas.md` e `entradas/` (os relatórios normalizados de cada suíte).
 
 ## O que entra na medição
 
 | Item | Valor |
 |---|---|
-| Assemblies medidos | `Almirante.Api` e `Almirante.ServiceDefaults` (`Include` do runsettings) |
-| Fora da medição | o próprio `Almirante.Api.Tests` e o `Almirante.AppHost` (orquestração local, não referenciado pelos testes) |
-| Suítes | `Category!=RequiresDocker&Category!=RequiresSqlServer` (Windows) + `Category=RequiresSqlServer` (Linux) |
-| Métricas | linhas e branches (métodos não são usados no gate) |
+| Assemblies medidos | `Almirante.Api` e `Almirante.ServiceDefaults` (`Include` do `src/coverage.runsettings`) |
+| Fora da medição | `Almirante.Api.Tests` (o próprio teste) e `Almirante.AppHost` |
+| Métricas | linhas e branches |
 
-Limitação conhecida: testes como `ApiProcessEventosTests` e `ApiProcessSqlServerTests` sobem a API num
-**processo separado**. O Coverlet só instrumenta o processo do test host, então o que roda exclusivamente
-nesse processo filho não soma cobertura — é uma subestimação, nunca uma inflação.
+**Por que o `Almirante.AppHost` fica fora.** São 37 linhas de orquestração do .NET Aspire usadas só no desenvolvimento local: a
+mesma configuração de identidades e do bootstrap já é exercitada pela API real (`ApiProcess*`, `SqlIdentityModelTests`) e pelos
+testes dos scripts do Compose. Testá-lo exigiria o runtime do Aspire e contêineres. A exclusão é por assembly, explícita e
+documentada aqui; ela não esconde código da API.
 
-### Exclusões
+### Exclusões dentro dos assemblies medidos
 
-Ficam fora da métrica **apenas** arquivos gerados por ferramenta, declarados em
-`src/coverage.runsettings` (`ExcludeByFile`):
+Ficam fora da métrica **apenas** arquivos gerados por ferramenta (`ExcludeByFile` do `src/coverage.runsettings`):
 
 | Padrão | O que é | Por quê |
 |---|---|---|
-| `**/Data/Migrations/*.Designer.cs` | metadados de modelo de cada migration | gerados pelo `dotnet ef` (`// <auto-generated />`), não são lógica escrita à mão |
+| `**/Data/Migrations/*.Designer.cs` | metadados de modelo de cada migration | gerados pelo `dotnet ef` (`// <auto-generated />`) |
 | `**/Data/Migrations/*ModelSnapshot.cs` | snapshot do modelo do EF | idem |
 | `**/obj/**/*.cs` | saída de source generators (Regex, comentários XML do OpenAPI) | gerado no build, nem existe no repositório |
 
-O `Up`/`Down` das migrations **continua medido** (é SQL/DDL escrito ou revisado à mão e exercitado
-pelos testes de migration). Não há `[ExcludeFromCodeCoverage]` no código. Qualquer exclusão nova precisa
-ser mínima, visível no runsettings e justificada nesta tabela no mesmo PR — nunca para esconder código
-difícil de testar.
+O `Up` e o `Down` das migrations **continuam medidos**: `MigrationsReversibilidadeTests` sobe todas, desce até o banco vazio e sobe
+de novo. Não há `[ExcludeFromCodeCoverage]` no código. Qualquer exclusão nova precisa ser mínima, visível no runsettings e
+justificada nesta tabela no mesmo PR, nunca para esconder código difícil de testar.
 
-## Baseline atual
+## Números
 
-Medido em 2026-09-23 sobre o código de `develop` em
-`3e3620dfd37b6fd970d2283362d34c86fc7de095` (o PR da issue #67 não altera código de produção nem testes
-.NET), com as duas suítes e a configuração acima:
+Referência: `develop` em `20a450d303c6d87ea7f76a516980884d7edd136f` (antes da issue #160), medida pelo CI (run 40495756276) e
+reproduzida localmente com os mesmos comandos.
 
-| Métrica | Cobertos/Válidos | Baseline |
-|---|---:|---:|
-| Linhas | 3813/4113 | **92.70%** |
-| Branches | 918/1084 | **84.68%** |
+| Medição | Antes (#160, união por Cobertura) | Depois (#160, união por OpenCover) |
+|---|---|---|
+| Unitária — linhas | 7799/15849 (49,20%) | ver `src/coverage-baseline-unit.json` |
+| Unitária — branches | 2474/3949 (62,64%) | ver `src/coverage-baseline-unit.json` |
+| Combinada — linhas | 15319/15849 (96,65%) | ver Job Summary do PR #175 |
+| Combinada — branches | 3568/3949 (90,35%) | ver Job Summary do PR #175 |
 
-Detalhe: suíte sem dependências externas sozinha = 1927/4113 linhas; suíte SQL Server sozinha =
-3514/4113. O consolidado é a união das duas.
+Os totais mudaram entre as colunas por dois motivos documentados: o OpenCover conta os branches de forma mais granular (3975 contra
+3949) e algumas linhas mortas foram removidas (seção "Refatorações" do PR). O relatório final da issue, com os números por suíte,
+está na descrição do PR #175.
 
-Este é um **baseline observado**, não uma meta escolhida: os números são truncados (nunca arredondados
-para cima) do relatório consolidado real e ficam em `src/coverage-baseline.json`. A medição foi
-reproduzida localmente com o mesmo fluxo do CI (suíte unitária no Windows; suíte SQL Server em Linux, num
-contêiner .NET 10 ao lado de um SQL Server 2022 descartável) e conferida contra o Job Summary do CI.
+## Lacunas da cobertura unitária
 
-## Política de regressão
+A suíte sem dependências externas não executa o que só existe no SQL Server ou num processo real. As lacunas, arquivo por arquivo,
+saem no Job Summary (`Lacunas — cobertura unitaria`) e em `coverage-report/unitaria/Lacunas.md`; por categoria:
+
+| Categoria | Exemplos | Por que não é unitário | Onde é validado |
+|---|---|---|---|
+| Migrations (`Up`/`Down`) | `Data/Migrations/*.cs` (~3.850 linhas) | DDL, triggers e conversões de dados só fazem sentido executados no SQL Server | `MigrationsReversibilidadeTests` e os `*MigrationTests` |
+| Serviços transacionais com SQL Server | `FormacaoService`, `EventosService`, `CatalogoFormacaoService`, `PatrimonioService`, `DesejosAlmoxarifadoService`, `AlteracaoSenhaService`, `UsuariosService` (escrita) | usam transação com `SESSION_CONTEXT` (o trigger de auditoria recusa sem ele), `sp_getapplock`, `UPDLOCK`, `rowversion` e SQL bruto; o InMemory ignora transações e não executa SQL. O próprio código recusa rodar sem banco relacional | `*SqlServerTests` do módulo |
+| Identidades SQL e privilégios | `DbPrivilegeAuditor`, `DbCredentialManager` (rotação), `SessaoAuditoria` | consultam permissões efetivas e trocam senhas de usuários contidos | `SqlIdentityModelTests`, `DbPrivilegeTests`, `DbCredentialManagerSqlServerTests`, `SessaoAuditoriaPoolSqlTests` |
+| Entidades e DTOs só lidos/gravados pelo banco | `Entities/*` (colunas de histórico), DTOs de módulos SQL | propriedades preenchidas por trigger ou só usadas nos fluxos acima | `HistoricosDeAuditoriaSqlServerTests` e os testes de cada módulo |
+| Processo real | `Program.cs` com `DbCredentials:AppUser`, CLI com conexão administrativa | startup com identidades SQL e encerramento do processo | `ApiProcessSqlServerTests`, `AdminPasswordResetCliProcessTests` |
+
+Não usar cobertura de integração para fechar a unitária: o número unitário é sempre o da suíte sem dependências.
+
+## Política dos gates
 
 ```text
-mínimo = baseline − tolerância          (tolerância atual: 1.00 ponto percentual)
-aprova se  cobertos × 10000 ≥ mínimo_em_centésimos × válidos      (linhas E branches)
+mínimo = baseline − tolerância
+aprova se  cobertos × 10000 ≥ mínimo_em_centésimos × válidos      (linhas E branches, contagens inteiras)
 ```
 
-- A comparação usa as **contagens inteiras** do relatório: nenhum arredondamento pode transformar
-  49,999% em 50%. O que aparece no resumo é truncado em 2 casas.
-- **Por que 1 ponto percentual:** no universo atual equivale a ~41 linhas ou ~11 branches. Remover os
-  testes de um serviço ou entregar uma feature média sem testes passa disso e reprova; variações pequenas
-  (um trecho defensivo novo, um caminho de concorrência que não é exercitado em toda execução) não
-  bloqueiam o merge.
-- Relatório ausente, corrompido, sem linhas válidas ou baseline inválido **reprovam** o gate (exit 2); uma
-  regressão reprova com exit 1 e a mensagem indica métrica, valor atual e mínimo.
-- O gate roda no job `coverage`. Para que ele bloqueie merge, o check `coverage` precisa constar dos checks
-  obrigatórios dos rulesets de `main` e `develop` (configuração do repositório, feita por quem administra).
+- **Combinada:** `src/coverage-baseline.json` com 100.00/100.00 e tolerância 0.00. Uma única linha ou branch descoberto reprova.
+  `scripts/tests/coverage.test.sh` falha se esse JSON for rebaixado; baixar a meta exige mudar o teste e esta política no mesmo PR.
+- **Unitária:** `src/coverage-baseline-unit.json`, baseline observado (truncado em 2 casas) com tolerância de 1 p.p. (~160 linhas):
+  impede que testes saiam da suíte sem dependências sem ninguém perceber.
+- Relatório ausente, corrompido, sem linhas válidas ou baseline inválido reprovam (exit 2); regressão reprova com exit 1 e a
+  mensagem indica métrica, valor e mínimo.
+- Para bloquear o merge, o check `coverage` precisa constar dos checks obrigatórios dos rulesets de `main` e `develop`
+  (configuração do repositório, feita por quem administra; ver [README](../README.md#proteção-de-branches)).
 
-### Atualizar o baseline
+### Atualizar o baseline unitário
 
-O baseline só muda por PR, com os números do **Job Summary do CI** desse PR (nunca inventados):
-
-- **Subir:** quando a cobertura aumentar de forma consistente, copie os valores atuais (truncados, 2 casas)
-  e as contagens para `src/coverage-baseline.json`, atualize `measuredAtCommit`/`measuredAt` e a
-  seção [Baseline atual](#baseline-atual). Isso evita que uma melhora seja perdida depois dentro da
-  tolerância.
-- **Descer:** só com justificativa explícita no PR (por exemplo, remoção de código bem testado que
-  deixou de existir, ou mudança de escopo de medição) e revisão desta documentação. Nunca para "destravar"
-  um PR sem testes.
-- Mudar a tolerância, os assemblies medidos ou as exclusões segue a mesma regra: PR próprio ou
-  explicitamente justificado, com esta documentação atualizada.
+Só por PR, com os números do Job Summary do CI desse PR (nunca inventados): subir quando a unitária aumentar de forma consistente;
+descer só com justificativa explícita (código bem testado removido, mudança de escopo) e revisão desta documentação.
 
 ## Reproduzir localmente
 
-Requer .NET 10 SDK e Bash. Os diretórios `TestResults/` e `coverage-report/` são ignorados pelo Git.
+Requer .NET 10 SDK e Bash. `TestResults/` e `coverage-report/` são ignorados pelo Git.
 
 ```bash
 dotnet tool restore
@@ -148,28 +169,23 @@ dotnet test src/Almirante.Api.Tests/Almirante.Api.Tests.csproj --configuration R
   --filter "Category=RequiresSqlServer" \
   --settings src/coverage.runsettings --collect "XPlat Code Coverage" --results-directory TestResults/sqlserver
 
-bash scripts/coverage.sh report TestResults coverage-report
-bash scripts/coverage.sh gate coverage-report/Cobertura.xml src/coverage-baseline.json
+bash scripts/coverage.sh report TestResults/unit coverage-report/unitaria
+bash scripts/coverage.sh report TestResults coverage-report/combinada
+bash scripts/coverage.sh gate coverage-report/combinada/Cobertura.xml src/coverage-baseline.json
+bash scripts/coverage.sh gate coverage-report/unitaria/Cobertura.xml src/coverage-baseline-unit.json
+bash scripts/coverage.sh lacunas coverage-report/combinada/Cobertura.xml
 ```
 
-Abra `coverage-report/index.html` no navegador. Sem a suíte SQL Server, o número local fica bem abaixo do
-baseline (a suíte sem dependências externas sozinha cobre ~47% das linhas) e o gate reprova — é esperado:
-o baseline vale para as duas suítes juntas.
+Em máquina com pouca memória (ex.: SQL Server no WSL com ~4 GB), rode a suíte SQL Server sozinha e com
+`-- xUnit.MaxParallelThreads=2`. Rodando a suíte SQL Server no Windows, a cobertura da API em processo filho (`ApiProcess*`) não é
+gravada (ver [Processos filhos](#processos-filhos)), então a combinada local fica um pouco abaixo da do CI.
 
-O script do gate tem testes próprios, sem .NET: `bash scripts/tests/coverage.test.sh` (roda no check
-`deploy-scripts`). A presença da coleta, do artifact, do Job Summary, do gate e da integração SQL Server
-no workflow é verificada por `bash scripts/tests/workflows.test.sh`.
+O script tem testes próprios, sem .NET: `bash scripts/tests/coverage.test.sh` (no check `deploy-scripts`). A presença da coleta, dos
+artifacts, dos dois relatórios, dos gates e das lacunas no workflow é verificada por `bash scripts/tests/workflows.test.sh`.
 
 ## Configurações avaliadas na issue #67
 
-- **`.editorconfig` — adicionado, mínimo.** Só espaçamento (indentação com espaços, 4 em C# e 2 em
-  XML/JSON/YAML/Bash, sem espaço no fim da linha exceto Markdown, newline final), exatamente o que todos
-  os arquivos versionados já seguem. Sem regras de análise ou severidade (nenhum warning novo, build
-  continua com 0 avisos) e sem `charset`/`end_of_line` (o BOM é misto no código atual e o EOL é tratado
-  pelo `.gitattributes`), para não provocar reescrita de arquivos.
-- **`Directory.Build.props` — não adicionado.** Os quatro projetos já declaram as mesmas três
-  propriedades (`net10.0`, `Nullable`, `ImplicitUsings`) e usam SDKs diferentes (Web, Aspire AppHost,
-  padrão); centralizar isso não traz ganho para a cobertura e mudaria a política de build de todos os
-  projetos, inclusive o AppHost. A configuração de cobertura já está centralizada no
-  `src/coverage.runsettings`. `TreatWarningsAsErrors` e analyzers ficam para uma issue própria, se
-  desejado.
+- **`.editorconfig` — mínimo.** Só espaçamento (indentação com espaços, 4 em C# e 2 em XML/JSON/YAML/Bash, sem espaço no fim da
+  linha exceto Markdown, newline final). Sem regras de análise nem `charset`/`end_of_line`.
+- **`Directory.Build.props` — não adicionado.** Os quatro projetos já declaram as mesmas propriedades e usam SDKs diferentes; a
+  configuração de cobertura está centralizada no `src/coverage.runsettings`.
