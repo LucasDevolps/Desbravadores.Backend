@@ -116,6 +116,10 @@ builder.Services.AddSingleton<LimitadorTentativasSenha>();
 builder.Services.AddScoped<ContasSenha>();
 builder.Services.AddScoped<AlteracaoSenhaService>();
 builder.Services.AddScoped<RecuperacaoSenhaService>();
+builder.Services.AddScoped<PatrimonioService>();
+builder.Services.AddScoped<InventarioService>();
+builder.Services.AddScoped<DesejosAlmoxarifadoService>();
+builder.Services.AddScoped<ResponsaveisAlmoxarifadoService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
 
 // Auditoria HTTP (issue #158, docs/auditoria-http.md): middleware -> diário em disco já sanitizado -> gravador em segundo plano -> auditoria_http.
@@ -304,6 +308,7 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     });
 
 builder.Services.AddAuthorization(Policies.Registrar);
+builder.Services.AddScoped<IAuthorizationHandler, AcessoAlmoxarifadoHandler>();
 
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 
@@ -334,6 +339,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SchemaFilter<MembrosSchemaFilter>();
     options.OperationFilter<EventosOperationFilter>();
     options.OperationFilter<UsuariosFotoOperationFilter>();
+    options.OperationFilter<AlmoxarifadoOperationFilter>();
 
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {

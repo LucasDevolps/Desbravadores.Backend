@@ -4,7 +4,7 @@ A API grava no SQL Server (tabela `auditoria_http`) uma linha por chamada HTTP q
 com sucesso ou erro, para análises futuras. Cada registro é sanitizado **antes** de sair da memória da
 requisição. Ele não guarda o login, credenciais, CPF, e-mail, telefone, dados de responsáveis, RG/CIN,
 saúde, endereço, nascimento, fotos nem arquivos. A decisão de arquitetura está no
-[ADR-0015](architecture/adr/0015-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
+[ADR-0016](architecture/adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
 
 Esta auditoria complementa o que já existe e não substitui nada: os históricos de negócio (triggers de
 `lancamentos_deletados`, `historico_eventos`, `_usuarios_hist`, `formacao_historico`), a auditoria de

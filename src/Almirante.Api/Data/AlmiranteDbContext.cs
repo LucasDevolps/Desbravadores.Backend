@@ -90,6 +90,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
         ConfigurarFormacao(modelBuilder);
         ConfigurarSenhas(modelBuilder);
         ConfigurarAuditoriaHttp(modelBuilder);
+        ConfigurarAlmoxarifado(modelBuilder);
 
         modelBuilder.Entity<Usuario>(entity =>
         {
