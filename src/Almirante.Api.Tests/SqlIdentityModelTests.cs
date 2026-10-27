@@ -253,6 +253,7 @@ public sealed class SqlIdentityModelTests
                 DbPrivilegeAuditor.AuditTable or DbPrivilegeAuditor.EventosAuditTable or DbPrivilegeAuditor.UsuariosAuditTable
                     or DbPrivilegeAuditor.FormacaoAuditTable or "__EFMigrationsHistory" => new[] { "SELECT" },
                 DbPrivilegeAuditor.SessionsTable => ["SELECT", "INSERT", "UPDATE", "DELETE"],
+                _ when DbPrivilegeAuditor.InsertOnlyTables.Contains(tabela) => ["SELECT", "INSERT"],
                 _ => ["SELECT", "INSERT", "UPDATE"],
             };
             Assert.True(esperadas.OrderBy(x => x).SequenceEqual(efetivas.OrderBy(x => x)), $"{tabela}: esperado [{string.Join(",", esperadas)}], obtido [{string.Join(",", efetivas)}]");

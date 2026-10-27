@@ -148,6 +148,10 @@ public sealed partial class DbCredentialManager(
         var auditTablesSql = string.Join(", ", DbPrivilegeAuditor.AuditTables.Select(t => $"N'{t}'"));
         var denyAuditSql = string.Join(" ", DbPrivilegeAuditor.AuditTables.Select(t =>
             $"IF OBJECT_ID(N'dbo.{t}', N'U') IS NOT NULL SET @cmd += N'DENY INSERT, UPDATE, DELETE ON OBJECT::dbo.{t} TO [{role}]; ';"));
+        var insertOnlyTablesSql = string.Join(", ", DbPrivilegeAuditor.InsertOnlyTables.Select(t => $"N'{t}'"));
+        var insertOnlySql = string.Join(" ", DbPrivilegeAuditor.InsertOnlyTables.Select(t =>
+            $"IF OBJECT_ID(N'dbo.{t}', N'U') IS NOT NULL SET @cmd += N'GRANT SELECT, INSERT ON OBJECT::dbo.{t} TO [{role}]; " +
+            $"DENY UPDATE, DELETE ON OBJECT::dbo.{t} TO [{role}]; ';"));
         return $"""
             IF DATABASE_PRINCIPAL_ID(N'{user}') IS NULL OR DATABASE_PRINCIPAL_ID(N'{role}') IS NULL
                 THROW 51001, N'Identidade de runtime ou role ausente: execute o bootstrap (docs/sql/criar-usuario-admin-app.sql).', 1;
@@ -160,7 +164,7 @@ public sealed partial class DbCredentialManager(
 
             SELECT @cmd += N'GRANT SELECT, INSERT, UPDATE ON OBJECT::dbo.' + QUOTENAME(t.name) + N' TO [{role}]; '
             FROM sys.tables t
-            WHERE t.schema_id = SCHEMA_ID(N'dbo') AND t.name NOT IN ({auditTablesSql}, N'__EFMigrationsHistory');
+            WHERE t.schema_id = SCHEMA_ID(N'dbo') AND t.name NOT IN ({auditTablesSql}, {insertOnlyTablesSql}, N'__EFMigrationsHistory');
 
             SELECT @cmd += N'GRANT SELECT ON OBJECT::dbo.' + QUOTENAME(t.name) + N' TO [{role}]; '
             FROM sys.tables t
@@ -169,6 +173,7 @@ public sealed partial class DbCredentialManager(
             IF OBJECT_ID(N'dbo.{DbPrivilegeAuditor.SessionsTable}', N'U') IS NOT NULL
                 SET @cmd += N'GRANT DELETE ON OBJECT::dbo.{DbPrivilegeAuditor.SessionsTable} TO [{role}]; ';
             {denyAuditSql}
+            {insertOnlySql}
 
             EXEC sys.sp_executesql @cmd;
             """;
