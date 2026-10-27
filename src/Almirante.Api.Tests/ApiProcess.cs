@@ -168,6 +168,14 @@ public sealed class ApiProcess : IAsyncDisposable
     {
         try
         {
+            // No Linux (job sqlserver-integration do CI), SIGTERM desliga a API como o Docker faz. Só no encerramento normal o
+            // Coverlet grava o que rodou neste processo filho; o Kill fica como último recurso (e é o único caminho no Windows).
+            if (!_process.HasExited && !OperatingSystem.IsWindows())
+            {
+                using var sigterm = Process.Start("kill", ["-TERM", _process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+                await sigterm.WaitForExitAsync();
+                try { await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20)); } catch (TimeoutException) { }
+            }
             if (!_process.HasExited)
             {
                 _process.Kill(entireProcessTree: true);
