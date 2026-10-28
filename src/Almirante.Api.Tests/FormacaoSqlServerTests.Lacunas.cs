@@ -418,6 +418,8 @@ public sealed partial class FormacaoSqlServerTests
         var (participante, membro) = await MembroAsync();
         Assert.Equal(HttpStatusCode.NotFound, (await participante.GetAsync($"/api/RevisoesRequisitos/{Id(rascunho)}")).StatusCode);
         Assert.Equal("Descartada", (string)(await Esperar(await Admin.GetAsync($"/api/RevisoesRequisitos/{Id(rascunho)}")))["situacao"]!);
+        var publicada = await PublicarAsync(new { especialidadeId = Id(especialidade) }, Item("1"));
+        Assert.Equal(HttpStatusCode.OK, (await participante.GetAsync($"/api/RevisoesRequisitos/{Id(publicada)}")).StatusCode);
 
         var semFormacao = await Esperar(await Admin.GetAsync($"/api/Formacao/Membros/{membro}"));
         Assert.Empty(semFormacao["classes"]!.AsArray());

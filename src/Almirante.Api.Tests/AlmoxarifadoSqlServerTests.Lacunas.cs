@@ -79,6 +79,22 @@ public sealed partial class AlmoxarifadoSqlServerTests
     }
 
     [Fact]
+    public async Task Baixa_DepoisDeManutencaoEEmprestimo_ConfereAMovimentacaoMaisRecente()
+    {
+        var bem = Id(await BemAsync(Categoria()));
+        var manutencao = await Esperar(await Admin.PostAsJsonAsync($"/api/Almoxarifado/Bens/{bem}/Manutencoes",
+            new { dataEntrada = D(Hoje.AddDays(-10)), motivo = "Costura" }), HttpStatusCode.Created);
+        await Esperar(await Admin.PostAsJsonAsync($"/api/Almoxarifado/Manutencoes/{Id(manutencao)}/Saida",
+            new { dataSaida = D(Hoje.AddDays(-9)), conservacaoSaida = "Bom" }));
+        var emprestimo = Id(await Esperar(await EmprestarAsync(bem, await MembroAsync(), Hoje.AddDays(-5), Hoje.AddDays(-4)), HttpStatusCode.Created));
+        await Esperar(await DevolverAsync(emprestimo, Hoje.AddDays(-3)));
+
+        await Status(await Admin.PostAsJsonAsync($"/api/Almoxarifado/Bens/{bem}/Baixa",
+            new { dataBaixa = D(Hoje.AddDays(-4)), motivo = "Descarte", justificativa = "Rasgado" }), HttpStatusCode.BadRequest);
+        await Esperar(await Admin.PostAsJsonAsync($"/api/Almoxarifado/Bens/{bem}/Baixa", new { dataBaixa = D(Hoje), motivo = "Descarte", justificativa = "Rasgado" }));
+    }
+
+    [Fact]
     public async Task Atendimento_ComBemDeDataDeAquisicaoDesconhecida_EAceito()
     {
         var categoria = Categoria();
@@ -108,6 +124,12 @@ public sealed partial class AlmoxarifadoSqlServerTests
         corpo["responsavelGuardaId"] = guarda;
         var atualizado = await Esperar(await Admin.PutAsJsonAsync($"/api/Almoxarifado/Bens/{Id(bem)}", corpo));
         Assert.Equal(guarda, Id(atualizado["responsavelGuarda"]!));
+        corpo["versao"] = Versao(atualizado);
+        var mantido = await Esperar(await Admin.PutAsJsonAsync($"/api/Almoxarifado/Bens/{Id(bem)}", corpo));
+        var outraGuarda = await MembroAsync("TES");
+        corpo["responsavelGuardaId"] = outraGuarda;
+        corpo["versao"] = Versao(mantido);
+        Assert.Equal(outraGuarda, Id((await Esperar(await Admin.PutAsJsonAsync($"/api/Almoxarifado/Bens/{Id(bem)}", corpo)))["responsavelGuarda"]!));
 
         var acervo = BemCorpo(categoria, nome: "Lampião antigo");
         acervo["dataAquisicao"] = null;
@@ -115,7 +137,7 @@ public sealed partial class AlmoxarifadoSqlServerTests
         acervo["justificativaDataDesconhecida"] = "Doação antiga sem registro";
         await Esperar(await Admin.PostAsJsonAsync("/api/Almoxarifado/Bens", acervo), HttpStatusCode.Created);
         var csv = await (await Admin.GetAsync($"/api/Almoxarifado/Relatorios/Patrimonio/Csv?categoria={categoria}")).Content.ReadAsStringAsync();
-        Assert.Contains("Membro SEC", csv);
+        Assert.Contains("Membro TES", csv);
         Assert.Contains("Desconhecida", csv);
 
         await Esperar(await EmprestarAsync(Id(bem), await MembroAsync()), HttpStatusCode.Created);

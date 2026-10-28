@@ -391,4 +391,43 @@ public sealed class UsuariosCinEnderecoSqlServerTests : IClassFixture<EventosSql
         Assert.Equal((UsuarioHistorico.OperacaoDelete, true, new DateOnly(2030, 12, 31), "04382160", "9", "Fundos", "São Paulo"),
             (h.TipoOperacao, h.EhCin, h.DataExpiracao, h.EnderecoCep, h.EnderecoNumero, h.EnderecoComplemento, h.EnderecoLocalidade));
     }
+
+    [Fact]
+    public async Task Put_MesmoCepDoPedido_ComCepGravadoAlteradoNoMeio_ConsultaDeNovoDentroDaTransacao()
+    {
+        var pausa = new PausaDeComandoInterceptor();
+        using var fabrica = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(pausa));
+        using var cliente = await TestHelpers.CreateAuthenticatedClientAsync(fabrica);
+        var cargoId = await TestHelpers.WithDbAsync(fabrica, db => db.Cargos.Where(c => c.Role == "DS").Select(c => c.Id).SingleAsync());
+        var criado = await cliente.PostAsJsonAsync("/api/Usuarios", new JsonObject
+        {
+            ["nome"] = "Participante CEP", ["email"] = $"cep-{Guid.NewGuid():N}@local.dev", ["senha"] = $"Forte-{Guid.NewGuid():N}",
+            ["cargoId"] = cargoId.ToString(), ["cpf"] = TestHelpers.NovoCpf(), ["rg"] = TestHelpers.RgFicticio, ["endereco"] = Endereco("04382160", "100"),
+        });
+        Assert.True(criado.StatusCode == HttpStatusCode.Created, await criado.Content.ReadAsStringAsync());
+        var alvo = (await criado.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
+
+        var gate = pausa.Armar(sql => sql.Contains("dbo.Usuarios WITH (XLOCK, ROWLOCK)", StringComparison.Ordinal));
+        var put = cliente.PutAsJsonAsync($"/api/Usuarios/{alvo.Id}", CorpoPut(alvo, c => c["endereco"] = Endereco("04382160", "200")));
+        await gate.Atingida;
+        await using (var conexao = new Microsoft.Data.SqlClient.SqlConnection(fabrica.ConnectionString))
+        {
+            await conexao.OpenAsync();
+            await using var comando = conexao.CreateCommand();
+            comando.CommandText = """
+                EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@id;
+                EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='127.0.0.1';
+                UPDATE dbo.Usuarios SET EnderecoCep = '01310200' WHERE Id = @id;
+                """;
+            comando.Parameters.AddWithValue("@id", alvo.Id);
+            Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+        }
+        gate.Liberar();
+
+        var resposta = await put;
+        Assert.True(resposta.StatusCode == HttpStatusCode.OK, await resposta.Content.ReadAsStringAsync());
+        var gravado = await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvo.Id));
+        Assert.Equal(("04382160", "200"), (gravado.EnderecoCep, gravado.EnderecoNumero));
+        Assert.Equal("Rua Fictícia 04382160", gravado.EnderecoLogradouro);
+    }
 }
