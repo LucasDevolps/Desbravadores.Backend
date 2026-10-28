@@ -190,7 +190,7 @@ internal sealed partial class ChamadaAuditada
     public AuditoriaHttp Montar(bool upgrade)
     {
         var context = Contexto;
-        var abortada = !upgrade && (context.RequestAborted.IsCancellationRequested || (ExcecaoNaoTratada is not null && context.Response.HasStarted));
+        var abortada = Abortada(upgrade);
         var (estadoRequest, request) = MontarRequest(abortada);
         var (estadoResponse, response) = MontarResponse(upgrade, abortada);
         var excecao = ExcecaoNaoTratada is { } naoTratada
@@ -211,7 +211,7 @@ internal sealed partial class ChamadaAuditada
                 _politica.LiteralConhecido),
             Exception = excecao,
             DataRequestUtc = DataRequestUtc,
-            DuracaoMs = _duracaoMs ?? Duracao(),
+            DuracaoMs = DuracaoFinal(),
             IpUsuario = Ip,
             IdentificacaoUsuario = Usuario(context),
             TraceId = TraceId,
@@ -231,10 +231,10 @@ internal sealed partial class ChamadaAuditada
             MetodoHttp = Metodo,
             Request = falha,
             Response = falha,
-            StatusCode = Status(upgrade, ExcecaoNaoTratada is not null && Contexto.Response.HasStarted),
+            StatusCode = Status(upgrade, Abortada(upgrade)),
             Headers = "{}",
             DataRequestUtc = DataRequestUtc,
-            DuracaoMs = _duracaoMs ?? Duracao(),
+            DuracaoMs = DuracaoFinal(),
             IpUsuario = Ip,
             IdentificacaoUsuario = Usuario(Contexto),
             TraceId = TraceId,
@@ -316,6 +316,10 @@ internal sealed partial class ChamadaAuditada
     /// Chamada concluída normalmente: o status final (o servidor o envia ao encerrar). Interrompida: só se os cabeçalhos saíram antes da
     /// desconexão; senão nulo, nunca o 200 padrão nem o 499 que o ASP.NET Core anota sem enviar.
     /// </summary>
+    /// <summary>Cliente desistiu, ou a aplicação lançou depois de começar a resposta (o servidor corta a conexão). Upgrade nunca conta.</summary>
+    private bool Abortada(bool upgrade) =>
+        !upgrade && (Contexto.RequestAborted.IsCancellationRequested || (ExcecaoNaoTratada is not null && Contexto.Response.HasStarted));
+
     private int? Status(bool upgrade, bool abortada)
     {
         var response = Contexto.Response;
@@ -394,6 +398,9 @@ internal sealed partial class ChamadaAuditada
             return $"{SanitizadorAuditoriaHttp.SanitizarEsquema(context.Request.Scheme)}://{SanitizadorAuditoriaHttp.MarcadorUrl}";
         }
     }
+
+    /// <summary>Medida no fim do pipeline; antes dele (upgrade emitido na hora), a duração até agora.</summary>
+    private int DuracaoFinal() => _duracaoMs ?? Duracao();
 
     private int Duracao() => (int)Math.Min(int.MaxValue, _tempo.GetElapsedTime(_inicio).TotalMilliseconds);
 

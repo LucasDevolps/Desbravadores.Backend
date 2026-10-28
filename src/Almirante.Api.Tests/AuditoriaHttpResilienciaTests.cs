@@ -90,6 +90,20 @@ public sealed class AuditoriaHttpResilienciaTests
                         await context.Response.WriteAsync("""{"parcial":""");
                         await context.Response.Body.FlushAsync();
                         throw new InvalidOperationException("falha depois de começar a resposta");
+                    case Prefixo + "/cabecalhos":
+                        context.Response.ContentType = "application/json";
+                        await context.Response.StartAsync();
+                        throw new InvalidOperationException("falha depois dos cabeçalhos, sem corpo");
+                    case Prefixo + "/lanca":
+                        throw new InvalidOperationException("falha antes da resposta");
+                    case Prefixo + "/pipe":
+                        // Content-Length menor que o que fica no buffer do PipeWriter: o servidor recusa no flush final.
+                        context.Response.ContentType = "application/json";
+                        context.Response.ContentLength = 2;
+                        var bytes = """{"a":1}"""u8;
+                        bytes.CopyTo(context.Response.BodyWriter.GetSpan(bytes.Length));
+                        context.Response.BodyWriter.Advance(bytes.Length);
+                        return;
                     case Prefixo + "/arquivo":
                         context.Response.ContentType = "application/json";
                         if (context.Request.Query.ContainsKey("trecho")) await context.Response.SendFileAsync(arquivo, 0, 7);
@@ -163,6 +177,100 @@ public sealed class AuditoriaHttpResilienciaTests
         Assert.Equal((200, AuditoriaHttp.Anonimo, "POST"), (registro.StatusCode, registro.IdentificacaoUsuario, registro.MetodoHttp));
         Assert.DoesNotContain("nao-deve-aparecer", AuditoriaHttpTestKit.Tudo(registro));
         Assert.Contains(factory.Logs.Entries, e => e.Contains($"Falha ao sanitizar a auditoria HTTP {registro.Id} (System.InvalidOperationException)"));
+    }
+
+    /// <summary>Kestrel de verdade (em processo): Content-Length, desconexão e OnCompleted com exceção só se comportam assim nele.</summary>
+    private static void Kestrel(FactoryComFalhas factory)
+    {
+        factory.UseKestrel(0);
+        factory.StartServer();
+    }
+
+    [Theory]
+    [InlineData("/parcial")]
+    [InlineData("/lanca")]
+    public async Task FalhaAoMontarORegistro_ComExcecaoNaoTratada_GravaOMinimo(string rota)
+    {
+        await using var factory = new FactoryComFalhas();
+        Kestrel(factory);
+        try
+        {
+            using var resposta = await factory.CreateClient().GetAsync($"{Prefixo}{rota}?falha=usuario");
+            await resposta.Content.ReadAsStringAsync();
+        }
+        catch (HttpRequestException)
+        {
+        }
+
+        var registro = Assert.Single(await RegistrosDoCaminhoAsync(factory, "GET"));
+        Assert.Equal((EstadoCapturaHttp.FalhaSanitizacao, EstadoCapturaHttp.FalhaSanitizacao), (registro.EstadoCapturaRequest, registro.EstadoCapturaResponse));
+        Assert.Contains("falha na sanitização", registro.Request);
+    }
+
+    [Fact]
+    public async Task FlushFinalRecusadoPeloServidor_NaoSubstituiAChamada_ERegistroSai()
+    {
+        await using var factory = new FactoryComFalhas();
+        Kestrel(factory);
+        try
+        {
+            using var resposta = await factory.CreateClient().GetAsync($"{Prefixo}/pipe");
+            await resposta.Content.ReadAsStringAsync();
+        }
+        catch (HttpRequestException)
+        {
+        }
+
+        Assert.Single(await RegistrosDoCaminhoAsync(factory, "GET"));
+    }
+
+    private static async Task<System.Net.Sockets.TcpClient> ConectarAsync(FactoryComFalhas factory)
+    {
+        var endereco = new Uri(factory.Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
+            .Features.Get<Microsoft.AspNetCore.Hosting.Server.Features.IServerAddressesFeature>()!.Addresses.First());
+        var tcp = new System.Net.Sockets.TcpClient();
+        await tcp.ConnectAsync(endereco.Host == "localhost" ? "127.0.0.1" : endereco.Host, endereco.Port);
+        return tcp;
+    }
+
+    [Fact]
+    public async Task ExcecaoDepoisDosCabecalhosSemCorpo_RespostaInterrompidaComMarcador()
+    {
+        await using var factory = new FactoryComFalhas();
+        Kestrel(factory);
+        try
+        {
+            using var resposta = await factory.CreateClient().GetAsync($"{Prefixo}/cabecalhos");
+            await resposta.Content.ReadAsStringAsync();
+        }
+        catch (HttpRequestException)
+        {
+        }
+
+        var registro = Assert.Single(await RegistrosDoCaminhoAsync(factory, "GET"));
+        Assert.Equal((EstadoCapturaHttp.Interrompida, 200), (registro.EstadoCapturaResponse, registro.StatusCode));
+        Assert.Contains("resposta interrompida", registro.Response);
+    }
+
+    [Fact]
+    public async Task ClienteFechaAConexaoNoMeioDoCorpo_RequisicaoInterrompida()
+    {
+        await using var factory = new FactoryComFalhas();
+        Kestrel(factory);
+
+        using (var tcp = await ConectarAsync(factory))
+        {
+            // Cabeçalhos com Content-Length 1000 e só o começo do corpo; depois a conexão fecha.
+            var parcial = System.Text.Encoding.ASCII.GetBytes(string.Join("\r\n",
+                $"POST {Prefixo}/eco HTTP/1.1", "Host: localhost", "Content-Type: application/json", "Content-Length: 1000", "", "{\"a\":\""));
+            await tcp.GetStream().WriteAsync(parcial);
+            await tcp.GetStream().FlushAsync();
+            await Task.Delay(300);
+        }
+
+        var registro = Assert.Single(await RegistrosDoCaminhoAsync(factory, "POST"));
+        Assert.Equal(EstadoCapturaHttp.Interrompida, registro.EstadoCapturaRequest);
+        Assert.Contains("requisição interrompida", registro.Request);
     }
 
     [Fact]

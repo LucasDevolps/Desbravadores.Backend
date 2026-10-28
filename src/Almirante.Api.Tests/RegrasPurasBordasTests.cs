@@ -157,6 +157,7 @@ public sealed class RegrasPurasBordasTests
             User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity([new System.Security.Claims.Claim("role", "DS")], "Teste")),
         };
         Assert.Equal(AuditoriaHttp.Anonimo, ChamadaAuditada.Usuario(contexto));
+        Assert.Equal(AuditoriaHttp.Anonimo, ChamadaAuditada.Usuario(new DefaultHttpContext { User = new System.Security.Claims.ClaimsPrincipal() }));
     }
 
     [Fact]
