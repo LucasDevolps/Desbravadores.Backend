@@ -100,19 +100,36 @@ justificada nesta tabela no mesmo PR, nunca para esconder código difícil de te
 
 ## Números
 
-Referência: `develop` em `20a450d303c6d87ea7f76a516980884d7edd136f` (antes da issue #160), medida pelo CI (run 40495756276) e
-reproduzida localmente com os mesmos comandos.
+Medidos pelo CI, sempre com a mesma suíte e o mesmo escopo:
 
-| Medição | Antes (#160, união por Cobertura) | Depois (#160, união por OpenCover) |
+- **Antes:** `develop` em `20a450d303c6d87ea7f76a516980884d7edd136f` (run 40495756276), união por Cobertura.
+- **Depois:** `f95aca0` (run 41076305252), união por OpenCover.
+
+| Medição | Antes | Depois |
 |---|---|---|
-| Unitária — linhas | 7799/15849 (49,20%) | ver `src/coverage-baseline-unit.json` |
-| Unitária — branches | 2474/3949 (62,64%) | ver `src/coverage-baseline-unit.json` |
-| Combinada — linhas | 15319/15849 (96,65%) | ver Job Summary do PR #175 |
-| Combinada — branches | 3568/3949 (90,35%) | ver Job Summary do PR #175 |
+| Unitária — linhas | 7799/15849 (49,20%) | 8145/15805 (51,53%) |
+| Unitária — branches | 2474/3949 (62,64%) | 2736/3923 (69,74%) |
+| Combinada — linhas | 15319/15849 (96,65%) | **15805/15805 (100%)** |
+| Combinada — branches | 3568/3949 (90,35%) | **3923/3923 (100%)** |
 
-Os totais mudaram entre as colunas por dois motivos documentados: o OpenCover conta os branches de forma mais granular (3975 contra
-3949) e algumas linhas mortas foram removidas (seção "Refatorações" do PR). O relatório final da issue, com os números por suíte,
-está na descrição do PR #175.
+| Assembly medido | Unitária (linhas / branches) | Combinada (linhas / branches) |
+|---|---|---|
+| `Almirante.Api` | 51,38% / 69,60% | 100% / 100% |
+| `Almirante.ServiceDefaults` | 100% / 100% | 100% / 100% |
+
+Testes no run final: 1430 na suíte sem dependências e 475 em `Category=RequiresSqlServer`, nenhum ignorado ou com falha.
+
+Os totais mudaram entre as colunas por três motivos: o OpenCover conta os branches de outra forma, código morto foi removido, e ramos
+impossíveis saíram em refatorações sem mudança de comportamento (lista na descrição do PR #175). Parte dos 100% vem dessas remoções e
+de extrair métodos para testá-los direto: isso é medição de código exercitado, não prova de ausência de defeitos. Ramos
+extraídos para teste direto, como o retorno `-999` do `sp_getapplock` (`EventosService.ConferirLockDoGrupo`), não são alcançados pelo SQL Server real.
+
+### Estabilidade da medição
+
+Com tolerância zero, um ramo coberto só por sorte de tempo reprova o CI ao acaso. A auditoria achou dois casos, ambos corrigidos com
+falha injetada: a falha inesperada no desligamento do `GravadorAuditoriaHttp` e o retry da leitura em `NotificacoesService`. Se o gate
+acusar uma linha que estava coberta sem mudança no código, trate como teste dependente de tempo e torne-o determinístico; não
+reduza o baseline nem reexecute até passar.
 
 ## Lacunas da cobertura unitária
 
