@@ -1,7 +1,6 @@
 using Almirante.Api.Data;
 using Almirante.Api.Dtos;
 using Almirante.Api.Infrastructure;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
@@ -28,37 +27,11 @@ public sealed class LancamentoExclusaoService(AlmiranteDbContext db, ILogger<Lan
             return true;
         }
 
-        var sessao = new SessaoAuditoria(db);
-        await db.Database.OpenConnectionAsync(ct);
-        var conexao = db.Database.GetDbConnection() as SqlConnection;
-        try
+        // Nenhuma linha atualizada (inexistente ou já excluído): nada mudou, e a transação confirma vazia.
+        return await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, request.Motivo.Trim(), ct);
-            var affected = await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.Lancamentos SET Ativo=0 WHERE Id={request.Id} AND Ativo=1;", ct);
-            if (affected == 0)
-            {
-                await tx.RollbackAsync(ct);
-                return false;
-            }
-
-            await tx.CommitAsync(ct);
-            return true;
-        }
-        finally
-        {
-            try
-            {
-                var limpo = await sessao.LimparAsync(logger);
-                if (!limpo && conexao is not null)
-                {
-                    SqlConnection.ClearPool(conexao);
-                }
-            }
-            finally
-            {
-                await db.Database.CloseConnectionAsync();
-            }
-        }
+            return await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.Lancamentos SET Ativo=0 WHERE Id={request.Id} AND Ativo=1;", ct) > 0;
+        }, ct);
     }
 }

@@ -143,10 +143,16 @@ filtro de caminhos, com três checks obrigatórios:
 | `sqlserver-integration` | testes `Category=RequiresSqlServer` contra SQL Server 2022 descartável (Linux) |
 | `deploy-scripts` | testes dos scripts de deploy, política dos workflows, cobertura, bootstrap SQL, Compose e Nginx |
 
-Depois dos dois jobs de testes .NET, o job `coverage` consolida a cobertura das duas suítes, publica o
-relatório e reprova regressões acima da tolerância em relação ao baseline. Não baixe o baseline para
-"passar" um PR: a política e como atualizá-lo legitimamente estão em
-[`docs/test-coverage.md`](docs/test-coverage.md).
+Depois dos dois jobs de testes .NET, o job `coverage` publica dois relatórios separados:
+
+- **combinada** (as duas suítes unidas): gate de 100% de linhas e de branches do código próprio, sem tolerância;
+- **unitária** (só `build-and-test`): gate de não regressão contra o baseline próprio, e a lista de linhas e branches
+  que só a integração cobre aparece no resumo do job.
+
+A integração nunca conta para a cobertura unitária. Não baixe um baseline nem adicione exclusões para
+"passar" um PR: a política, o que entra na medição e como atualizar o baseline legitimamente estão em
+[`docs/test-coverage.md`](docs/test-coverage.md). Toda rota nova também precisa de uma linha em
+[`docs/rastreabilidade.md`](docs/rastreabilidade.md), conferida pelo teste `RastreabilidadeTests`.
 
 Além do CI, todo push e PR para `main` e `develop` passa pelos workflows de segurança da cadeia de
 suprimentos: `codeql.yml` (CodeQL para C#) e `container-security.yml` (scan da imagem da API com Trivy e
@@ -167,6 +173,9 @@ conexão administrativa usada pelo harness para criar e remover bancos e logins 
 **Use sempre uma instância descartável ou dedicada a testes** (por exemplo, um contêiner
 SQL Server local). Nunca aponte essa variável para um banco de produção ou compartilhado. Veja a
 seção [Testes](README.md#testes) do README.
+
+Para medir a cobertura como o CI (unitária e combinada), siga
+[Reproduzir localmente](docs/test-coverage.md#reproduzir-localmente) em `docs/test-coverage.md`.
 
 Os scripts do check `deploy-scripts` (requerem Bash; os de Compose e o de Nginx também requerem Docker):
 

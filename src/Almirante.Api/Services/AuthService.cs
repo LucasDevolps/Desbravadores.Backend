@@ -68,8 +68,8 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         var hash = SHA256.HashData(Base64UrlTextEncoder.Decode(rawToken));
         var token = await db.RefreshTokens.Include(x => x.Session)!.ThenInclude(x => x!.Usuario)!.ThenInclude(x => x!.Cargo)
             .SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
-        if (token?.Session is null) return null;
-        var session = token.Session;
+        if (token is null) return null;
+        var session = token.Session!; // FK obrigatória e Include acima: todo refresh token tem sessão.
         var now = clock.GetUtcNow().UtcDateTime;
 
         if (token.ConsumedAtUtc is not null)

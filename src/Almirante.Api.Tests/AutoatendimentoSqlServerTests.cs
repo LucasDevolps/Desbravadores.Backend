@@ -304,4 +304,25 @@ public sealed class AutoatendimentoSqlServerTests(FotosSqlFixture fx) : IClassFi
         await hubNovo.StartAsync();
         Assert.Equal(Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected, hubNovo.State);
     }
+
+    [Fact]
+    public async Task Membros_NoSqlServer_ListaSoAtivos_EmOrdemDeNome()
+    {
+        var (tesoureiro, _) = await UsuarioAsync("TES");
+        var ativo = await TestHelpers.AddUsuarioAsync(Factory, $"Aaa Ativo {Guid.NewGuid():N}", "DS");
+        var inativo = await TestHelpers.AddUsuarioAsync(Factory, $"Aaa Inativo {Guid.NewGuid():N}", "DS");
+        await Db(db => db.Database.ExecuteSqlInterpolatedAsync($"""
+            EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={inativo.Id};
+            EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='127.0.0.1';
+            UPDATE dbo.Usuarios SET Ativo = 0 WHERE Id = {inativo.Id};
+            """));
+
+        var itens = (await tesoureiro.GetFromJsonAsync<JsonArray>("/api/Membros"))!;
+
+        var ids = itens.Select(i => Guid.Parse((string)i!["id"]!)).ToList();
+        Assert.Contains(ativo.Id, ids);
+        Assert.DoesNotContain(inativo.Id, ids);
+        var nomes = itens.Select(i => (string)i!["nome"]!).ToList();
+        Assert.Equal(nomes.Order(StringComparer.Create(new System.Globalization.CultureInfo("pt-BR"), ignoreCase: true)), nomes);
+    }
 }

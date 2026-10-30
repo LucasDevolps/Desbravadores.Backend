@@ -458,7 +458,15 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             "EXEC @codigo = sys.sp_getapplock @Resource = @recurso, @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = @espera;",
             [codigo, new SqlParameter("@recurso", RecursoDoGrupo(grupoId)), new SqlParameter("@espera", lockOptions.TimeoutMs)], ct);
 
-        var resultado = (int)codigo.Value;
+        ConferirLockDoGrupo((int)codigo.Value, grupoId, logger);
+    }
+
+    /// <summary>
+    /// Retorno do sp_getapplock: 0/1 concedido; -999 é erro de parâmetro (falha da aplicação, não do usuário); os demais negativos
+    /// (tempo esgotado, cancelado, deadlock) são lock não concedido e viram 409.
+    /// </summary>
+    internal static void ConferirLockDoGrupo(int resultado, Guid grupoId, ILogger logger)
+    {
         if (resultado >= 0)
         {
             return;

@@ -416,4 +416,43 @@ public sealed class NotificacoesTests(AlmiranteApiFactory factory) : IClassFixtu
         Assert.False(CursorNotificacoes.TentarLer(Convert.ToBase64String("1.2"u8.ToArray()).TrimEnd('='), out _, out _));
         Assert.False(CursorNotificacoes.TentarLer(new string('A', 200), out _, out _));
     }
+
+    private sealed class FactoryComFalhasNaGravacao : AlmiranteApiFactory
+    {
+        private readonly string _banco = Guid.NewGuid().ToString();
+        public FalhasInjetaveisNoBanco Falhas { get; } = new();
+
+        protected override void ConfigureDatabase(IServiceCollection services) =>
+            services.AddDbContext<Almirante.Api.Data.AlmiranteDbContext>(o => o.UseInMemoryDatabase(_banco).AddInterceptors(Falhas));
+    }
+
+    /// <summary>O retry também é exercitado por leituras concorrentes no SQL Server, mas lá depende de elas colidirem; aqui o conflito é certo.</summary>
+    [Fact]
+    public async Task Leitura_ConflitoDeConcorrencia_RelENovaTentativa_EDesisteDepoisDeTres()
+    {
+        await using var banco = new FactoryComFalhasNaGravacao();
+        var tesouraria = await TestHelpers.CreateAuthenticatedClientAsync(banco);
+        var (membro, membroId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(banco, "DS");
+        Assert.Equal(HttpStatusCode.Created, (await RegistrarDebitoAsync(tesouraria, membroId, descricao: "Primeiro")).StatusCode);
+        var primeira = Assert.Single((await PendentesAsync(membro)).Items);
+        var conflitos = 0;
+        Exception Conflito(int limite)
+        {
+            if (++conflitos < limite) banco.Falhas.FalharProximoSave(() => Conflito(limite));
+            return new DbUpdateConcurrencyException("outra leitura gravou antes (simulado)");
+        }
+
+        banco.Falhas.FalharProximoSave(() => Conflito(1));
+        Assert.Equal(HttpStatusCode.OK, (await LerAsync(membro, primeira.Id)).StatusCode);
+        Assert.Equal(1, conflitos);
+        Assert.NotNull((await TestHelpers.WithDbAsync(banco, db => db.Notificacoes.AsNoTracking().SingleAsync(n => n.Id == primeira.Id))).LidaEmUtc);
+
+        Assert.Equal(HttpStatusCode.Created, (await RegistrarDebitoAsync(tesouraria, membroId, descricao: "Segundo")).StatusCode);
+        var segunda = Assert.Single((await PendentesAsync(membro)).Items);
+        conflitos = 0;
+        banco.Falhas.FalharProximoSave(() => Conflito(3));
+        Assert.Equal(HttpStatusCode.InternalServerError, (await LerAsync(membro, segunda.Id)).StatusCode);
+        Assert.Equal(3, conflitos);
+        Assert.Null((await TestHelpers.WithDbAsync(banco, db => db.Notificacoes.AsNoTracking().SingleAsync(n => n.Id == segunda.Id))).LidaEmUtc);
+    }
 }

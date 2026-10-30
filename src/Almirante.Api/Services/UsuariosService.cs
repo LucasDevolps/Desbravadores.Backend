@@ -511,7 +511,9 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             return atual with { Numero = numero, Complemento = complemento };
         }
 
-        var dadosCep = cepPreConsultado?.Cep == cep ? cepPreConsultado : await ConsultarCepAsync(cep, NadaAlterado, ct);
+        // A pré-consulta só existe para o CEP deste pedido (o ViaCEP devolve o CEP consultado). Sem ela, o CEP gravado mudou depois da
+        // pré-consulta (outra alteração no meio): consulta agora, dentro da transação.
+        var dadosCep = cepPreConsultado ?? await ConsultarCepAsync(cep, NadaAlterado, ct);
         return EnderecoGravado.DoCep(dadosCep, numero, complemento);
     }
 

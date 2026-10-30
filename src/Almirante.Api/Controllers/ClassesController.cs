@@ -30,6 +30,7 @@ public sealed class ClassesController(ISender mediator) : ControllerBase
     [HttpGet("{classe}")]
     [EndpointSummary("Consulta uma classe do catálogo.")]
     [ProducesResponseType<ClasseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ClasseDto>> Obter(ClasseDesbravador classe, CancellationToken cancellationToken)
     {

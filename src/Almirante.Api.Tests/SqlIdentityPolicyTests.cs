@@ -86,6 +86,20 @@ public class SqlIdentityPolicyTests
     public void AutenticacaoIntegradaComoAdministrador_EAceita_AAuditoriaDePrivilegioContinuaObrigatoria() =>
         Assert.Empty(Falhas(Runtime, "Server=sqlserver;Database=almirante;Integrated Security=True", "almirante_user_bd"));
 
+    [Fact]
+    public void IdentidadeAdministrativa_SemBanco_Falha() =>
+        Assert.Contains(Falhas(Runtime, "Server=sqlserver;User Id=almirante_admin_bd;Password=" + SenhaAdmin, "almirante_user_bd"),
+            f => f.Contains("AlmiranteAdmin precisa de Database=<banco>"));
+
+    [Fact]
+    public void IdentidadeAdministrativa_Ilegivel_ContaComoAusente_SemVazarOTexto()
+    {
+        var falhas = Falhas(Runtime, "Palavra Desconhecida=" + SenhaAdmin, "almirante_user_bd");
+
+        Assert.Contains(falhas, f => f.Contains("AlmiranteAdmin é obrigatória"));
+        Assert.DoesNotContain(falhas, f => f.Contains(SenhaAdmin));
+    }
+
     [Theory]
     [InlineData("SQL_SA_PASSWORD")]
     [InlineData("MSSQL_SA_PASSWORD")]
@@ -146,7 +160,7 @@ public class SqlIdentityPolicyTests
     {
         var provider = new AppDbCredentialProvider();
         provider.Set("almirante_user_bd", "SenhaAntiga1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        var interceptor = new AppDbCredentialInterceptor(provider);
+        var interceptor = new AppDbCredentialInterceptor(provider, TimeProvider.System);
         using var connection = new SqlConnection("Server=x;Database=d");
 
         var gate = provider.BeginSwitch();
@@ -172,7 +186,7 @@ public class SqlIdentityPolicyTests
         provider.Set("u", "SenhaQualquer1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         using var connection = new SqlConnection("Server=x;Database=d");
 
-        await new AppDbCredentialInterceptor(provider).ConnectionOpeningAsync(connection, null!, default).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await new AppDbCredentialInterceptor(provider, TimeProvider.System).ConnectionOpeningAsync(connection, null!, default).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("u", connection.Credential.UserId);
     }
@@ -183,7 +197,69 @@ public class SqlIdentityPolicyTests
         using var connection = new SqlConnection("Server=x;Database=d");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new AppDbCredentialInterceptor(new AppDbCredentialProvider()).ConnectionOpeningAsync(connection, null!, default).AsTask());
+            new AppDbCredentialInterceptor(new AppDbCredentialProvider(), TimeProvider.System).ConnectionOpeningAsync(connection, null!, default).AsTask());
+    }
+
+    [Fact]
+    public async Task Interceptor_AberturaSincrona_EsperaATrocaEmAndamento_EUsaANovaCredencial()
+    {
+        var provider = new AppDbCredentialProvider();
+        var interceptor = new AppDbCredentialInterceptor(provider, TimeProvider.System);
+        using var semTroca = new SqlConnection("Server=x;Database=d");
+        provider.Set("u", "SenhaAntiga1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        interceptor.ConnectionOpening(semTroca, null!, default);
+        Assert.Equal("u", semTroca.Credential.UserId);
+
+        using var connection = new SqlConnection("Server=x;Database=d");
+        var gate = provider.BeginSwitch();
+        var abertura = Task.Run(() => interceptor.ConnectionOpening(connection, null!, default));
+        await Task.Delay(300);
+        Assert.False(abertura.IsCompleted, "a abertura síncrona deveria esperar a troca da credencial");
+
+        provider.Set("v", "SenhaNova2bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        gate.Dispose();
+        await abertura.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("v", connection.Credential.UserId);
+    }
+
+    [Fact]
+    public async Task Interceptor_TrocaQueNaoTerminaNoPrazo_SegueComACredencialAtual()
+    {
+        var provider = new AppDbCredentialProvider();
+        provider.Set("u", "SenhaAtual1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        var relogio = new RelogioManualDeTeste();
+        using var connection = new SqlConnection("Server=x;Database=d");
+        using var gate = provider.BeginSwitch();
+
+        var abertura = new AppDbCredentialInterceptor(provider, relogio).ConnectionOpeningAsync(connection, null!, default).AsTask();
+        Assert.Equal(AppDbCredentialProvider.SwitchWaitLimit, await relogio.AguardarTimerAsync());
+        relogio.Disparar();
+        await abertura.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("u", connection.Credential.UserId);
+    }
+
+    /// <summary>Conexão que não é do SQL Server: o interceptor não tem credencial a aplicar.</summary>
+    private sealed class OutraConexao : System.Data.Common.DbConnection
+    {
+        [System.Diagnostics.CodeAnalysis.AllowNull] public override string ConnectionString { get; set; } = "";
+        public override string Database => "";
+        public override string DataSource => "";
+        public override string ServerVersion => "";
+        public override System.Data.ConnectionState State => System.Data.ConnectionState.Closed;
+        public override void ChangeDatabase(string databaseName) { }
+        public override void Close() { }
+        public override void Open() { }
+        protected override System.Data.Common.DbTransaction BeginDbTransaction(System.Data.IsolationLevel isolationLevel) => throw new NotSupportedException();
+        protected override System.Data.Common.DbCommand CreateDbCommand() => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task Interceptor_ConexaoQueNaoEDoSqlServer_NaoEAlterada()
+    {
+        using var conexao = new OutraConexao();
+        await new AppDbCredentialInterceptor(new AppDbCredentialProvider(), TimeProvider.System).ConnectionOpeningAsync(conexao, null!, default);
+        Assert.Equal("", conexao.ConnectionString);
     }
 }
 
