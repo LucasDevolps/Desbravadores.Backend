@@ -181,7 +181,7 @@ public sealed partial class DbCredentialManager(
             """;
     }
 
-    /// <param name="credential">A credencial que acabou de ser publicada no provider, sob o mesmo lock da rotação.</param>
+    // credential: a que acabou de ser publicada no provider, sob o mesmo lock da rotação.
     private async Task VerifyLeastPrivilegeAsync(string user, SqlCredential credential, CancellationToken cancellationToken)
     {
         try

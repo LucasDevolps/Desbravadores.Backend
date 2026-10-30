@@ -1186,6 +1186,8 @@ A interface escuta **só no loopback** da máquina e exige um token de login; a 
 O Swagger UI fica em `/swagger` quando habilitado: por padrão só em `Development`; fora dele, só com `Swagger:Enabled=true`
 (`SWAGGER_ENABLED` no Compose). O overlay `compose.tls.yaml` o desliga por padrão, mesmo com a API em `Development`.
 
+Para testar rotas autenticadas, informe em **Authorize** só o token, sem o prefixo `Bearer`. As rotas públicas de `/api/Auth` aparecem sem cadeado.
+
 O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato completo da API, mantenha-o desligado em ambiente exposto.
 
 ## Segurança (issues #29, #31, #33, #34, #35, #36 e #127)
