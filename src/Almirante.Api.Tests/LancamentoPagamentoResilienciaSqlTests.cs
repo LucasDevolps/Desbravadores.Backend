@@ -138,10 +138,7 @@ public sealed class LancamentoPagamentoResilienciaSqlTests : IAsyncLifetime
         Assert.Equal(0, await Sql<int>("SELECT CAST(Status AS int) FROM Lancamentos WHERE Id = @l", ("@l", removido)));
     }
 
-    /// <summary>
-    /// O componente Aspire do EF Core liga EnableRetryOnFailure por padrão (como a estratégia desta fábrica): a exclusão precisa abrir a
-    /// transação auditada dentro da estratégia de execução, senão o EF recusa a transação iniciada pelo usuário.
-    /// </summary>
+    /// <summary>A exclusão auditada também funciona sob estratégia de retentativa, e repeti-la responde 404 sem gerar outra cópia.</summary>
     [Fact]
     public async Task Exclusao_ComEstrategiaDeRetentativa_ExcluiEGravaOHistorico()
     {
