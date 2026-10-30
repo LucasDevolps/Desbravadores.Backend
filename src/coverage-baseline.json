@@ -2,9 +2,9 @@
   "lineCoverageBaseline": 100.0,
   "branchCoverageBaseline": 100.0,
   "allowedRegressionPercentagePoints": 0.0,
-  "measuredAtCommit": "f95aca0",
+  "measuredAtCommit": "35f9a32",
   "measuredAt": "2026-10-30",
-  "measuredLines": "15805/15805 (CI 41076305252); antes da issue #160: 15319/15849",
-  "measuredBranches": "3923/3923 (CI 41076305252); antes da issue #160: 3568/3949",
+  "measuredLines": "15801/15801 (CI 41108178588); antes da issue #160: 15319/15849",
+  "measuredBranches": "3925/3925 (CI 41108178588); antes da issue #160: 3568/3949",
   "notes": "Cobertura COMBINADA (sem dependências externas + Category=RequiresSqlServer): meta fixa de 100% de linhas e branches do código próprio medido, sem tolerância (issue #160). Escopo, exclusões e política: docs/test-coverage.md."
 }

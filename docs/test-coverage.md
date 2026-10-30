@@ -103,21 +103,28 @@ justificada nesta tabela no mesmo PR, nunca para esconder código difícil de te
 Medidos pelo CI, sempre com a mesma suíte e o mesmo escopo:
 
 - **Antes:** `develop` em `20a450d303c6d87ea7f76a516980884d7edd136f` (run 40495756276), união por Cobertura.
-- **Depois:** `f95aca0` (run 41076305252), união por OpenCover.
+- **Depois:** `35f9a32` (run 41108178588), união por OpenCover.
 
 | Medição | Antes | Depois |
 |---|---|---|
-| Unitária — linhas | 7799/15849 (49,20%) | 8145/15805 (51,53%) |
-| Unitária — branches | 2474/3949 (62,64%) | 2736/3923 (69,74%) |
-| Combinada — linhas | 15319/15849 (96,65%) | **15805/15805 (100%)** |
-| Combinada — branches | 3568/3949 (90,35%) | **3923/3923 (100%)** |
+| Unitária — linhas | 7803/15849 (49,23%) | 8141/15801 (51,52%) |
+| Unitária — branches | 2476/3949 (62,70%) | 2738/3925 (69,75%) |
+| Combinada — linhas | 15319/15849 (96,65%) | **15801/15801 (100%)** |
+| Combinada — branches | 3568/3949 (90,35%) | **3925/3925 (100%)** |
 
-| Assembly medido | Unitária (linhas / branches) | Combinada (linhas / branches) |
+| Projeto | Medição | Antes (linhas / branches) | Depois (linhas / branches) |
+|---|---|---|---|
+| `Almirante.Api` | Unitária | 7755/15800 (49,08%) / 2459/3931 (62,55%) | 8092/15752 (51,37%) / 2720/3907 (69,62%) |
+| `Almirante.Api` | Combinada | 15271/15800 (96,65%) / 3551/3931 (90,33%) | 15752/15752 (100%) / 3907/3907 (100%) |
+| `Almirante.ServiceDefaults` | Unitária | 48/49 (97,96%) / 17/18 (94,44%) | 49/49 (100%) / 18/18 (100%) |
+| `Almirante.ServiceDefaults` | Combinada | 48/49 (97,96%) / 17/18 (94,44%) | 49/49 (100%) / 18/18 (100%) |
+
+| Suíte | Testes antes | Testes depois |
 |---|---|---|
-| `Almirante.Api` | 51,38% / 69,60% | 100% / 100% |
-| `Almirante.ServiceDefaults` | 100% / 100% | 100% / 100% |
+| Sem dependências | 1272 (0 ignorados) | 1437 (0 ignorados) |
+| `Category=RequiresSqlServer` | 421 (0 ignorados) | 475 (0 ignorados) |
 
-Testes no run final: 1430 na suíte sem dependências e 475 em `Category=RequiresSqlServer`, nenhum ignorado ou com falha.
+Nenhum teste falhou em nenhum dos runs.
 
 Os totais mudaram entre as colunas por três motivos: o OpenCover conta os branches de outra forma, código morto foi removido, e ramos
 impossíveis saíram em refatorações sem mudança de comportamento (lista na descrição do PR #175). Parte dos 100% vem dessas remoções e
