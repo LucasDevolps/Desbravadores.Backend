@@ -122,6 +122,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         "(logradouro, complementoCep, unidade, bairro, localidade, uf, estado, regiao, ibge, gia, ddd, siafi; vazios como null); " +
         "fotoUrl é a rota autenticada da foto (null sem foto).")]
     [ProducesResponseType<IReadOnlyList<UsuarioListItemDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<IReadOnlyList<UsuarioListItemDto>>> List(
         [FromQuery] bool includeInactive = false,
         CancellationToken cancellationToken = default)

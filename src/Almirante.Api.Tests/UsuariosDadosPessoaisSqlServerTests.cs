@@ -445,10 +445,12 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         }
     }
 
-    [Fact]
-    public async Task Put_ViolacaoDoIndiceNoUpdate_ViraConflito_MesmoQuandoAConsultaPreviaNaoEncontra()
+    [Theory]
+    [InlineData("cpf")]
+    [InlineData("email")]
+    public async Task Put_ViolacaoDoIndiceNoUpdate_ViraConflito_MesmoQuandoAConsultaPreviaNaoEncontra(string campo)
     {
-        var cpf = NovoCpf();
+        var valor = campo == "cpf" ? NovoCpf() : NovoEmail();
         var pausa = new PausaDeComandoInterceptor();
         using var fabrica = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(pausa));
         using var cliente = await TestHelpers.CreateAuthenticatedClientAsync(fabrica);
@@ -456,19 +458,19 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var outroLocal = await CriarNaFabricaAsync(fabrica, cliente);
 
         var gate = pausa.Armar(sql => sql.StartsWith("UPDATE dbo.Usuarios SET Nome", StringComparison.Ordinal));
-        var put = PutAsync(cliente, alvoLocal.Id, CorpoPut(alvoLocal, c => c["cpf"] = cpf));
+        var put = PutAsync(cliente, alvoLocal.Id, CorpoPut(alvoLocal, c => c[campo] = valor));
         await gate.Atingida;
         await using (var conexao = new SqlConnection(fabrica.ConnectionString))
         {
             await conexao.OpenAsync();
             await using var comando = conexao.CreateCommand();
-            comando.CommandText = """
+            comando.CommandText = $"""
                 EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@resp;
                 EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='127.0.0.1';
-                UPDATE dbo.Usuarios SET Cpf = @cpf WHERE Id = @id;
+                UPDATE dbo.Usuarios SET {(campo == "cpf" ? "Cpf = @valor" : "Email = @valor, EmailNormalizado = UPPER(@valor)")} WHERE Id = @id;
                 """;
             comando.Parameters.AddWithValue("@resp", outroLocal.Id);
-            comando.Parameters.AddWithValue("@cpf", cpf);
+            comando.Parameters.Add(new SqlParameter("@valor", System.Data.SqlDbType.VarChar, 100) { Value = valor });
             comando.Parameters.AddWithValue("@id", outroLocal.Id);
             Assert.Equal(1, await comando.ExecuteNonQueryAsync());
         }
@@ -477,9 +479,10 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         var resposta = await put;
         Assert.Equal(HttpStatusCode.Conflict, resposta.StatusCode);
         var corpo = await resposta.Content.ReadAsStringAsync();
-        Assert.Contains("Existe outro usuário cadastrado com esse CPF.", corpo);
+        Assert.Contains(campo == "cpf" ? "Existe outro usuário cadastrado com esse CPF." : "Existe outro usuário cadastrado com esse e-mail.", corpo);
         AssertSemDetalheInterno(corpo);
-        Assert.Equal(alvoLocal.Cpf, (await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvoLocal.Id))).Cpf);
+        var gravado = await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvoLocal.Id));
+        Assert.Equal((alvoLocal.Cpf, alvoLocal.Email), (gravado.Cpf, gravado.Email));
         Assert.Empty(await TestHelpers.WithDbAsync(fabrica, db => db.UsuariosHistorico.Where(h => h.UsuarioId == alvoLocal.Id).ToListAsync()));
     }
 

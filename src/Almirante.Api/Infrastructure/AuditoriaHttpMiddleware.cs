@@ -190,7 +190,7 @@ internal sealed partial class ChamadaAuditada
     public AuditoriaHttp Montar(bool upgrade)
     {
         var context = Contexto;
-        var abortada = !upgrade && (context.RequestAborted.IsCancellationRequested || (ExcecaoNaoTratada is not null && context.Response.HasStarted));
+        var abortada = Abortada(upgrade);
         var (estadoRequest, request) = MontarRequest(abortada);
         var (estadoResponse, response) = MontarResponse(upgrade, abortada);
         var excecao = ExcecaoNaoTratada is { } naoTratada
@@ -211,7 +211,7 @@ internal sealed partial class ChamadaAuditada
                 _politica.LiteralConhecido),
             Exception = excecao,
             DataRequestUtc = DataRequestUtc,
-            DuracaoMs = _duracaoMs ?? Duracao(),
+            DuracaoMs = DuracaoFinal(),
             IpUsuario = Ip,
             IdentificacaoUsuario = Usuario(context),
             TraceId = TraceId,
@@ -231,10 +231,10 @@ internal sealed partial class ChamadaAuditada
             MetodoHttp = Metodo,
             Request = falha,
             Response = falha,
-            StatusCode = Status(upgrade, ExcecaoNaoTratada is not null && Contexto.Response.HasStarted),
+            StatusCode = Status(upgrade, Abortada(upgrade)),
             Headers = "{}",
             DataRequestUtc = DataRequestUtc,
-            DuracaoMs = _duracaoMs ?? Duracao(),
+            DuracaoMs = DuracaoFinal(),
             IpUsuario = Ip,
             IdentificacaoUsuario = Usuario(Contexto),
             TraceId = TraceId,
@@ -256,7 +256,8 @@ internal sealed partial class ChamadaAuditada
         var captura = _capturaRequest!;
         if (captura.Excedeu)
         {
-            return (EstadoCapturaHttp.OmitidaPorTamanho, SanitizadorAuditoriaHttp.MarcadorCorpo(MotivoTamanho, request.ContentType, request.ContentLength ?? captura.Bytes));
+            // Só um corpo sem Content-Length chega aqui: o declarado acima do limite já foi omitido na entrada, e o declarado dentro dele não excede.
+            return (EstadoCapturaHttp.OmitidaPorTamanho, SanitizadorAuditoriaHttp.MarcadorCorpo(MotivoTamanho, request.ContentType, captura.Bytes));
         }
 
         var completa = _leitura!.FimAtingido || (request.ContentLength is { } tamanho && captura.Bytes >= tamanho);
@@ -315,6 +316,10 @@ internal sealed partial class ChamadaAuditada
     /// Chamada concluída normalmente: o status final (o servidor o envia ao encerrar). Interrompida: só se os cabeçalhos saíram antes da
     /// desconexão; senão nulo, nunca o 200 padrão nem o 499 que o ASP.NET Core anota sem enviar.
     /// </summary>
+    /// <summary>Cliente desistiu, ou a aplicação lançou depois de começar a resposta (o servidor corta a conexão). Upgrade nunca conta.</summary>
+    private bool Abortada(bool upgrade) =>
+        !upgrade && (Contexto.RequestAborted.IsCancellationRequested || (ExcecaoNaoTratada is not null && Contexto.Response.HasStarted));
+
     private int? Status(bool upgrade, bool abortada)
     {
         var response = Contexto.Response;
@@ -360,7 +365,7 @@ internal sealed partial class ChamadaAuditada
     }
 
     /// <summary>HTTP/1.x só tem corpo com Content-Length ou Transfer-Encoding; HTTP/2 e 3 dizem pelo próprio protocolo.</summary>
-    private bool TemCorpo(HttpRequest request)
+    internal static bool TemCorpo(HttpRequest request)
     {
         if (request.ContentLength is { } tamanho)
         {
@@ -373,7 +378,7 @@ internal sealed partial class ChamadaAuditada
         }
 
         return !HttpProtocol.IsHttp10(request.Protocol) && !HttpProtocol.IsHttp11(request.Protocol)
-            && Contexto.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
+            && request.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true;
     }
 
     private string MontarUrl(HttpContext context)
@@ -394,9 +399,12 @@ internal sealed partial class ChamadaAuditada
         }
     }
 
+    /// <summary>Medida no fim do pipeline; antes dele (upgrade emitido na hora), a duração até agora.</summary>
+    private int DuracaoFinal() => _duracaoMs ?? Duracao();
+
     private int Duracao() => (int)Math.Min(int.MaxValue, _tempo.GetElapsedTime(_inicio).TotalMilliseconds);
 
-    private static string Usuario(HttpContext context) =>
+    internal static string Usuario(HttpContext context) =>
         context.User.Identity?.IsAuthenticated == true && context.User.TentarObterUsuarioId(out var id) ? id.ToString("D") : AuditoriaHttp.Anonimo;
 
     /// <summary>IP já resolvido por UseForwardedHeaders (nunca lido de X-Forwarded-For aqui); sem escopo de interface IPv6.</summary>

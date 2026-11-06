@@ -10,6 +10,7 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
     protected EventoConteudoValidator()
     {
         RuleLevelCascadeMode = CascadeMode.Stop;
+        Func<decimal, bool> valorValido = EventoRegras.ValorValido;
 
         RuleFor(x => x.DataEvento).NotNull().WithMessage("dataEvento é obrigatório (yyyy-MM-dd).");
 
@@ -23,17 +24,17 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
         RuleFor(x => x.Transporte).NotNull().WithMessage("transporte é obrigatório (objeto com ehGratis e valor).");
         RuleFor(x => x.Transporte!.EhGratis).NotNull().WithMessage("transporte.ehGratis é obrigatório.").When(x => x.Transporte is not null);
         RuleFor(x => x.Transporte!.Valor).NotNull().WithMessage("transporte.valor é obrigatório (pode ser zero).").When(x => x.Transporte is not null);
-        RuleFor(x => x.Transporte!.Valor!.Value).Must(EventoRegras.ValorValido).WithMessage(MensagemValor("transporte.valor")).OverridePropertyName("Transporte.Valor")
+        RuleFor(x => x.Transporte!.Valor!.Value).Must(valorValido).WithMessage(MensagemValor("transporte.valor")).OverridePropertyName("Transporte.Valor")
             .When(x => x.Transporte is { EhGratis: false, Valor: not null });
 
         RuleFor(x => x.Alimentacao).NotNull().WithMessage("alimentacao é obrigatório (objeto com individual e valor).");
         RuleFor(x => x.Alimentacao!.Individual).NotNull().WithMessage("alimentacao.individual é obrigatório.").When(x => x.Alimentacao is not null);
         RuleFor(x => x.Alimentacao!.Valor).NotNull().WithMessage("alimentacao.valor é obrigatório (pode ser zero).").When(x => x.Alimentacao is not null);
-        RuleFor(x => x.Alimentacao!.Valor!.Value).Must(EventoRegras.ValorValido).WithMessage(MensagemValor("alimentacao.valor")).OverridePropertyName("Alimentacao.Valor")
+        RuleFor(x => x.Alimentacao!.Valor!.Value).Must(valorValido).WithMessage(MensagemValor("alimentacao.valor")).OverridePropertyName("Alimentacao.Valor")
             .When(x => x.Alimentacao is { Individual: false, Valor: not null });
 
         RuleFor(x => x.SeguroObrigatorio).NotNull().WithMessage("seguroObrigatorio é obrigatório (pode ser zero).");
-        RuleFor(x => x.SeguroObrigatorio!.Value).Must(EventoRegras.ValorValido).WithMessage(MensagemValor("seguroObrigatorio")).OverridePropertyName("SeguroObrigatorio")
+        RuleFor(x => x.SeguroObrigatorio!.Value).Must(valorValido).WithMessage(MensagemValor("seguroObrigatorio")).OverridePropertyName("SeguroObrigatorio")
             .When(x => x.SeguroObrigatorio.HasValue);
 
         RuleFor(x => x.Membros).NotNull().WithMessage("membros é obrigatório (um GUID ou um array de GUIDs).")

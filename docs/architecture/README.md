@@ -8,8 +8,8 @@ até o repositório.
 **Escopo:** este repositório (API, nginx, SQL Server, scripts, Compose, Aspire e workflows). O
 frontend fica em outro repositório e aparece só como sistema externo.
 
-**Retrato:** commit `57f24dd` da `main`, levantado em 2026-09-23 (issue #69). Uma mudança posterior
-no código pode tornar algum trecho desatualizado; veja
+**Retrato:** levantado em 2026-09-23 (issue #69, commit `57f24dd`) e conferido de novo contra o código em 2026-10-27 (issue #160,
+`develop` em `20a450d`). Uma mudança posterior no código pode tornar algum trecho desatualizado; veja
 [como manter a documentação atualizada](#como-manter-a-documentação-atualizada).
 
 ## Documentos
@@ -26,7 +26,10 @@ Documentação complementar já existente:
 - [`docs/authentication-security.md`](../authentication-security.md): autenticação, RBAC, TLS,
   identidades SQL e riscos residuais em detalhe;
 - [`docs/local-login.md`](../local-login.md): login local pelo nginx com HTTPS;
-- [`docs/test-coverage.md`](../test-coverage.md): cobertura e quality gate;
+- [`docs/test-coverage.md`](../test-coverage.md): cobertura (unitária e combinada) e quality gates;
+- [`docs/rastreabilidade.md`](../rastreabilidade.md): cada endpoint e regra ligado a código, documentação e testes;
+- guias por módulo: [`senhas.md`](../senhas.md), [`notificacoes.md`](../notificacoes.md), [`formacao.md`](../formacao.md),
+  [`almoxarifado.md`](../almoxarifado.md) e [`auditoria-http.md`](../auditoria-http.md);
 - [`docs/supply-chain-security.md`](../supply-chain-security.md): Dependabot, CodeQL, Trivy e SBOM.
 
 ## Arquitetura em resumo
@@ -38,8 +41,9 @@ Frontend (SPA, outro repositório)
 nginx ── único ponto de entrada: TLS, rate limit de login/refresh, forwarded headers
         │  HTTP na rede interna
         ▼
-API ASP.NET Core (.NET 10) ── autenticação, RBAC, usuários, cargos, lançamentos, eventos
-        │  TDS com TLS, identidades SQL dedicadas (nunca sa)
+API ASP.NET Core (.NET 10) ── autenticação, RBAC, usuários e senhas, cargos, lançamentos, eventos, dashboard,
+        │                     notificações (REST + SignalR), formação, almoxarifado e auditoria HTTP
+        │  TDS com TLS, identidades SQL dedicadas (nunca sa)              ──► ViaCEP (HTTPS, consulta de endereço)
         ▼
 SQL Server 2022 ── dados, triggers de auditoria, rowversion, índices de idempotência
 ```
@@ -49,10 +53,11 @@ SQL Server 2022 ── dados, triggers de auditoria, rowversion, índices de ide
 - **Deploy Windows:** a API no IIS com nginx nativo, acessível só por loopback.
 - **Desenvolvimento:** o AppHost do .NET Aspire sobe SQL Server, bootstrap e API, sem nginx, e mostra a
   telemetria no dashboard. O Aspire não faz parte de nenhum deploy.
-- **Sem dependências externas de runtime:** a API não chama outros serviços. O SQL Server é o único
-  armazenamento de dados de negócio.
-- **Observabilidade:** a API é instrumentada com OpenTelemetry. Só exporta telemetria quando
-  `OTEL_EXPORTER_OTLP_ENDPOINT` está definido, o que hoje acontece apenas no Aspire.
+- **Uma dependência externa de runtime:** o ViaCEP, consultado para preencher e validar endereços (prazo curto, uma nova
+  tentativa, `503` sem gravar nada quando ele falha). O SQL Server é o único armazenamento de dados de negócio; fotos e o
+  diário da auditoria HTTP ficam em disco, fora do site.
+- **Observabilidade:** a API é instrumentada com OpenTelemetry e exporta por OTLP quando `OTEL_EXPORTER_OTLP_ENDPOINT` está
+  definido: no Aspire e, nos dois deploys, para o console do Aspire publicado só no loopback.
 
 ## Decisões registradas
 
@@ -68,6 +73,12 @@ SQL Server 2022 ── dados, triggers de auditoria, rowversion, índices de ide
 | [0008](adr/0008-usar-aspire-no-desenvolvimento-e-opentelemetry-na-api.md) | Aspire no desenvolvimento e ServiceDefaults/OpenTelemetry na API |
 | [0009](adr/0009-aplicar-migrations-na-inicializacao-da-api.md) | Migrations aplicadas na inicialização da API |
 | [0010](adr/0010-publicar-releases-como-imagem-imutavel-no-ghcr.md) | Releases SemVer publicadas como imagem imutável no GHCR |
+| [0011](adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md) | Fotos de usuários em disco fora do site, servidas pela API |
+| [0012](adr/0012-notificar-com-outbox-na-propria-linha-e-signalr.md) | Notificações com outbox na própria linha e avisos por SignalR |
+| [0013](adr/0013-separar-permissoes-por-perfil-com-hierarquia-de-cargos.md) | Permissões por perfil, hierarquia de cargos e autoatendimento |
+| [0014](adr/0014-acompanhar-formacao-com-catalogo-fixo-e-revisoes-imutaveis.md) | Formação com catálogo fixo de classes e revisões imutáveis |
+| [0015](adr/0015-gerir-patrimonio-e-lista-de-desejos-com-auditoria-por-trigger.md) | Patrimônio e lista de desejos com auditoria por trigger |
+| [0016](adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md) | Auditoria HTTP com diário em disco e campos revisados |
 
 ## Documentação atual e decisão histórica
 
@@ -122,18 +133,12 @@ Atualize esta pasta no mesmo PR da mudança quando ela:
 Ao atualizar um diagrama, confira cada elemento e cada seta contra o código e a configuração. Se não
 houver evidência de que uma relação existe, ela não entra no diagrama.
 
-## Divergências encontradas durante o levantamento
+## Divergências encontradas durante os levantamentos
 
-Diferenças entre a documentação existente e o código no commit `57f24dd`. Elas não foram corrigidas
-nesta issue, que é só de documentação de arquitetura.
-
-| Onde | O documento diz | O código mostra |
-| --- | --- | --- |
-| [`README.md`](../../README.md#swagger) (seções "Estado atual" e "Swagger") | Swagger disponível em todos os ambientes | `Program.cs` habilita o Swagger por padrão só em `Development`, ou por `Swagger:Enabled`; `compose.tls.yaml` o desliga |
-| [`README.md`](../../README.md#variáveis-de-ambiente) (tabela de variáveis) | variável `TLS_HTTPS_HOST_PORT`, padrão 443 | `compose.tls.yaml` fixa `443:443`, sem variável |
-| [`README.md`](../../README.md#cenários-manuais-do-rate-limit-do-nginx) | o rate limit do nginx não é coberto por teste automatizado | `scripts/tests/nginx.test.sh` testa HTTP, HTTPS e `429` no job `deploy-scripts` do CI; só a suíte .NET não o cobre |
-| [`docs/authentication-security.md`](../authentication-security.md#impersonate-permissão-de-classe-4) | cita `docs/sql/corrigir-privilegios-usuario-app.sql` | o arquivo não existe; a normalização está em `docs/sql/criar-usuario-admin-app.sql` e em `DbCredentialManager.BuildProvisionSql` |
-| comentário em `src/Almirante.Api/Options/DbCredentialOptions.cs` | AppHost/Aspire roda sem `DbCredentials:AppUser` | `AppHost.cs` define `DbCredentials__AppUser`, então o modelo de identidades fica ativo no Aspire |
+As cinco divergências registradas no levantamento de `57f24dd` (Swagger "em todos os ambientes", variável
+`TLS_HTTPS_HOST_PORT`, rate limit do nginx "sem teste automatizado", script `corrigir-privilegios-usuario-app.sql` inexistente
+e comentário do `DbCredentialOptions`) foram corrigidas na issue #160. As que continuam em aberto estão em
+[`rastreabilidade.md`](../rastreabilidade.md#6-divergências-e-pendências).
 
 ## Questões em aberto
 
@@ -142,8 +147,6 @@ O repositório não permite determinar:
 - qual `DEPLOY_MODE` (`http`, `https` ou `tls`) e qual `ASPNETCORE_ENVIRONMENT` estão em uso em cada ambiente
   publicado, porque esses valores vêm do `.env` de cada máquina;
 - onde fica o SQL Server do deploy Windows/IIS e qual identidade a API usa nele;
-- como os usuários, além do administrador inicial, são cadastrados nos ambientes, já que a API não
-  expõe cadastro de usuários;
 - a motivação original para adotar o .NET Aspire e se há destino planejado para a telemetria dos
   ambientes publicados.
 

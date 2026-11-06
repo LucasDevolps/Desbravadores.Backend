@@ -13,12 +13,14 @@ public sealed class AlmoxarifadoSqlFixture : IAsyncLifetime
 {
     public const string Ip = "203.0.113.126";
 
+    /// <summary>Inerte até um teste armar uma falha (corridas de concorrência simuladas na hora certa).</summary>
+    public FalhasInjetaveisNoBanco Falhas { get; } = new();
     public SqlServerApiFactory Factory { get; private set; } = null!;
     public HttpClient Admin { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
-        Factory = new SqlServerApiFactory();
+        Factory = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(Falhas, new FalhasInjetaveisNoBanco.Comandos(Falhas)));
         Admin = await TestHelpers.CreateAuthenticatedClientAsync(Factory);
         Admin.DefaultRequestHeaders.Add(AlmiranteApiFactory.TestRemoteIpHeader, Ip);
     }
@@ -36,7 +38,7 @@ public sealed class AlmoxarifadoSqlFixture : IAsyncLifetime
 /// inventário imutável, lista de desejos com atendimentos idempotentes, permissões por cargo e designação, concorrência e auditoria.
 /// </summary>
 [Trait("Category", "RequiresSqlServer")]
-public sealed class AlmoxarifadoSqlServerTests(AlmoxarifadoSqlFixture fx) : IClassFixture<AlmoxarifadoSqlFixture>
+public sealed partial class AlmoxarifadoSqlServerTests(AlmoxarifadoSqlFixture fx) : IClassFixture<AlmoxarifadoSqlFixture>
 {
     private static readonly DateOnly Hoje = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
 

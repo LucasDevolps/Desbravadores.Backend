@@ -69,7 +69,7 @@ public sealed class ResponsaveisAlmoxarifadoService(AlmiranteDbContext db, TimeP
         var pessoas = await AlmoxarifadoBanco.PessoasAsync(db,
             designacoes.SelectMany(d => new[] { d.MembroId, d.DesignadoPorUsuarioId, d.RevogadoPorUsuarioId }), ct);
         return designacoes.Select(d => new ResponsavelAlmoxarifadoDto(d.Id,
-            pessoas.GetValueOrDefault(d.MembroId) ?? new PessoaResumoDto(d.MembroId, string.Empty), cargos.GetValueOrDefault(d.MembroId),
+            AlmoxarifadoBanco.Pessoa(pessoas, d.MembroId), cargos.GetValueOrDefault(d.MembroId),
             d.DataInicio, d.Observacoes, AlmoxarifadoBanco.Registro(pessoas, d.DesignadoPorUsuarioId, d.DesignadoEmUtc), d.Vigente, d.MotivoRevogacao,
             AlmoxarifadoBanco.Registro(pessoas, d.RevogadoPorUsuarioId, d.RevogadoEmUtc), EventoRegras.VersaoParaTexto(d.Versao))).ToList();
     }

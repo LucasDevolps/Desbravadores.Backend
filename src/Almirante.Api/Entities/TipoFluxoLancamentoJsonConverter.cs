@@ -12,7 +12,7 @@ public sealed class TipoFluxoLancamentoJsonConverter(bool emitLegacyName) : Json
 
         if (reader.TokenType == JsonTokenType.String)
         {
-            var text = reader.GetString()?.Trim();
+            var text = reader.GetString()!.Trim(); // token String: GetString nunca é nulo (só para JsonTokenType.Null)
             if (string.Equals(text, "Entrada", StringComparison.OrdinalIgnoreCase)) return TipoFluxoLancamento.Entrada;
             if (string.Equals(text, "Saida", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(text, "Saída", StringComparison.OrdinalIgnoreCase)

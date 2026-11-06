@@ -304,7 +304,8 @@ public sealed class RegistrarHistoricoRequestValidator : AbstractValidator<Regis
         RuleFor(x => x.DataConclusao).GreaterThanOrEqualTo(x => x.DataInicio!.Value)
             .WithMessage("dataConclusao não pode ser anterior a dataInicio.").When(x => x.DataInicio.HasValue && x.DataConclusao.HasValue);
         RuleFor(x => x.DataInvestiduraOuEntrega)
-            .Must((x, data) => (x.DataConclusao is null || data >= x.DataConclusao) && (x.DataInicio is null || data >= x.DataInicio))
+            // Só roda com a data preenchida (When abaixo): as comparações usam os valores, sem o caso nulo que nunca acontece aqui.
+            .Must((x, data) => (x.DataConclusao is not { } conclusao || data!.Value >= conclusao) && (x.DataInicio is not { } inicio || data!.Value >= inicio))
             .WithMessage("dataInvestiduraOuEntrega não pode ser anterior à conclusão nem ao início.")
             .When(x => x.DataInvestiduraOuEntrega.HasValue);
     }
@@ -419,7 +420,7 @@ public sealed class ListarVinculosQueryValidator : AbstractValidator<ListarVincu
             .WithMessage("Com periodo, informe de e/ou ate (yyyy-MM-dd).").When(x => x.Periodo.HasValue);
         RuleFor(x => x).Must(x => x.Periodo.HasValue).WithName("periodo")
             .WithMessage("Informe periodo (Inicio, Conclusao ou InvestiduraOuEntrega) para filtrar por de/ate.").When(x => x.De.HasValue || x.Ate.HasValue);
-        RuleFor(x => x).Must(x => x.De <= x.Ate).WithName("de").WithMessage("de não pode ser posterior a ate.")
+        RuleFor(x => x).Must(x => x.De!.Value <= x.Ate!.Value).WithName("de").WithMessage("de não pode ser posterior a ate.")
             .When(x => x.De.HasValue && x.Ate.HasValue);
         RegrasValidacaoFormacao.Paginacao(this, x => x.Page, x => x.PageSize);
     }

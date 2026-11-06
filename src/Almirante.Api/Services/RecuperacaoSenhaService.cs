@@ -214,5 +214,5 @@ public sealed class RecuperacaoSenhaService(AlmiranteDbContext db, ContasSenha c
         recuperacao.MotivoEncerramento = motivo;
     }
 
-    private static bool ViolouUnicidade(Exception? ex) => ex is SqlException { Number: SqlUnicidadeIndice or SqlUnicidadeConstraint };
+    internal static bool ViolouUnicidade(Exception? ex) => ex is SqlException { Number: SqlUnicidadeIndice or SqlUnicidadeConstraint };
 }

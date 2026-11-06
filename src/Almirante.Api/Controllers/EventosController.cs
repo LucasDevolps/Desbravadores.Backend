@@ -7,17 +7,17 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Controllers;
 
-[ApiController]
-[Route("api/Eventos")]
-[Authorize(Policy = Policies.GestaoEventos)]
-[ProducesResponseType(StatusCodes.Status401Unauthorized)]
-[ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 /// <summary>
 /// Gestão de eventos (GestaoEventos: ADM, DIR, DIRA, SEC, TES). Cadastro e cobranças são uma operação só: criar, editar ou excluir um
 /// evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes na mesma transação (idempotência, rowversion e
 /// auditoria preservadas). Registrar ou corrigir pagamentos continua em /api/Lancamentos (GestaoFinanceira). Participantes consultam
 /// os próprios eventos em /api/Me/Eventos.
 /// </summary>
+[ApiController]
+[Route("api/Eventos")]
+[Authorize(Policy = Policies.GestaoEventos)]
+[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class EventosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
@@ -55,6 +55,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
         "a data mínima só se aplica a operações novas. 409: chave com dados diferentes, evento já excluído, membro já em outro grupo ativo do mesmo passeio, " +
         "passeio em uso por outra operação, ou operação registrada antes de a resposta original ser guardada (codigo EVENTO_IDEMPOTENCIA_SEM_RESPOSTA_ORIGINAL: consulte o evento existente). " +
         "404: eventoReferenciaId inexistente/inativo.")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status415UnsupportedMediaType)]
     [ProducesResponseType<EventoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

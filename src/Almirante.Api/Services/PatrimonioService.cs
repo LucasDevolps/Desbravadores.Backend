@@ -301,7 +301,7 @@ public sealed class PatrimonioService(AlmiranteDbContext db, TimeProvider clock,
             bens.Select(b => new[]
             {
                 b.Tombo, b.Nome, b.Descricao, b.Categoria, RegrasAlmoxarifado.Descricao(b.EstadoConservacao), b.Localizacao,
-                RegrasAlmoxarifado.Descricao(b.Situacao), b.ResponsavelGuardaId is { } g ? guarda.GetValueOrDefault(g)?.Nome : null,
+                RegrasAlmoxarifado.Descricao(b.Situacao), b.ResponsavelGuardaId is { } g ? AlmoxarifadoBanco.Pessoa(guarda, g).Nome : null,
                 b.DataAquisicaoDesconhecida ? "Desconhecida" : CsvAlmoxarifado.Data(b.DataAquisicao),
                 RegrasAlmoxarifado.Descricao(b.Origem), CsvAlmoxarifado.Valor(b.ValorAquisicao), CsvAlmoxarifado.SimNao(b.PossuiValorComercial),
                 CsvAlmoxarifado.Valor(b.ValorEstimado), CsvAlmoxarifado.SimNao(b.Excluido),
@@ -538,7 +538,7 @@ public sealed class PatrimonioService(AlmiranteDbContext db, TimeProvider clock,
         var hoje = dataCivil.Hoje();
         return emprestimos.Select(e => new EmprestimoDto
         {
-            Id = e.Id, Bem = bens[e.BemId], Membro = pessoas.GetValueOrDefault(e.MembroId) ?? new PessoaResumoDto(e.MembroId, string.Empty),
+            Id = e.Id, Bem = bens[e.BemId], Membro = AlmoxarifadoBanco.Pessoa(pessoas, e.MembroId),
             DataRetirada = e.DataRetirada, PrevisaoDevolucao = e.PrevisaoDevolucao, ConservacaoSaida = e.ConservacaoSaida,
             ConservacaoSaidaDescricao = RegrasAlmoxarifado.Descricao(e.ConservacaoSaida), ObservacoesSaida = e.ObservacoesSaida, Aberto = e.Aberto,
             Atrasado = RegrasAlmoxarifado.Atrasado(e, hoje), DiasAtraso = RegrasAlmoxarifado.DiasAtraso(e, hoje), Encerramento = e.Encerramento,

@@ -50,11 +50,14 @@ jobs:
           retention-days: 14
 
       # Só a pasta do coletor (TestResults/<guid>/): a cópia que o logger TRX põe em <máquina>/In/ duplicaria a entrada.
+      # OpenCover é o que o job coverage une (ramos por offset no IL); o Cobertura fica para leitura direta.
       - name: Cobertura bruta dos testes sem dependências externas
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-unit-${{ github.event.pull_request.head.sha || github.sha }}
-          path: TestResults/*/coverage.cobertura.xml
+          path: |
+            TestResults/*/coverage.cobertura.xml
+            TestResults/*/coverage.opencover.xml
           if-no-files-found: error
           retention-days: 14
 
@@ -111,7 +114,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-sqlserver-${{ github.event.pull_request.head.sha || github.sha }}
-          path: TestResults/*/coverage.cobertura.xml
+          path: |
+            TestResults/*/coverage.cobertura.xml
+            TestResults/*/coverage.opencover.xml
           if-no-files-found: error
           retention-days: 14
 
@@ -119,8 +124,9 @@ jobs:
         if: always()
         run: docker rm --force almirante-ci-sql
 
-  # Consolida a cobertura das DUAS suítes (sem dependências externas + RequiresSqlServer), publica o relatório e
-  # aplica o quality gate de regressão (docs/test-coverage.md). Só lê artifacts deste run; sem segredos.
+  # Publica a cobertura unitária (só a suíte sem dependências externas) separada da combinada (as DUAS suítes) e aplica
+  # os gates de docs/test-coverage.md: 100% de linhas e branches na combinada e não regressão na unitária. Só lê
+  # artifacts deste run; sem segredos.
   coverage:
     needs: [build-and-test, sqlserver-integration]
     runs-on: ubuntu-latest
@@ -152,21 +158,42 @@ jobs:
           name: coverage-sqlserver-${{ github.event.pull_request.head.sha || github.sha }}
           path: coverage-input/sqlserver
 
-      - name: Consolidar cobertura (ReportGenerator)
-        run: bash scripts/coverage.sh report coverage-input coverage-report
+      # coverage-input/unit = só a suíte sem dependências externas; coverage-input inteiro = as duas suítes (união).
+      - name: Consolidar cobertura unitária e combinada (ReportGenerator)
+        run: |
+          bash scripts/coverage.sh report coverage-input/unit coverage-report/unitaria
+          bash scripts/coverage.sh report coverage-input coverage-report/combinada
 
-      - name: Quality gate de cobertura
+      - name: Quality gate da cobertura combinada (100% de linhas e branches)
         env:
           COVERAGE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: bash scripts/coverage.sh gate coverage-report/Cobertura.xml src/coverage-baseline.json "$GITHUB_STEP_SUMMARY"
+          COVERAGE_TITULO: Cobertura combinada (gate de 100%)
+          COVERAGE_SUITES: testes sem dependências externas + `Category=RequiresSqlServer` (união)
+        run: bash scripts/coverage.sh gate coverage-report/combinada/Cobertura.xml src/coverage-baseline.json "$GITHUB_STEP_SUMMARY"
 
-      - name: Detalhes por assembly e classe no resumo
+      # Roda mesmo se o gate combinado reprovar: os dois números são publicados sempre, e um não substitui o outro.
+      - name: Quality gate da cobertura unitária (sem regressão)
+        if: always()
+        env:
+          COVERAGE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          COVERAGE_TITULO: Cobertura unitária (suíte sem dependências externas)
+          COVERAGE_SUITES: só os testes sem dependências externas (`Category!=RequiresSqlServer`)
+        run: bash scripts/coverage.sh gate coverage-report/unitaria/Cobertura.xml src/coverage-baseline-unit.json "$GITHUB_STEP_SUMMARY"
+
+      - name: Lacunas e detalhes por classe no resumo
         if: always()
         run: |
-          if [[ -s coverage-report/SummaryGithub.md ]]; then
-            { echo; echo '<details><summary>Cobertura por assembly e classe (ReportGenerator)</summary>'; echo
-              sed '1d' coverage-report/SummaryGithub.md; echo; echo '</details>'; } >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for relatorio in combinada unitaria; do
+            [[ -s "coverage-report/$relatorio/Cobertura.xml" ]] || continue
+            COVERAGE_TITULO="cobertura $relatorio" bash scripts/coverage.sh lacunas "coverage-report/$relatorio/Cobertura.xml" \
+              > "coverage-report/$relatorio/Lacunas.md"
+            { echo; echo "<details><summary>Lacunas da cobertura $relatorio (arquivo, linhas e branches descobertos)</summary>"; echo
+              cat "coverage-report/$relatorio/Lacunas.md"; echo; echo '</details>'; } >> "$GITHUB_STEP_SUMMARY"
+            if [[ -s "coverage-report/$relatorio/SummaryGithub.md" ]]; then
+              { echo; echo "<details><summary>Cobertura $relatorio por assembly e classe (ReportGenerator)</summary>"; echo
+                sed '1d' "coverage-report/$relatorio/SummaryGithub.md"; echo; echo '</details>'; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Publicar relatório de cobertura
         if: always()

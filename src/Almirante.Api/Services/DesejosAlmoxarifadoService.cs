@@ -232,7 +232,7 @@ public sealed class DesejosAlmoxarifadoService(AlmiranteDbContext db, TimeProvid
         var dtos = atendimentos.Select(a => new AtendimentoDto
         {
             Id = a.Id, DesejoId = a.DesejoId, Quantidade = a.Quantidade, Data = a.Data,
-            Responsavel = pessoas.GetValueOrDefault(a.ResponsavelId) ?? new PessoaResumoDto(a.ResponsavelId, string.Empty),
+            Responsavel = AlmoxarifadoBanco.Pessoa(pessoas, a.ResponsavelId),
             Origem = a.Origem, OrigemDescricao = RegrasAlmoxarifado.Descricao(a.Origem), Observacoes = a.Observacoes, Bens = [.. porAtendimento[a.Id]],
             Registro = AlmoxarifadoBanco.Registro(pessoas, a.RegistradoPorUsuarioId, a.RegistradoEmUtc), Estornado = a.Estornado, MotivoEstorno = a.MotivoEstorno,
             Estorno = AlmoxarifadoBanco.Registro(pessoas, a.EstornadoPorUsuarioId, a.EstornadoEmUtc),
@@ -430,7 +430,7 @@ public sealed class DesejosAlmoxarifadoService(AlmiranteDbContext db, TimeProvid
                     ? new ExclusaoDto(d.MotivoExclusao!, AlmoxarifadoBanco.Registro(pessoas, d.ExcluidoPorUsuarioId!.Value, d.ExcluidoEmUtc!.Value).Por,
                         DateTime.SpecifyKind(d.ExcluidoEmUtc.Value, DateTimeKind.Utc))
                     : null,
-                Solicitante = pessoas.GetValueOrDefault(d.CriadoPorUsuarioId) ?? new PessoaResumoDto(d.CriadoPorUsuarioId, string.Empty),
+                Solicitante = AlmoxarifadoBanco.Pessoa(pessoas, d.CriadoPorUsuarioId),
                 CriadoEmUtc = DateTime.SpecifyKind(d.CriadoEmUtc, DateTimeKind.Utc),
                 UltimaAlteracao = AlmoxarifadoBanco.Registro(pessoas, d.AtualizadoPorUsuarioId, d.AtualizadoEmUtc), Atendimentos = [],
                 Versao = EventoRegras.VersaoParaTexto(d.Versao),

@@ -70,8 +70,12 @@ internal static class AlmoxarifadoBanco
         return Historico(linhas.Select(l => (l.h, l.Nome)));
     }
 
+    /// <summary>Pessoa carregada por <see cref="PessoasAsync"/>; sem ela (não deveria faltar: as FKs garantem o usuário), só o id.</summary>
+    public static PessoaResumoDto Pessoa(IReadOnlyDictionary<Guid, PessoaResumoDto> pessoas, Guid id) =>
+        pessoas.GetValueOrDefault(id) ?? new PessoaResumoDto(id, string.Empty);
+
     public static RegistroUsuarioDto Registro(IReadOnlyDictionary<Guid, PessoaResumoDto> pessoas, Guid usuarioId, DateTime emUtc) =>
-        new(pessoas.GetValueOrDefault(usuarioId) ?? new PessoaResumoDto(usuarioId, string.Empty), DateTime.SpecifyKind(emUtc, DateTimeKind.Utc));
+        new(Pessoa(pessoas, usuarioId), DateTime.SpecifyKind(emUtc, DateTimeKind.Utc));
 
     public static RegistroUsuarioDto? Registro(IReadOnlyDictionary<Guid, PessoaResumoDto> pessoas, Guid? usuarioId, DateTime? emUtc) =>
         usuarioId is { } id && emUtc is { } em ? Registro(pessoas, id, em) : null;

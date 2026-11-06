@@ -305,4 +305,87 @@ public sealed class FormacaoUnitTests
         }));
         Assert.Equal(["page", "pageSize"], Falhas(new ListarVinculosQuery { Tipo = TipoVinculo.Classe, Page = 0, PageSize = 101 }));
     }
+
+    [Fact]
+    public void Revisao_ItemNulo_TextosObrigatoriosELongos_ExigenciaComGuidVazioEAreaOpcional()
+    {
+        var semDescricao = R("2");
+        semDescricao.Descricao = null;
+        var longo = R("3");
+        longo.Descricao = new string('a', 2001);
+        var grupoComNulo = R("4", RegraGrupo.Todos, null, null, null, R("4a"));
+        grupoComNulo.Subitens = [null!, R("4b")];
+        var erros = Erros(Revisao_(null!, semDescricao, longo, grupoComNulo,
+            R("5", exigencia: new ExigenciaEspecialidadeRequest { Quantidade = 1, EspecialidadeId = Guid.Empty }),
+            R("6", exigencia: new ExigenciaEspecialidadeRequest { Quantidade = 1, Area = null })));
+
+        Assert.Contains("requisitos[0]: Requisito nulo.", erros);
+        Assert.Contains(erros, e => e.StartsWith("requisitos[1].descricao") && e.Contains("obrigatório"));
+        Assert.Contains(erros, e => e.StartsWith("requisitos[2].descricao") && e.Contains("no máximo"));
+        Assert.Contains(erros, e => e.StartsWith("requisitos[3].subitens[0]: Requisito nulo."));
+        Assert.Contains(erros, e => e == "requisitos[4].exigenciaEspecialidade.especialidadeId: especialidadeId não pode ser um GUID vazio.");
+        Assert.DoesNotContain(erros, e => e.StartsWith("requisitos[5]"));
+    }
+
+    [Fact]
+    public void Revisao_AcimaDoLimiteDeRequisitos_EhRecusada()
+    {
+        var requisitos = Enumerable.Range(1, RegrasFormacao.RequisitosPorRevisaoMaximo + 1).Select(i => R(i.ToString())).ToArray();
+        Assert.Contains(Erros(Revisao_(requisitos)), e => e == $"requisitos: Uma revisão aceita no máximo {RegrasFormacao.RequisitosPorRevisaoMaximo} requisitos e subitens.");
+    }
+
+    [Fact]
+    public void Especialidade_ReferenciaDoDistintivoQueNaoEhUrl_EhRecusada()
+    {
+        var erros = new CadastrarEspecialidadeRequestValidator().Validate(new CadastrarEspecialidadeRequest
+        {
+            Nome = "Natação", Area = "Atividades Recreativas", FonteOficial = "Manual", NivelDificuldade = 1, Modalidade = ModalidadeEspecialidade.Basica,
+            ReferenciaDistintivo = "isto não é uma url",
+        }).Errors;
+        Assert.Equal("referenciaDistintivo deve ser uma URL https absoluta.", Assert.Single(erros).ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData(null, "2020-05-01", "2020-06-01", true)]
+    [InlineData(null, "2020-05-01", "2020-04-01", false)]
+    [InlineData("2020-03-01", null, "2020-04-01", true)]
+    [InlineData("2020-03-01", null, "2020-02-01", false)]
+    [InlineData(null, null, "2020-02-01", true)]
+    public void Historico_DataDaInvestiduraOuEntrega_NaoAntecedeInicioNemConclusao(string? inicio, string? conclusao, string investidura, bool valido)
+    {
+        var request = new RegistrarHistoricoRequest
+        {
+            Tipo = TipoVinculo.Classe, MembroId = Guid.NewGuid(), Classe = ClasseDesbravador.Amigo, OrigemHistorica = "Cartão arquivado",
+            InvestiduraOuEntregaRealizada = true, DataInicio = inicio is null ? null : DateOnly.Parse(inicio),
+            DataConclusao = conclusao is null ? null : DateOnly.Parse(conclusao), DataInvestiduraOuEntrega = DateOnly.Parse(investidura),
+        };
+        var erros = new RegistrarHistoricoRequestValidator().Validate(request).Errors;
+        Assert.Equal(valido, !erros.Any(e => e.PropertyName == "DataInvestiduraOuEntrega"));
+    }
+
+    [Fact]
+    public void ListagemDeVinculos_ClasseOuEspecialidadeDoOutroTipo_SaoRecusadas()
+    {
+        var validator = new ListarVinculosQueryValidator();
+        string[] Falhas(ListarVinculosQuery q) => validator.Validate(q).Errors.Select(e => e.PropertyName).ToArray();
+        Assert.Equal(["classe"], Falhas(new ListarVinculosQuery { Tipo = TipoVinculo.Especialidade, Classe = ClasseDesbravador.Amigo }));
+        Assert.Equal(["especialidadeId"], Falhas(new ListarVinculosQuery { Tipo = TipoVinculo.Classe, EspecialidadeId = Guid.NewGuid() }));
+        Assert.Empty(Falhas(new ListarVinculosQuery
+        {
+            Tipo = TipoVinculo.Classe, Periodo = PeriodoFormacao.Inicio, De = new DateOnly(2026, 1, 1), Ate = new DateOnly(2026, 1, 1),
+        }));
+    }
+
+    [Fact]
+    public void RelatorioDeParticipantes_FiltrosDoOutroTipo_SaoRecusados()
+    {
+        var validator = new RelatorioParticipantesQueryValidator();
+        string[] Falhas(RelatorioParticipantesQuery q) => validator.Validate(q).Errors.Select(e => e.PropertyName).ToArray();
+        Assert.Empty(Falhas(new RelatorioParticipantesQuery(TipoVinculo.Classe, ClasseDesbravador.Amigo, GrupoClasse.Regular, null, null)));
+        Assert.Empty(Falhas(new RelatorioParticipantesQuery(TipoVinculo.Especialidade, null, null, Guid.NewGuid(), "ADRA")));
+        Assert.Equal(["classe"], Falhas(new RelatorioParticipantesQuery(TipoVinculo.Especialidade, ClasseDesbravador.Amigo, null, null, null)));
+        Assert.Equal(["classe"], Falhas(new RelatorioParticipantesQuery(TipoVinculo.Especialidade, null, GrupoClasse.Regular, null, null)));
+        Assert.Equal(["especialidadeId"], Falhas(new RelatorioParticipantesQuery(TipoVinculo.Classe, null, null, Guid.NewGuid(), null)));
+        Assert.Equal(["especialidadeId"], Falhas(new RelatorioParticipantesQuery(TipoVinculo.Classe, null, null, null, "ADRA")));
+    }
 }
