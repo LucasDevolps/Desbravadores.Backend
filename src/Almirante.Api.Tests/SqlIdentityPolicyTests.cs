@@ -161,7 +161,7 @@ public class SqlIdentityPolicyTests
         var provider = new AppDbCredentialProvider();
         provider.Set("almirante_user_bd", "SenhaAntiga1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         var interceptor = new AppDbCredentialInterceptor(provider, TimeProvider.System);
-        using var connection = new SqlConnection("Server=x;Database=d");
+        using var connection = new SqlConnection("Server=x;Database=d;Encrypt=True");
 
         var gate = provider.BeginSwitch();
         var abertura = interceptor.ConnectionOpeningAsync(connection, null!, default).AsTask();
@@ -184,7 +184,7 @@ public class SqlIdentityPolicyTests
     {
         var provider = new AppDbCredentialProvider();
         provider.Set("u", "SenhaQualquer1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        using var connection = new SqlConnection("Server=x;Database=d");
+        using var connection = new SqlConnection("Server=x;Database=d;Encrypt=True");
 
         await new AppDbCredentialInterceptor(provider, TimeProvider.System).ConnectionOpeningAsync(connection, null!, default).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -194,7 +194,7 @@ public class SqlIdentityPolicyTests
     [Fact]
     public async Task Interceptor_SemCredencialProvisionada_FalhaEmVezDeConectarSemUsuario()
     {
-        using var connection = new SqlConnection("Server=x;Database=d");
+        using var connection = new SqlConnection("Server=x;Database=d;Encrypt=True");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new AppDbCredentialInterceptor(new AppDbCredentialProvider(), TimeProvider.System).ConnectionOpeningAsync(connection, null!, default).AsTask());
@@ -205,12 +205,12 @@ public class SqlIdentityPolicyTests
     {
         var provider = new AppDbCredentialProvider();
         var interceptor = new AppDbCredentialInterceptor(provider, TimeProvider.System);
-        using var semTroca = new SqlConnection("Server=x;Database=d");
+        using var semTroca = new SqlConnection("Server=x;Database=d;Encrypt=True");
         provider.Set("u", "SenhaAntiga1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         interceptor.ConnectionOpening(semTroca, null!, default);
         Assert.Equal("u", semTroca.Credential.UserId);
 
-        using var connection = new SqlConnection("Server=x;Database=d");
+        using var connection = new SqlConnection("Server=x;Database=d;Encrypt=True");
         var gate = provider.BeginSwitch();
         var abertura = Task.Run(() => interceptor.ConnectionOpening(connection, null!, default));
         await Task.Delay(300);
@@ -228,7 +228,7 @@ public class SqlIdentityPolicyTests
         var provider = new AppDbCredentialProvider();
         provider.Set("u", "SenhaAtual1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         var relogio = new RelogioManualDeTeste();
-        using var connection = new SqlConnection("Server=x;Database=d");
+        using var connection = new SqlConnection("Server=x;Database=d;Encrypt=True");
         using var gate = provider.BeginSwitch();
 
         var abertura = new AppDbCredentialInterceptor(provider, relogio).ConnectionOpeningAsync(connection, null!, default).AsTask();
