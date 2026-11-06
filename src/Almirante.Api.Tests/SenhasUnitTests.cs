@@ -222,7 +222,7 @@ public sealed class SenhasUnitTests
              administrativa.EventoId, administrativa.LancamentoId));
         Assert.StartsWith("Sua senha de acesso foi alterada por um usuário autorizado da administração.", administrativa.Mensagem);
         Assert.Contains("autorização de recuperação", assistida.Mensagem);
-        Assert.Equal("[Tipo] IN (1, 2, 3)", Almirante.Api.Data.AlmiranteDbContext.CheckNotificacoesTipo);
+        Assert.Equal("[Tipo] IN (1, 2, 3, 4)", Almirante.Api.Data.AlmiranteDbContext.CheckNotificacoesTipo);
     }
 
     [Fact]

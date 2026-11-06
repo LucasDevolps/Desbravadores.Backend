@@ -44,7 +44,8 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
     {
         _factory = EventosSqlSupport.FabricaComRetry(o => o.AddInterceptors(_falha), s => s.AddScoped(sp => new EventosService(
             sp.GetRequiredService<AlmiranteDbContext>(), _clock, sp.GetRequiredService<ILogger<EventosService>>(), sp.GetRequiredService<EventosLockOptions>(),
-            sp.GetRequiredService<SinalAvisosNotificacoes>())));
+            sp.GetRequiredService<SinalAvisosNotificacoes>(),
+            new DataCivil(_clock, sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Almirante.Api.Options.ClubeOptions>>()))));
         _client = await TestHelpers.CreateAuthenticatedClientAsync(_factory);
         (_outroUsuario, _outroUsuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, "TES");
         (_semPermissao, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, "DS");

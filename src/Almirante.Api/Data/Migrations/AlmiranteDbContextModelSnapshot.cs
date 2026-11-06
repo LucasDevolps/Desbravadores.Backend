@@ -2231,7 +2231,7 @@ namespace Almirante.Api.Data.Migrations
 
                             t.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
 
-                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2, 3)");
+                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2, 3, 4)");
                         });
                 });
 

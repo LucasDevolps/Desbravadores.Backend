@@ -31,6 +31,12 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     public ViaCepFalso ViaCep { get; } = new();
 
+    /// <summary>
+    /// Mantém a rotina que marca lançamentos vencidos como Atrasado (issue #184). Desligada por padrão: com o relógio real ela rodaria
+    /// na subida e na virada do dia, em corrida com os lançamentos vencidos que cada teste cria; os testes dela a executam explicitamente.
+    /// </summary>
+    public bool RotinaDeAtrasados { get; init; }
+
     public string FotosPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N"));
 
     /// <summary>Diário da auditoria HTTP desta factory: o padrão é derivado da connection string, igual em todas as factories em memória.</summary>
@@ -97,6 +103,14 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
             }
 
             ConfigureDatabase(services);
+            if (!RotinaDeAtrasados)
+            {
+                foreach (var rotina in services.Where(d => d.ImplementationType == typeof(Almirante.Api.Services.LancamentosAtrasadosService)).ToList())
+                {
+                    services.Remove(rotina);
+                }
+            }
+
             services.AddSingleton<IStartupFilter, TestEndpointsStartupFilter>();
             services.AddHttpClient(Almirante.Api.Services.ViaCepClient.NomeHttpClient).ConfigurePrimaryHttpMessageHandler(() => ViaCep);
             ConfigureTestServices(services);
