@@ -22,8 +22,12 @@ public sealed class LancamentosService(
         pageSize = Math.Clamp(pageSize, 1, 100);
         var query = Filtrar(db.Lancamentos.AsNoTracking().Where(l => l.Ativo), search, status, finalidade, vencimento);
         var total = await query.CountAsync(ct);
-        var items = await query
-            .OrderByDescending(l => l.Vencimento)
+        // Sem filtros (issue #99): Atrasado, depois Pendente, depois Pago; o vencimento mais recente segue como critério secundário.
+        var ordenada = SemFiltros(search, status, finalidade, vencimento)
+            ? query.OrderBy(l => l.Status == StatusLancamento.Atrasado ? 0 : l.Status == StatusLancamento.Pendente ? 1 : 2)
+                .ThenByDescending(l => l.Vencimento)
+            : query.OrderByDescending(l => l.Vencimento);
+        var items = await ordenada
             .ThenBy(l => l.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -349,6 +353,13 @@ public sealed class LancamentosService(
         "Valor, membro, vencimento, finalidade, categoria e exclusão de um lançamento gerado por evento devem ser feitos por meio de /api/Eventos. Apenas o status pode ser alterado aqui.");
 
     public Task<bool> DeleteAsync(DeleteLancamentoRequest request, CancellationToken ct) => exclusao.DeleteAsync(request, ct);
+
+    // Mesmos critérios de Filtrar: texto em branco e "Todos" não contam como filtro ativo.
+    private static bool SemFiltros(string? search, string? status, string? finalidade, DateOnly? vencimento) =>
+        string.IsNullOrWhiteSpace(search) &&
+        (string.IsNullOrWhiteSpace(status) || status == "Todos") &&
+        (string.IsNullOrWhiteSpace(finalidade) || finalidade == "Todos") &&
+        !vencimento.HasValue;
 
     private static IQueryable<Lancamento> Filtrar(IQueryable<Lancamento> query, string? search, string? status,
         string? finalidade, DateOnly? vencimento)
