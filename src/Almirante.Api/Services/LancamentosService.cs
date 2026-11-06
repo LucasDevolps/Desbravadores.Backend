@@ -13,7 +13,8 @@ public sealed class LancamentosService(
     TimeProvider clock,
     LancamentoGeralService lancamentoGeral,
     LancamentoExclusaoService exclusao,
-    SinalAvisosNotificacoes sinal)
+    SinalAvisosNotificacoes sinal,
+    DataCivil dataCivil)
 {
     public async Task<LancamentosResponse> ListAsync(int page, int pageSize, string? search, string? status,
         string? finalidade, DateOnly? vencimento, CancellationToken ct)
@@ -154,6 +155,8 @@ public sealed class LancamentosService(
         }
 
         ExigirSemAlteracaoDePagamento(entity, request);
+        var hoje = dataCivil.Hoje();
+        ExigirPendenteNaoVencido(entity, request, hoje);
 
         var statusMudou = request.Status.HasValue && request.Status.Value != entity.Status;
         if (entity.EventoId is { } eventoId && statusMudou && db.Database.IsRelational())
@@ -163,6 +166,7 @@ public sealed class LancamentosService(
             {
                 ExigirSemAlteracaoDeEvento(lancamento, request);
                 ExigirSemAlteracaoDePagamento(lancamento, request);
+                ExigirPendenteNaoVencido(lancamento, request, hoje);
                 AplicarAlteracoes(lancamento, request);
             }, l => l.Status == status, ct);
         }
@@ -334,6 +338,20 @@ public sealed class LancamentosService(
         }
     }
 
+    /// <summary>
+    /// Issue #184: a rotina de vencimento marcaria de novo como Atrasado um lançamento posto em Pendente com vencimento passado. Só a
+    /// troca para Pendente é recusada; reenviar o status atual, ou mudar só o vencimento, segue aceito.
+    /// </summary>
+    private static void ExigirPendenteNaoVencido(Lancamento entity, UpdateLancamentoRequest request, DateOnly hoje)
+    {
+        var vencimento = request.Vencimento ?? entity.Vencimento;
+        if (request.Status == StatusLancamento.Pendente && entity.Status != StatusLancamento.Pendente && vencimento < hoje)
+        {
+            throw ApiProblemException.Invalid("status",
+                $"status Pendente exige vencimento a partir de {hoje.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)} (hoje no fuso do clube); " +
+                "um lançamento vencido e não pago fica Atrasado.");
+        }
+    }
 
     private static void ExigirSemAlteracaoDeEvento(Lancamento entity, UpdateLancamentoRequest request)
     {

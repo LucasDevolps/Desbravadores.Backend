@@ -604,6 +604,30 @@ Categoria, status e fluxo são enums com valores explícitos e `Description`:
 | `StatusLancamento` | `0 = Pendente`, `1 = Pago`, `2 = Atrasado` |
 | `TipoFluxoLancamento` | `0 = Entrada`, `1 = Saida` (descrição: “Saída”) |
 
+### Atualização automática para Atrasado (issue #184)
+
+A rotina `LancamentosAtrasadosService` (`BackgroundService`) marca como `Atrasado` todo lançamento
+**ativo** e `Pendente` cujo `Vencimento` é **anterior a hoje** na data civil do clube
+(`Clube:FusoHorario`, `DataCivil.Hoje()`, não a data UTC). Vale para `Entrada` e `Saida`.
+
+- Vencimento igual a hoje continua `Pendente`; só fica atrasado a partir do dia seguinte. `Pago`
+  nunca muda e lançamentos inativos não são tocados.
+- Roda na subida da API e depois a cada hora, ou logo após a meia-noite do clube se ela vier antes.
+- A atualização é em lote no banco, em blocos de 500, cada bloco numa transação: lê as linhas com
+  `UPDLOCK, READPAST`, aplica `ExecuteUpdateAsync` (`Status`, `DataAtualizacao`, e
+  `AtualizadoPorUsuarioId = NULL`, que indica alteração do sistema) e grava as notificações. Outra
+  instância pula as linhas travadas, e depois do commit elas já não são `Pendente`: duas instâncias
+  ou duas execuções seguidas não duplicam nada. Um `PUT` ou pagamento simultâneo espera o bloco
+  terminar (no máximo recebe o `409` de concorrência de sempre e pode reenviar).
+- Falha numa execução só gera log de erro; a API continua no ar e a próxima execução tenta de novo.
+- Cada débito (lançamento de `Entrada` com membro) que passa a `Atrasado` gera, na mesma transação, a
+  notificação `DebitoAtrasado` para o membro (ver [`docs/notificacoes.md`](docs/notificacoes.md)).
+- `PUT /api/Lancamentos/{id}` recusa com `400` a troca do status para `Pendente` quando o vencimento
+  (o enviado no mesmo pedido ou o atual) é anterior a hoje no fuso do clube: a rotina o marcaria de
+  novo. Reenviar o status atual e mudar só o vencimento continuam aceitos. O registro de pagamento
+  aceita lançamentos `Atrasado`, como antes.
+- Eventos: só lançamento `Pago` trava o cadastro (ver [Eventos](#eventos)).
+
 O JSON continua retornando nomes textuais; criação e atualização aceitam tanto nomes quanto
 os códigos numéricos correspondentes e rejeitam valores fora do enum. `status` na listagem
 aceita nome, código ou `Todos`. Clientes que enviavam `tipoFluxo: "Despesa"` devem passar a
@@ -751,18 +775,20 @@ pagamento recarrega o estado sob o lock e, se o commit falhar de forma ambígua,
 foi efetivado antes de responder sucesso.
 
 **PUT.** Campos editáveis = os do POST + `versao` (+ `motivo`); não altera `id`, `eventoGrupoId`,
-`eventoReferenciaId`, total, valor por membro nem status. Com tudo pendente: mantidos são atualizados,
+`eventoReferenciaId`, total, valor por membro nem status. Sem lançamento `Pago`: mantidos são atualizados,
 novos ganham lançamento pendente e removidos são desativados (participação + lançamento, com auditoria
-do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. Com algum lançamento
-`Pago`/`Atrasado`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
+do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. `Atrasado` é só um
+`Pendente` vencido (issue #184): acompanha o novo valor e a nova data e volta a `Pendente` se a nova data
+ainda não passou (com data passada, o `Pendente` fica para a rotina de vencimento). Com algum lançamento
+`Pago`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
 `individual`, seguro — não só o total), participantes ou data (pagamentos nunca voltam a pendente nem
 geram estorno); só o **local** pode ser corrigido (a descrição de todos os lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo
 local; valor, vencimento e status do pagamento não mudam). Data/local não mudam por PUT isolado quando o passeio
 tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.
 
 **DELETE** `{ "motivo": "...", "versao": "..." }`: exclusão lógica (`Ativo = false`) do cadastro, das
-participações e dos lançamentos pendentes, na mesma transação; outros grupos do passeio permanecem.
-`Pago`/`Atrasado` → `409` sem alterar nada; inexistente/já excluído → `404`.
+participações e dos lançamentos (`Pendente` ou `Atrasado`), na mesma transação; outros grupos do passeio
+permanecem. `Pago` → `409` sem alterar nada; inexistente/já excluído → `404`.
 
 **Auditoria (`historico_eventos`).** Trigger `TR_eventos_AuditoriaExclusaoLogica` (`AFTER UPDATE`, só na
 transição `Ativo 1 → 0`, várias linhas) grava snapshot completo (IDs, grupo/referência, data, local,

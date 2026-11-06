@@ -61,6 +61,28 @@ public static class NotificacoesFabrica
             evento.Id, lancamento.Id);
     }
 
+    /// <summary>A chave inclui o vencimento: um débito prorrogado que volta a vencer gera um aviso novo, e o mesmo atraso nunca dois.</summary>
+    public static string ChaveDebitoAtrasado(Guid lancamentoId, DateOnly vencimento) =>
+        $"atraso:{lancamentoId:N}:{vencimento.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}";
+
+    /// <summary>Débito (ver <see cref="EhDebito"/>) que a rotina de vencimento acabou de marcar como Atrasado.</summary>
+    public static Notificacao DebitoAtrasado(Lancamento lancamento, DateTime agoraUtc)
+    {
+        var finalidade = string.IsNullOrWhiteSpace(lancamento.Finalidade) ? null : lancamento.Finalidade.Trim();
+        var descricao = string.IsNullOrWhiteSpace(lancamento.Descricao) ? null : lancamento.Descricao.Trim();
+        var referente = (finalidade, descricao) switch
+        {
+            ({ } f, { } d) => $" referente a {f} ({d})",
+            ({ } f, null) => $" referente a {f}",
+            (null, { } d) => $" referente a {d}",
+            _ => "",
+        };
+        return Nova(lancamento.MembroId!.Value, TipoNotificacao.DebitoAtrasado, ChaveDebitoAtrasado(lancamento.Id, lancamento.Vencimento), agoraUtc,
+            finalidade is null ? "Débito em atraso" : $"Débito em atraso: {finalidade}",
+            $"O débito de {Moeda(lancamento.Valor)}{referente} venceu em {Data(lancamento.Vencimento)} e ainda não tem pagamento registrado.",
+            lancamento.EventoId, lancamento.Id);
+    }
+
     public static string ChaveSenhaAlterada(Guid alteracaoSenhaId) => $"senha:{alteracaoSenhaId:N}";
 
     /// <summary>

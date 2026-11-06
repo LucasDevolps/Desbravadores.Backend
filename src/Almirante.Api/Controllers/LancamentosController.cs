@@ -17,7 +17,9 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [EndpointSummary("Lista os lançamentos, paginados, com filtros por busca, status, finalidade e vencimento.")]
     [EndpointDescription("Sem filtros ativos (search, status, finalidade e vencimento ausentes; status/finalidade \"Todos\" contam como ausentes), " +
         "a ordem é por prioridade de status: Atrasado, depois Pendente, depois Pago; dentro do mesmo status, vencimento mais recente primeiro e Id como desempate. " +
-        "Com qualquer filtro ativo, a ordem é vencimento mais recente primeiro e Id como desempate.")]
+        "Com qualquer filtro ativo, a ordem é vencimento mais recente primeiro e Id como desempate. " +
+        "Status atualizado automaticamente: um lançamento ativo Pendente com vencimento anterior a hoje (fuso do clube) passa a " +
+        "Atrasado na subida da API e depois a cada hora ou logo após a virada do dia. Vencimento igual a hoje continua Pendente.")]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<LancamentosResponse>> List(
@@ -95,6 +97,8 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
 
     [HttpPut("{id:guid}")]
     [EndpointSummary("Atualiza um lançamento.")]
+    [EndpointDescription("Campos omitidos não mudam. status Pago só pelo endpoint de pagamento (409). Trocar o status para Pendente com vencimento " +
+        "anterior a hoje no fuso do clube retorna 400: o lançamento vencido e não pago fica Atrasado (a rotina de vencimento o marcaria de novo).")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

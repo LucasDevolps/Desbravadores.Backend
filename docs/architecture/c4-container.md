@@ -264,8 +264,9 @@ Sequência em [`Program.cs`](../../src/Almirante.Api/Program.cs), relevante para
 6. Sem `DbCredentials:AppUser`, audita os privilégios da identidade conectada (`DbPrivilegeCheck`).
 7. Começa a atender. Em segundo plano, rodam `AuthSessionCleanupService` (a cada 6 h), `FotosCleanupService` (faxina diária das
    fotos), `GravadorAuditoriaHttp` (diário → `auditoria_http`), `PublicadorAvisosNotificacoes` (outbox → SignalR),
-   `MonitorSessoesNotificacoes` (revalida as conexões do hub) e, com `DbCredentials:AppUser`, `DbCredentialRotationService`
-   (padrão 24 h).
+   `MonitorSessoesNotificacoes` (revalida as conexões do hub), `LancamentosAtrasadosService` (Pendente vencido → Atrasado, na
+   subida e a cada hora ou logo após a virada do dia no fuso do clube) e, com `DbCredentials:AppUser`,
+   `DbCredentialRotationService` (padrão 24 h).
 
 Premissa operacional: uma única instância da API por banco. Cada startup rotaciona a senha de runtime
 e aplica migrations ([ADR-0005](adr/0005-separar-identidades-sql-e-rotacionar-credenciais.md)).

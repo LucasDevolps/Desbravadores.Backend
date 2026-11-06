@@ -211,6 +211,7 @@ builder.Services.AddHsts(options =>
     options.Preload = hsts.GetValue("Preload", false);
 });
 builder.Services.AddHostedService<AuthSessionCleanupService>();
+builder.Services.AddHostedService<LancamentosAtrasadosService>();
 
 builder.Services.AddMediatR(cfg =>
 {

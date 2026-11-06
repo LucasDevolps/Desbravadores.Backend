@@ -13,7 +13,7 @@ namespace Almirante.Api.Services;
 public sealed record EventosLockOptions(int TimeoutMs = 10_000);
 
 public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, ILogger<EventosService> logger, EventosLockOptions lockOptions,
-    SinalAvisosNotificacoes sinal)
+    SinalAvisosNotificacoes sinal, DataCivil dataCivil)
 {
     public static string RecursoDoGrupo(Guid grupoId) => $"evento-grupo:{grupoId:D}";
 
@@ -311,10 +311,11 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     || conteudo.ValorPorMembro != evento.ValorPorMembro;
                 var financeiroMudou = custoMudou || dataMudou || removidos.Count > 0 || adicionados.Count > 0;
 
-                if (financeiroMudou && lancamentos.Any(l => l.Status != StatusLancamento.Pendente))
+                // Issue #184: Atrasado é só um Pendente vencido (a rotina de vencimento o marca sozinha); apenas Pago trava o cadastro.
+                if (financeiroMudou && lancamentos.Any(l => l.Status == StatusLancamento.Pago))
                 {
-                    throw ApiProblemException.Conflict("Evento com lançamento Pago ou Atrasado.",
-                        "Valores, participantes e data não podem ser alterados quando algum lançamento do cadastro está Pago ou Atrasado. Apenas o local pode ser corrigido.");
+                    throw ApiProblemException.Conflict("Evento com lançamento Pago.",
+                        "Valores, participantes e data não podem ser alterados quando algum lançamento do cadastro está Pago. Apenas o local pode ser corrigido.");
                 }
 
                 if (dataMudou && conteudo.DataEvento < EventoRegras.PrimeiroDiaDoMes(clock.GetUtcNow()))
@@ -348,6 +349,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
                 var removidosIds = removidos.Select(r => r.MembroId).ToHashSet();
                 var descricao = EventoRegras.DescricaoLancamento(conteudo.Local, conteudo.DataEvento);
+                var hoje = dataCivil.Hoje();
                 foreach (var lancamento in lancamentos)
                 {
                     if (lancamento.MembroId is { } m && removidosIds.Contains(m))
@@ -358,14 +360,19 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                         continue;
                     }
 
-                    var pendente = lancamento.Status == StatusLancamento.Pendente;
+                    var emAberto = lancamento.Status != StatusLancamento.Pago;
                     if (lancamento.Descricao != descricao ||
-                        (pendente && (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento)))
+                        (emAberto && (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento)))
                     {
-                        if (pendente)
+                        if (emAberto)
                         {
                             lancamento.Valor = conteudo.ValorPorMembro;
                             lancamento.Vencimento = conteudo.DataEvento;
+                            // Vencimento que ainda não passou tira do atraso; um vencido fica para a rotina, que marca e notifica.
+                            if (lancamento.Status == StatusLancamento.Atrasado && lancamento.Vencimento >= hoje)
+                            {
+                                lancamento.Status = StatusLancamento.Pendente;
+                            }
                         }
 
                         lancamento.Descricao = descricao;
@@ -426,10 +433,10 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             await TravarGrupoDoEventoAsync(id, ct);
             await TravarCadastroAsync(id, versao, request.UsuarioResponsavelId, agora, ct);
 
-            if (await db.Lancamentos.AnyAsync(l => l.EventoId == id && l.Ativo && l.Status != StatusLancamento.Pendente, ct))
+            if (await db.Lancamentos.AnyAsync(l => l.EventoId == id && l.Ativo && l.Status == StatusLancamento.Pago, ct))
             {
-                throw ApiProblemException.Conflict("Evento com lançamento Pago ou Atrasado.",
-                    "O cadastro não pode ser excluído enquanto algum lançamento estiver Pago ou Atrasado. Nenhum registro foi alterado.");
+                throw ApiProblemException.Conflict("Evento com lançamento Pago.",
+                    "O cadastro não pode ser excluído enquanto algum lançamento estiver Pago. Nenhum registro foi alterado.");
             }
 
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, motivo, ct);
