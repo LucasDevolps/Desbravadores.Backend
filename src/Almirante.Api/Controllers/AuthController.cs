@@ -20,10 +20,12 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     private const string RefreshCookie = "__Host-almirante-refresh";
 
     [HttpGet("csrf"), AllowAnonymous]
+    [EndpointSummary("Emite o token CSRF exigido pelas rotas de autenticação que usam cookie.")]
     public IActionResult Csrf() => Ok(new { csrfToken = antiforgery.GetAndStoreTokens(HttpContext).RequestToken });
 
     [HttpPost("login"), AllowAnonymous, ValidateAntiForgeryToken]
     [EnableRateLimiting(LoginRateLimiting.PolicyName), SemAuditoriaHttp]
+    [EndpointSummary("Autentica por e-mail e senha: devolve o access token e grava o refresh token em cookie HttpOnly.")]
     [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -37,6 +39,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     }
 
     [HttpPost("refresh"), AllowAnonymous, ValidateAntiForgeryToken]
+    [EndpointSummary("Troca o refresh token do cookie por um novo access token e um novo refresh token (rotação).")]
     [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<LoginResponse>> Refresh(CancellationToken ct)
@@ -50,6 +53,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     }
 
     [HttpPost("logout"), AllowAnonymous, ValidateAntiForgeryToken]
+    [EndpointSummary("Encerra a sessão e apaga o cookie de refresh; responde 204 mesmo sem sessão.")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
@@ -62,6 +66,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     }
 
     [HttpGet("Me"), Authorize]
+    [EndpointSummary("Consulta os dados do usuário autenticado.")]
     [ProducesResponseType<MeDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<MeDto>> Me(CancellationToken ct)

@@ -75,6 +75,13 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
         {
             logging.SetMinimumLevel(LogLevel.Trace);
             logging.AddProvider(Logs);
+            // No Windows o WebApplication registra o EventLog por padrão: teste não escreve no log de eventos da máquina, e esse
+            // provedor às vezes já estava descartado quando o aviso de encerramento da auditoria HTTP chegava (StopAsync falhava).
+            foreach (var eventLog in logging.Services
+                .Where(d => d.ImplementationType?.FullName == "Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider").ToList())
+            {
+                logging.Services.Remove(eventLog);
+            }
         });
 
         builder.ConfigureServices(services =>

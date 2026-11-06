@@ -262,6 +262,39 @@ public sealed class AuditoriaHttpTests(AuditoriaHttpApiFactory factory) : IClass
     }
 
     [Fact]
+    public async Task UrlAcimaDoLimiteDaColuna_ETruncadaComReticencias()
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var marca = $"longa{Guid.NewGuid():N}";
+        var query = string.Join("&", Enumerable.Range(0, 300).Select(i => $"{marca}{i}=1"));
+
+        using var response = await client.GetAsync($"/api/Lancamentos?{query}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var registro = Assert.Single(await RegistrosAsync(factory, r => r.Url.Contains(marca)));
+        Assert.Equal(AuditoriaHttp.UrlMaximo, registro.Url.Length);
+        Assert.EndsWith("...", registro.Url);
+    }
+
+    [Fact]
+    public async Task CorpoChunkedVazio_LidoAteOFim_FicaRegistradoSemCorpo()
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var marca = $"vazio{Guid.NewGuid():N}";
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}?{marca}=1")
+        {
+            Content = new StreamContent(new NaoBuscavel([])) { Headers = { ContentType = new MediaTypeHeaderValue("application/json") } },
+        };
+        request.Headers.TransferEncodingChunked = true;
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var registro = Assert.Single(await RegistrosAsync(factory, r => r.Url.Contains(marca)));
+        Assert.Equal((EstadoCapturaHttp.SemCorpo, SanitizadorAuditoriaHttp.SemCorpo), (registro.EstadoCapturaRequest, registro.Request));
+    }
+
+    [Fact]
     public async Task CorpoMaiorQueOLimite_ApiRecebeTudo_RegistroSoComMetadados()
     {
         using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);

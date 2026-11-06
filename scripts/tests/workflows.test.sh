@@ -93,7 +93,8 @@ if [[ -f "$CI" ]]; then
   for job in build-and-test sqlserver-integration; do
     exige "$job" '--collect "XPlat Code Coverage"' "coleta cobertura"
     exige "$job" '--settings src/coverage.runsettings' "usa src/coverage.runsettings"
-    exige "$job" 'path: TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
+    exige "$job" 'TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
+    exige "$job" 'TestResults/*/coverage.opencover.xml' "publica o OpenCover bruto (união exata dos ramos)"
   done
   exige build-and-test 'Category!=RequiresDocker&Category!=RequiresSqlServer' "roda os testes sem dependências externas"
   exige sqlserver-integration 'Category=RequiresSqlServer' "roda os testes RequiresSqlServer"
@@ -107,9 +108,11 @@ if [[ -f "$CI" ]]; then
   fi
   exige coverage 'needs: [build-and-test, sqlserver-integration]' "consolida as duas suítes"
   exige coverage 'dotnet tool restore' "usa o ReportGenerator fixado no manifesto local"
-  exige coverage 'bash scripts/coverage.sh report' "gera o relatório consolidado"
-  exige coverage 'bash scripts/coverage.sh gate' "aplica o quality gate"
-  exige coverage 'src/coverage-baseline.json' "compara com o baseline versionado"
+  exige coverage 'bash scripts/coverage.sh report coverage-input/unit coverage-report/unitaria' "gera o relatório unitário separado"
+  exige coverage 'bash scripts/coverage.sh report coverage-input coverage-report/combinada' "gera o relatório combinado das duas suítes"
+  exige coverage 'bash scripts/coverage.sh gate coverage-report/combinada/Cobertura.xml src/coverage-baseline.json' "aplica o gate da cobertura combinada"
+  exige coverage 'bash scripts/coverage.sh gate coverage-report/unitaria/Cobertura.xml src/coverage-baseline-unit.json' "aplica o gate da cobertura unitária"
+  exige coverage 'bash scripts/coverage.sh lacunas' "lista as lacunas no resumo"
   exige coverage 'GITHUB_STEP_SUMMARY' "escreve o Job Summary"
   exige coverage 'name: coverage-${{' "publica o artifact de cobertura"
   exige deploy-scripts 'bash scripts/tests/coverage.test.sh' "testa o script de cobertura"

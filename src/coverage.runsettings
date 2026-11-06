@@ -8,7 +8,8 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Format>cobertura</Format>
+          <!-- OpenCover para a união das suítes (ramos por offset no IL, ver scripts/coverage.sh); Cobertura para leitura direta. -->
+          <Format>cobertura,opencover</Format>
           <!-- Só código de produção; o assembly de testes nunca entra na métrica. -->
           <Include>[Almirante.Api]*,[Almirante.ServiceDefaults]*</Include>
           <!--

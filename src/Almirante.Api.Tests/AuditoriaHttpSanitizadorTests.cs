@@ -397,4 +397,81 @@ public class AuditoriaHttpSanitizadorTests
             Assert.DoesNotContain(segredo, texto, StringComparison.OrdinalIgnoreCase);
         }
     }
+
+    [Fact]
+    public void Cabecalhos_ValoresForaDoFormatoEsperado_ViramMarcador_EValidosPassam()
+    {
+        var request = new HeaderDictionary
+        {
+            ["Content-Length"] = "12a", ["Sec-WebSocket-Version"] = "13", ["Origin"] = "null",
+        };
+        var response = new HeaderDictionary
+        {
+            ["Content-Length"] = "dez", ["Content-Encoding"] = "gzip", ["Cache-Control"] = "no-store", ["Retry-After"] = "logo",
+            ["Allow"] = "GET, POST", ["WWW-Authenticate"] = "(nada)",
+        };
+        using var aceitos = JsonDocument.Parse(SanitizarCabecalhos(request, response, Nenhum));
+        var req = aceitos.RootElement.GetProperty("request");
+        var resp = aceitos.RootElement.GetProperty("response");
+        Assert.Equal((MarcadorFormato, "13", "null"), (req.GetProperty("Content-Length").GetString(), req.GetProperty("Sec-WebSocket-Version").GetString(),
+            req.GetProperty("Origin").GetString()));
+        Assert.Equal((MarcadorFormato, "gzip", "no-store", MarcadorFormato, "GET, POST", MarcadorFormato),
+            (resp.GetProperty("Content-Length").GetString(), resp.GetProperty("Content-Encoding").GetString(), resp.GetProperty("Cache-Control").GetString(),
+                resp.GetProperty("Retry-After").GetString(), resp.GetProperty("Allow").GetString(), resp.GetProperty("WWW-Authenticate").GetString()));
+
+        var invalidos = new HeaderDictionary
+        {
+            ["Sec-WebSocket-Version"] = "treze", ["Origin"] = "javascript:alert(1)", ["Content-Length"] = "40",
+        };
+        var respostaInvalida = new HeaderDictionary
+        {
+            ["Content-Encoding"] = "gzip; x=@", ["Cache-Control"] = "max-age=<1>", ["Allow"] = "GET;@", ["Content-Length"] = "40",
+        };
+        using var recusados = JsonDocument.Parse(SanitizarCabecalhos(invalidos, respostaInvalida, Nenhum));
+        var req2 = recusados.RootElement.GetProperty("request");
+        var resp2 = recusados.RootElement.GetProperty("response");
+        Assert.Equal((MarcadorFormato, MarcadorFormato, "40"), (req2.GetProperty("Sec-WebSocket-Version").GetString(), req2.GetProperty("Origin").GetString(),
+            req2.GetProperty("Content-Length").GetString()));
+        Assert.Equal((MarcadorFormato, MarcadorFormato, MarcadorFormato, "40"), (resp2.GetProperty("Content-Encoding").GetString(),
+            resp2.GetProperty("Cache-Control").GetString(), resp2.GetProperty("Allow").GetString(), resp2.GetProperty("Content-Length").GetString()));
+    }
+
+    [Fact]
+    public void ManterTexto_Url_SoPublicaECurta_EMarcadorDeTextoLivre_InformaOTamanhoQuandoHouver()
+    {
+        Assert.Equal("https://exemplo.org/a.png", ManterTexto(CategoriaCampoAuditoria.Url, "https://exemplo.org/a.png"));
+        Assert.Null(ManterTexto(CategoriaCampoAuditoria.Url, "https://exemplo.org/" + new string('a', 300)));
+        Assert.Null(ManterTexto(CategoriaCampoAuditoria.Url, "file:///etc/passwd"));
+        Assert.Equal("[texto omitido]", Marcador(CategoriaCampoAuditoria.TextoLivre, null));
+        Assert.Equal("[texto omitido: 5 caracteres]", Marcador(CategoriaCampoAuditoria.TextoLivre, "abcde"));
+    }
+
+    [Fact]
+    public void Caminho_ComPadraoMasSemValoresDeRota_NaoReconheceParametro()
+    {
+        var padrao = RoutePatternFactory.Parse("api/Cep/{cep}");
+        Assert.Equal("/api/Cep/[omitido]", SanitizarCaminho("/api/Cep/rua-das-flores", padrao, null, s => s is "api" or "Cep"));
+    }
+
+    [Fact]
+    public void Excecao_RegistraCodigoSqlStatusDaApiOuSoOTipo()
+    {
+        string Codigo(Exception e) => JsonDocument.Parse(SanitizarExcecao(e, tratada: true)).RootElement.ToString();
+        Assert.Contains("\"codigo\":2627", Codigo(SqlExceptionDeTeste.Criar(2627)));
+        Assert.Contains("\"codigo\":547", Codigo(new DbUpdateException("x", SqlExceptionDeTeste.Criar(547))));
+        Assert.Contains("\"status\":409", Codigo(ApiProblemException.Conflict("conflito")));
+        var generica = Codigo(new TimeoutException("detalhe que não pode sair"));
+        Assert.DoesNotContain("\"codigo\"", generica);
+        Assert.DoesNotContain("\"status\"", generica);
+        Assert.DoesNotContain("detalhe que não pode sair", generica);
+    }
+
+    [Fact]
+    public void Json_IdentificadorNumericoNaoInteiro_ViraMarcador()
+    {
+        var (_, json) = SanitizarJson(Encoding.UTF8.GetBytes("""{"membroId":1.5,"eventoId":42}"""), 10_000);
+        using var documento = JsonDocument.Parse(json);
+        Assert.Equal(MarcadorFormato, documento.RootElement.GetProperty("membroId").GetString());
+        Assert.Equal(42, documento.RootElement.GetProperty("eventoId").GetInt32());
+    }
 }

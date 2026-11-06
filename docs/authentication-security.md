@@ -96,7 +96,7 @@ A identidade vem **só** do token validado: não há id de usuário na rota nem 
 
 ### Pendências da issue #127 fora deste escopo
 
-- Módulo de patrimônios (Almoxarife, `ALM`): o cargo existe, mas não há cadastro, consulta nem gestão de patrimônios.
+- ~~Módulo de patrimônios~~: entregue na issue #126 ([`almoxarifado.md`](almoxarifado.md)), com o cargo `ALM` e o responsável designado.
 - Relatórios da secretaria além dos de formação (classes e especialidades foram entregues na issue #125, ver [`formacao.md`](formacao.md)).
 - Consulta dos próprios débitos pelo desbravador além da cobrança mostrada em `/api/Me/Eventos` (o `lancamentoId` das notificações de débito continua sem rota de autoatendimento).
 
@@ -164,7 +164,7 @@ Remover um valor do arquivo atual **não** o remove do histórico do Git. Estive
 
 Esta entrega corrige e completa o suporte de código a essas rotações (inclusive a configuração para retirar `JWT_KEY_V1` por completo, e a ferramenta de senha do admin); ela **não** executa nem comprova rotação em nenhum ambiente real — isso continua sendo uma ação operacional de quem administra esse ambiente.
 
-**Fora de escopo desta entrega, recomendado para o futuro:** um endpoint de troca de senha autoatendido (autenticado, exigindo a senha atual, revogando as demais sessões) evitaria a necessidade de acesso ao servidor para essa rotação.
+A troca de senha autoatendida (`POST /api/Auth/alterar-senha`, exigindo a senha atual e revogando todas as sessões) foi entregue na issue #159 ([`senhas.md`](senhas.md)); a CLI continua sendo o caminho de emergência quando ninguém consegue entrar.
 
 ## Cabeçalhos de segurança HTTP (#35)
 
@@ -297,7 +297,8 @@ O banco é criado pelo bootstrap (a identidade administrativa não tem `CREATE D
 
 `GRANT IMPERSONATE ON USER::dbo` não aparece em nenhuma checagem de papel, objeto ou esquema: é permissão sobre **outro principal**. Com ela, um `EXECUTE AS USER = 'dbo'` dá privilégio equivalente ao do dono do banco sem pertencer a papel algum. O provisionamento (`DbCredentialManager.BuildProvisionSql`) filtrava `p.class IN (0,1,3)`, então um `GRANT` desses sobrevivia a todo startup e a auditoria reportava tudo certo.
 
-Agora a classe 4 entra tanto no `REVOKE` do provisionamento quanto em `docs/sql/corrigir-privilegios-usuario-app.sql`, e `DbPrivilegeAuditor` confere `IMPERSONATE` sobre qualquer principal do banco e `EXECUTE` por objeto (procedures/funções). Teste: `DbPrivilegeTests.ImpersonateEmDbo_EDetectadoPelaAuditoria_ERevogadoPeloBootstrap`.
+Agora a classe 4 entra tanto no `REVOKE` do provisionamento (`DbCredentialManager.BuildProvisionSql`) quanto na normalização do
+bootstrap (`docs/sql/criar-usuario-admin-app.sql`), e `DbPrivilegeAuditor` confere `IMPERSONATE` sobre qualquer principal do banco e `EXECUTE` por objeto (procedures/funções). Teste: `DbPrivilegeTests.ImpersonateEmDbo_EDetectadoPelaAuditoria_ERevogadoPeloBootstrap`.
 
 ### Conferências dos scripts SQL que não conferiam
 

@@ -84,7 +84,7 @@ if (dbCredentialOptions.Enabled)
     builder.Services.AddHealthChecks().AddCheck<DbConnectivityHealthCheck>("almirante-db");
     builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante",
         configureSettings: settings => settings.DisableHealthChecks = true,
-        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider)));
+        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider, TimeProvider.System)));
 }
 else
 {
@@ -340,6 +340,7 @@ builder.Services.AddSwaggerGen(options =>
     options.OperationFilter<EventosOperationFilter>();
     options.OperationFilter<UsuariosFotoOperationFilter>();
     options.OperationFilter<AlmoxarifadoOperationFilter>();
+    options.OperationFilter<AutenticacaoOperationFilter>();
 
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {
@@ -348,15 +349,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = Microsoft.OpenApi.ParameterLocation.Header,
-        Description = "Informe: Bearer {seu token}",
-    });
-
-    options.AddSecurityRequirement(_ => new Microsoft.OpenApi.OpenApiSecurityRequirement
-    {
-        {
-            new Microsoft.OpenApi.OpenApiSecuritySchemeReference("Bearer", null, null),
-            new List<string>()
-        },
+        Description = "Informe só o token: o prefixo Bearer é acrescentado pelo Swagger UI.",
     });
 });
 

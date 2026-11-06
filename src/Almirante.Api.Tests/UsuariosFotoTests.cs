@@ -244,12 +244,24 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
             await client.DeleteAsync("/api/Me/foto"),
             await client.GetAsync("/api/Me/Eventos"),
             await client.GetAsync($"/api/Me/Eventos/{id}"),
+            await client.PostAsJsonAsync("/api/Eventos", new { dataEvento = "2030-01-10", local = "x", membros = id }),
+            await client.PutAsJsonAsync($"/api/Eventos/{id}", new { local = "x" }),
+            await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{id}") { Content = JsonContent.Create(new { motivo = "x" }) }),
+            await client.PostAsJsonAsync("/api/Lancamentos/Registrar", new { membroId = id, finalidade = "Mensalidade", descricao = "x", categoria = "Clube", tipoFluxo = "Entrada", valor = 1m, vencimento = "2030-01-10", aplicarATodosOsMembros = false }),
+            await client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { descricao = "x" }),
+            await client.PostAsJsonAsync($"/api/Lancamentos/{id}/Pagamento", new { dataPagamento = "2026-01-01", valorPago = 1 }),
+            await client.PutAsJsonAsync($"/api/Lancamentos/{id}/Pagamento", new { dataPagamento = "2026-01-01", valorPago = 1 }),
+            await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "x" }) }),
+            await client.GetAsync("/api/Notificacoes/Pendentes"),
+            await client.PostAsync($"/api/Notificacoes/{id}/Leitura", null),
         };
 
         foreach (var response in respostas)
         {
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            Assert.Equal("Identidade autenticada inválida.", (string)JsonNode.Parse(await response.Content.ReadAsStringAsync())!["title"]!);
+            var corpo = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.Unauthorized,
+                $"{response.RequestMessage!.Method} {response.RequestMessage.RequestUri!.AbsolutePath}: {(int)response.StatusCode} {corpo}");
+            Assert.Equal("Identidade autenticada inválida.", (string)JsonNode.Parse(corpo)!["title"]!);
         }
     }
 

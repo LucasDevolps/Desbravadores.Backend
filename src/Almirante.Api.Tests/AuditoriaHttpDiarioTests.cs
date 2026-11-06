@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Almirante.Api.Tests;
@@ -234,5 +235,152 @@ public sealed class AuditoriaHttpDiarioTests : IDisposable
             foreach (var registro in registros) Gravados.TryAdd(registro.Id, registro);
             return Task.CompletedTask;
         }
+    }
+
+    private DiarioAuditoriaHttp Diario(AuditoriaHttpOptions opcoes, TimeProvider tempo, CapturingLoggerFactory logs)
+    {
+        var diario = new DiarioAuditoriaHttp(Microsoft.Extensions.Options.Options.Create(opcoes), new ConfigurationBuilder().Build(), tempo,
+            logs.CreateLogger<DiarioAuditoriaHttp>());
+        _descartaveis.Add(diario);
+        return diario;
+    }
+
+    private string SegmentoAtivo() => Assert.Single(Directory.GetFiles(_pasta, "*" + DiarioAuditoriaHttp.ExtensaoAtivo));
+
+    [Fact]
+    public void SemDiretorioConfigurado_UsaOPadraoDerivadoDaConexao()
+    {
+        var conexao = $"Server=127.0.0.1,1;Database=diario_{Guid.NewGuid():N}";
+        var diario = new DiarioAuditoriaHttp(Microsoft.Extensions.Options.Options.Create(new AuditoriaHttpOptions()),
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:almirante"] = conexao }).Build(),
+            TimeProvider.System, NullLogger<DiarioAuditoriaHttp>.Instance);
+        try
+        {
+            Assert.Equal(AuditoriaHttpOptions.DiretorioPadrao(conexao), diario.Diretorio);
+            Assert.True(diario.DiscoDisponivel);
+            Assert.True(Directory.Exists(diario.Diretorio));
+        }
+        finally
+        {
+            diario.Dispose();
+            Directory.Delete(diario.Diretorio, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RotacaoQueFalha_MarcaODiscoIndisponivel_GuardaNaReservaAteAEspera_EVoltaAGravarDepois()
+    {
+        var logs = new CapturingLoggerFactory();
+        var relogio = new RelogioManualDeTeste();
+        var diario = Diario(Opcoes(_pasta), relogio, logs);
+        await diario.RegistrarAsync(Registro());
+        var ativo = SegmentoAtivo();
+        // Uma pasta com o nome do segmento fechado faz a renomeação falhar (em qualquer sistema operacional).
+        Directory.CreateDirectory(Path.ChangeExtension(ativo, DiarioAuditoriaHttp.ExtensaoPendente));
+
+        await diario.RotacionarAsync();
+
+        Assert.False(diario.DiscoDisponivel);
+        Assert.Contains(logs.Entries, e => e.StartsWith("Error Diário da auditoria HTTP indisponível em", StringComparison.Ordinal) && e.Contains("IOException"));
+        Assert.True(File.Exists(ativo), "o segmento que não foi renomeado continua em disco para ser retomado");
+
+        relogio.Agora += TimeSpan.FromSeconds(29);
+        await diario.RegistrarAsync(Registro());
+        Assert.Equal(1, diario.NaReserva);
+
+        relogio.Agora += TimeSpan.FromSeconds(1);
+        await diario.RegistrarAsync(Registro());
+        Assert.True(diario.DiscoDisponivel);
+        Assert.Equal(1, diario.NaReserva);
+        Assert.Contains(logs.Entries, e => e.StartsWith($"Information Diário da auditoria HTTP voltou a gravar em {_pasta}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PastaApagada_AoAbrirSegmento_VaiParaAReservaSemPerderORegistro()
+    {
+        var logs = new CapturingLoggerFactory();
+        var diario = Diario(Opcoes(_pasta), new RelogioManualDeTeste(), logs);
+        await diario.RegistrarAsync(Registro());
+        await diario.RotacionarAsync();
+        Directory.Delete(_pasta, recursive: true);
+
+        var registro = Registro();
+        await diario.RegistrarAsync(registro);
+
+        Assert.False(diario.DiscoDisponivel);
+        Assert.Equal(registro.Id, Assert.Single(diario.RetirarDaReserva(10)).Id);
+        Assert.Contains(logs.Entries, e => e.Contains("DirectoryNotFoundException"));
+    }
+
+    [Fact]
+    public async Task EscritaQueFalhaNoSegmentoAberto_NaoPerdeORegistro()
+    {
+        var logs = new CapturingLoggerFactory();
+        var diario = Diario(Opcoes(_pasta), new RelogioManualDeTeste(), logs);
+        await diario.RegistrarAsync(Registro());
+        var ativo = SegmentoAtivo();
+
+        // Outro processo trava o arquivo inteiro. No Windows a trava é obrigatória e a escrita falha; no Linux ela é só consultiva e a
+        // escrita continua. Nos dois casos o registro não se perde: vai para o disco ou para a reserva em memória.
+        using var leitor = new FileStream(ativo, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (OperatingSystem.IsWindows()) leitor.Lock(0, long.MaxValue / 2);
+        var registro = Registro();
+        await diario.RegistrarAsync(registro);
+        if (OperatingSystem.IsWindows()) leitor.Unlock(0, long.MaxValue / 2);
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.False(diario.DiscoDisponivel);
+            Assert.Equal(registro.Id, Assert.Single(diario.RetirarDaReserva(10)).Id);
+        }
+        else
+        {
+            Assert.True(diario.DiscoDisponivel);
+            Assert.Equal(0, diario.NaReserva);
+        }
+    }
+
+    [Fact]
+    public async Task Encerramento_SemConseguirFecharOSegmento_AvisaEDeixaParaOProximoInicio()
+    {
+        var logs = new CapturingLoggerFactory();
+        var diario = new DiarioAuditoriaHttp(Microsoft.Extensions.Options.Options.Create(Opcoes(_pasta)), new ConfigurationBuilder().Build(),
+            TimeProvider.System, logs.CreateLogger<DiarioAuditoriaHttp>());
+        await diario.RegistrarAsync(Registro());
+        var ativo = SegmentoAtivo();
+        Directory.CreateDirectory(Path.ChangeExtension(ativo, DiarioAuditoriaHttp.ExtensaoPendente));
+
+        diario.Dispose();
+
+        Assert.Contains(logs.Entries, e => e.StartsWith("Warning Segmento ativo da auditoria HTTP não pôde ser fechado no encerramento (IOException)",
+            StringComparison.Ordinal));
+        Assert.True(File.Exists(ativo));
+        var pendentes = Diario(Opcoes(_pasta)).SegmentosPendentes().ToList();
+        try
+        {
+            Assert.Single(pendentes, s => s.Caminho == ativo && s.Registros.Count == 1);
+        }
+        finally
+        {
+            foreach (var segmento in pendentes) segmento.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Rejeitado_SemPastaDeRejeitados_EhDescartadoComContagem_EInformadoUmaVez()
+    {
+        var logs = new CapturingLoggerFactory();
+        var diario = Diario(Opcoes(_pasta), TimeProvider.System, logs);
+        await File.WriteAllTextAsync(Path.Combine(_pasta, DiarioAuditoriaHttp.PastaRejeitados), "arquivo no lugar da pasta");
+        var registro = Registro();
+
+        diario.Rejeitar(registro);
+        diario.InformarDescartes();
+        diario.InformarDescartes();
+
+        Assert.Equal(1, diario.Descartados);
+        Assert.Contains(logs.Entries, e => e.StartsWith($"Error Registro de auditoria HTTP {registro.Id} recusado pelo banco e não pôde ser guardado em rejeitados (IOException): descartado.",
+            StringComparison.Ordinal));
+        Assert.Single(logs.Entries, e => e.StartsWith("Error Auditoria HTTP descartou 1 registros (total 1 desde o início)", StringComparison.Ordinal));
     }
 }

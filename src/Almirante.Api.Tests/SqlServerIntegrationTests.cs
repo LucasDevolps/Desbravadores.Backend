@@ -72,9 +72,7 @@ public sealed class SqlServerApiFactory(IDictionary<string, string?>? overrides 
         SqlConnection.ClearAllPools();
         using var connection = new SqlConnection(builder.ConnectionString);
         connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = $"IF DB_ID(N'{database}') IS NOT NULL BEGIN ALTER DATABASE [{database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{database}]; END";
-        command.ExecuteNonQuery();
+        BancosDeTeste.Remover(connection, database);
     }
 }
 

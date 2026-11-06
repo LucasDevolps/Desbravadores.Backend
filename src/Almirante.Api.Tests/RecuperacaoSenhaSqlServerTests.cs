@@ -247,6 +247,34 @@ public sealed class RecuperacaoSenhaSqlServerTests : IAsyncLifetime
         Assert.Equal(permitido ? 1 : 0, (await RecuperacoesAsync(alvo.Id)).Count);
     }
 
+    /// <summary>Outra operação muda a recuperação entre a validação do token e a trava: a conclusão relê a linha travada e recusa.</summary>
+    [Theory]
+    [InlineData("Status = 4, EncerradaEmUtc = SYSUTCDATETIME(), MotivoEncerramento = 'Concluida em paralelo'")]
+    [InlineData("TokenExpiraEmUtc = DATEADD(minute, -1, SYSUTCDATETIME())")]
+    [InlineData("SecurityVersion = SecurityVersion + 1")]
+    [InlineData("TokenHash = CRYPT_GEN_RANDOM(32)")]
+    public async Task Confirmar_RecuperacaoAlteradaEntreAValidacaoEATrava_RecusaSemTrocarASenha(string alteracao)
+    {
+        var secConta = await ContaAsync(_factory, "SEC", NovaSenha());
+        var membro = await ContaAsync(_factory, "DS");
+        using var sec = await LoginAsync(_factory, secConta);
+        using var anonimo = await AnonimoAsync(_factory);
+        await SolicitarAsync(anonimo, membro.Email);
+        var emitida = await EmitirOkAsync(sec.Client, membro.Id, secConta.Senha);
+        var antes = await EstadoAsync(_factory, membro.Id);
+        _gatilho.Armar("[Usuarios_recuperacoes_senha] WITH (UPDLOCK, ROWLOCK) WHERE [Id]", () => SqlAsync($"""
+            EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@u;
+            EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='127.0.0.1';
+            UPDATE dbo.Usuarios_recuperacoes_senha SET {alteracao} WHERE Id = @r;
+            """, ("@u", secConta.Id), ("@r", emitida.RecuperacaoId)));
+
+        using var resposta = await ConfirmarAsync(anonimo, emitida.Token, NovaSenha());
+
+        Assert.Equal(HttpStatusCode.BadRequest, resposta.StatusCode);
+        Assert.Equal("Autorização de recuperação inválida ou expirada.", await TituloAsync(resposta));
+        Assert.Equal(antes.SecurityVersion, (await EstadoAsync(_factory, membro.Id)).SecurityVersion);
+    }
+
     [Fact]
     public async Task Confirmar_ConcluiSemLoginESemSenhaAntiga_RevogaSessoes_AuditaAutorizadorEIp_ENotifica()
     {

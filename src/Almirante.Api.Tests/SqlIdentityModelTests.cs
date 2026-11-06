@@ -265,7 +265,7 @@ public sealed class SqlIdentityModelTests
     {
         await using var env = await PreparedAsync();
         var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(env.AppCs)
-            .AddInterceptors(new AppDbCredentialInterceptor(env.Provider)).Options;
+            .AddInterceptors(new AppDbCredentialInterceptor(env.Provider, TimeProvider.System)).Options;
         await using var db = new AlmiranteDbContext(options);
 
         await DbSeeder.SeedAsync(db, new PasswordHasher<Usuario>(),
@@ -310,7 +310,7 @@ public sealed class SqlIdentityModelTests
         var anterior = new SqlConnection(env.AppCs, segunda);
         Assert.Equal(18456, (await Assert.ThrowsAsync<SqlException>(() => anterior.OpenAsync())).Number);
 
-        var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(env.AppCs).AddInterceptors(new AppDbCredentialInterceptor(env.Provider)).Options;
+        var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(env.AppCs).AddInterceptors(new AppDbCredentialInterceptor(env.Provider, TimeProvider.System)).Options;
         await using var db = new AlmiranteDbContext(options);
         Assert.True(await db.Database.CanConnectAsync());
         await manager.RotateAsync();
@@ -449,6 +449,33 @@ public sealed class SqlIdentityModelTests
         await env.NewManager().InitializeAsync();
         await using var app = await env.OpenAppAsync();
         Assert.Empty(await DbPrivilegeAuditor.FindExcessPrivilegesAsync(app));
+    }
+
+    [Fact]
+    public async Task VerificacaoDePrivilegio_RuntimeMinimaPassa_EIdentidadeAmplaSoEhRecusadaEmEnforce()
+    {
+        await using var env = await PreparedAsync();
+        static IConfiguration Modo(string modo) =>
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [DbPrivilegeCheck.SettingName] = modo }).Build();
+        var logs = new CapturingLoggerFactory();
+
+        // Como no startup sem DbCredentials, a verificação abre a conexão do contexto por conta própria: a credencial já vem nela.
+        await using var conexaoMinima = new SqlConnection(env.AppCs, env.Provider.Current);
+        await using (var db = new AlmiranteDbContext(new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(conexaoMinima).Options))
+        {
+            await DbPrivilegeCheck.RunAsync(db, Modo("Enforce"), logs.CreateLogger("check"));
+        }
+
+        await using (var db = new AlmiranteDbContext(new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(env.AdminCs).Options))
+        {
+            await DbPrivilegeCheck.RunAsync(db, Modo("Off"), logs.CreateLogger("check"));
+            Assert.Empty(logs.Entries);
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => DbPrivilegeCheck.RunAsync(db, Modo("Enforce"), logs.CreateLogger("check")));
+            Assert.Contains("privilégios além do mínimo", ex.Message);
+            NoSecret.Assert(ex.ToString(), env.AdminPassword);
+        }
+
+        Assert.Throws<InvalidOperationException>(() => DbPrivilegeCheck.ParseMode("Talvez", DbPrivilegeCheck.SettingName));
     }
 
     [Fact]

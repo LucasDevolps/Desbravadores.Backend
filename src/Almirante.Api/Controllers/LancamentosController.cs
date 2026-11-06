@@ -14,7 +14,7 @@ namespace Almirante.Api.Controllers;
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
-    [EndpointSummary("Lista os lançamentos ativos, com paginação e filtros.")]
+    [EndpointSummary("Lista os lançamentos, paginados, com filtros por busca, status, finalidade e vencimento.")]
     [EndpointDescription("Sem filtros ativos (search, status, finalidade e vencimento ausentes; status/finalidade \"Todos\" contam como ausentes), " +
         "a ordem é por prioridade de status: Atrasado, depois Pendente, depois Pago; dentro do mesmo status, vencimento mais recente primeiro e Id como desempate. " +
         "Com qualquer filtro ativo, a ordem é vencimento mais recente primeiro e Id como desempate.")]
@@ -36,6 +36,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [EndpointSummary("Consulta um lançamento ativo.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<LancamentoDto>> GetById(Guid id, CancellationToken cancellationToken)
@@ -93,9 +94,11 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [EndpointSummary("Atualiza um lançamento.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<LancamentoDto>> Update(Guid id, [FromBody] UpdateLancamentoRequest request, CancellationToken cancellationToken)
     {
         if (!User.TentarObterUsuarioId(out var usuarioResponsavelId))
@@ -147,9 +150,11 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [EndpointSummary("Exclui logicamente um lançamento; a exclusão é auditada.")]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Delete(Guid id, [FromBody] DeleteLancamentoRequest request, CancellationToken cancellationToken)
     {
         if (!User.TentarObterUsuarioId(out var usuarioId)) return IdentidadeInvalida();

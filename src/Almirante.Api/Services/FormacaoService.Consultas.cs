@@ -442,9 +442,9 @@ public sealed partial class FormacaoService
         ? db.ProgressoRequisitos.Where(p => p.MembroClasseId == vinculoId)
         : db.ProgressoRequisitos.Where(p => p.MembroEspecialidadeId == vinculoId);
 
+    /// <summary>Sem exigência de especialidades, qualquer quantidade de evidências válidas (inclusive zero) atende.</summary>
     private static bool ExigenciaAtendida(Requisito requisito, IEnumerable<EvidenciaAvaliacao> evidencias, DateOnly? dataInicio) =>
-        requisito.EspecialidadesExigidas is not { } exigidas
-        || evidencias.Count(e => ProgressoFormacao.MotivoEvidenciaInvalida(requisito, e, dataInicio) is null) >= exigidas;
+        evidencias.Count(e => ProgressoFormacao.MotivoEvidenciaInvalida(requisito, e, dataInicio) is null) >= requisito.EspecialidadesExigidas.GetValueOrDefault();
 
     private async Task<List<EvidenciaAvaliacao>> EvidenciasDoRequisitoAsync(Guid membroClasseId, Guid requisitoId, CancellationToken ct) =>
         (await EvidenciasAsync([membroClasseId], ct)).Where(e => e.RequisitoId == requisitoId).Select(e => e.Avaliacao).ToList();
