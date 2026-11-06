@@ -573,6 +573,13 @@ os códigos numéricos correspondentes e rejeitam valores fora do enum. `status`
 aceita nome, código ou `Todos`. Clientes que enviavam `tipoFluxo: "Despesa"` devem passar a
 usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no JSON é `Saida`.
 
+**Ordem da listagem (issue #99).** Sem filtros ativos em `GET /api/Lancamentos` (`search`,
+`status`, `finalidade` e `vencimento` ausentes; `status`/`finalidade` = `Todos` contam como
+ausentes), os itens saem por prioridade de status: `Atrasado`, depois `Pendente`, depois `Pago`.
+Dentro do mesmo status vale o critério anterior (vencimento mais recente primeiro, `Id` como
+desempate), o que mantém a ordem estável entre as páginas. Com qualquer filtro ativo, a ordem
+continua sendo só vencimento mais recente primeiro e `Id`.
+
 `LancamentosService` coordena consultas e alterações individuais. `LancamentoGeralService`
 cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
 contexto SQL de auditoria. `LancamentoMapping` centraliza a projeção das respostas.

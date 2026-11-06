@@ -14,6 +14,10 @@ namespace Almirante.Api.Controllers;
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
+    [EndpointSummary("Lista os lançamentos ativos, com paginação e filtros.")]
+    [EndpointDescription("Sem filtros ativos (search, status, finalidade e vencimento ausentes; status/finalidade \"Todos\" contam como ausentes), " +
+        "a ordem é por prioridade de status: Atrasado, depois Pendente, depois Pago; dentro do mesmo status, vencimento mais recente primeiro e Id como desempate. " +
+        "Com qualquer filtro ativo, a ordem é vencimento mais recente primeiro e Id como desempate.")]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<LancamentosResponse>> List(
