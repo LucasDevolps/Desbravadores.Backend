@@ -58,7 +58,7 @@ public sealed class AuditoriaHttpResilienciaTests
 
     private const string Prefixo = "/__tests/falha";
 
-    private sealed class EndpointsComFalha(string arquivo) : IStartupFilter
+    private sealed class EndpointsComFalha(string arquivo, TaskCompletionSource corpoParcialLido) : IStartupFilter
     {
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
         {
@@ -78,6 +78,14 @@ public sealed class AuditoriaHttpResilienciaTests
             {
                 switch (context.Request.Path.Value)
                 {
+                    case Prefixo + "/corpo-interrompido":
+                        // Confirma a leitura pela auditoria antes de o cliente encerrar o socket.
+                        var primeiroByte = new byte[1];
+                        if (await context.Request.Body.ReadAsync(primeiroByte) != 1)
+                            throw new InvalidOperationException("O corpo parcial não chegou ao servidor.");
+                        corpoParcialLido.TrySetResult();
+                        await context.Request.Body.CopyToAsync(Stream.Null);
+                        return;
                     case Prefixo + "/eco":
                         using (var leitor = new StreamReader(context.Request.Body))
                         {
@@ -119,10 +127,12 @@ public sealed class AuditoriaHttpResilienciaTests
     {
         public string Arquivo { get; } = Path.Combine(Path.GetTempPath(), $"almirante-teste-arquivo-{Guid.NewGuid():N}.json");
 
+        public TaskCompletionSource CorpoParcialLido { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public FactoryComFalhas() => File.WriteAllText(Arquivo, """{"conteudo":"do arquivo"}""");
 
         protected override void ConfigureTestServices(IServiceCollection services) =>
-            services.AddSingleton<IStartupFilter>(new EndpointsComFalha(Arquivo));
+            services.AddSingleton<IStartupFilter>(new EndpointsComFalha(Arquivo, CorpoParcialLido));
 
         protected override void Dispose(bool disposing)
         {
@@ -262,10 +272,10 @@ public sealed class AuditoriaHttpResilienciaTests
         {
             // Cabeçalhos com Content-Length 1000 e só o começo do corpo; depois a conexão fecha.
             var parcial = System.Text.Encoding.ASCII.GetBytes(string.Join("\r\n",
-                $"POST {Prefixo}/eco HTTP/1.1", "Host: localhost", "Content-Type: application/json", "Content-Length: 1000", "", "{\"a\":\""));
+                $"POST {Prefixo}/corpo-interrompido HTTP/1.1", "Host: localhost", "Content-Type: application/json", "Content-Length: 1000", "", "{\"a\":\""));
             await tcp.GetStream().WriteAsync(parcial);
             await tcp.GetStream().FlushAsync();
-            await Task.Delay(300);
+            await factory.CorpoParcialLido.Task.WaitAsync(TimeSpan.FromSeconds(30));
         }
 
         var registro = Assert.Single(await RegistrosDoCaminhoAsync(factory, "POST"));

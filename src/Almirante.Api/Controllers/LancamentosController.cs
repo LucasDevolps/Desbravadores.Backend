@@ -15,7 +15,10 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
     [EndpointSummary("Lista os lançamentos, paginados, com filtros por busca, status, finalidade e vencimento.")]
-    [EndpointDescription("Status atualizado automaticamente: um lançamento ativo Pendente com vencimento anterior a hoje (fuso do clube) passa a " +
+    [EndpointDescription("Sem filtros ativos (search, status, finalidade e vencimento ausentes; status/finalidade \"Todos\" contam como ausentes), " +
+        "a ordem é por prioridade de status: Atrasado, depois Pendente, depois Pago; dentro do mesmo status, vencimento mais recente primeiro e Id como desempate. " +
+        "Com qualquer filtro ativo, a ordem é vencimento mais recente primeiro e Id como desempate. " +
+        "Status atualizado automaticamente: um lançamento ativo Pendente com vencimento anterior a hoje (fuso do clube) passa a " +
         "Atrasado na subida da API e depois a cada hora ou logo após a virada do dia. Vencimento igual a hoje continua Pendente.")]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
