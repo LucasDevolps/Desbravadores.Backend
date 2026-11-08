@@ -119,39 +119,29 @@ public sealed class AutoatendimentoSqlServerTests(FotosSqlFixture fx) : IClassFi
         Assert.Equal(2, (await HistoricoAsync(id)).Count);
     }
 
-    [Fact]
+    [Fact(DisplayName = "PUT /api/Me com documento incompleto reutiliza as regras do cadastro: CPF único, CPF não removível, responsável, RG e ViaCEP")]
     public async Task PutMe_ReutilizaRegrasDoBanco_CpfUnico_CpfNaoRemovivel_Responsavel_Rg_EViaCep()
     {
+        //Arrange
         var (desbravador, id) = await UsuarioAsync("DS");
         var (outro, _) = await UsuarioAsync("DS");
         var cpfDoOutro = TestHelpers.NovoCpf();
-        Assert.Equal(HttpStatusCode.OK, (await PutMeAsync(outro, new { cpf = cpfDoOutro })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await PutMeAsync(desbravador, new { cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio })).StatusCode);
+        var cpfDoOutroGravado = await PutMeAsync(outro, new { cpf = cpfDoOutro });
+        var cpfProprioGravado = await PutMeAsync(desbravador, new { cpf = TestHelpers.NovoCpf() });
         var historico = (await HistoricoAsync(id)).Count;
+        var nascimentoDeMenor = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-12).ToString("yyyy-MM-dd");
 
+        //Act
         var cpfDuplicado = await PutMeAsync(desbravador, new { cpf = cpfDoOutro });
-        Assert.Equal(HttpStatusCode.Conflict, cpfDuplicado.StatusCode);
-        Assert.Equal("CPF já cadastrado.", (string)(await JsonAsync(cpfDuplicado))["title"]!);
-
         var semCpf = await PutMeAsync(desbravador, new { cpf = (string?)null });
-        Assert.Equal(HttpStatusCode.BadRequest, semCpf.StatusCode);
-        Assert.Contains("Cpf", (await JsonAsync(semCpf))["errors"]!.AsObject().Select(e => e.Key));
-
-        var menorSemResponsavel = await PutMeAsync(desbravador, new { dataNascimento = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-12).ToString("yyyy-MM-dd") });
-        Assert.Equal(HttpStatusCode.BadRequest, menorSemResponsavel.StatusCode);
-        Assert.Contains("ResponsavelNome", (await JsonAsync(menorSemResponsavel))["errors"]!.AsObject().Select(e => e.Key));
-
+        var menorSemResponsavel = await PutMeAsync(desbravador, new { dataNascimento = nascimentoDeMenor });
         var semRg = await PutMeAsync(desbravador, new { rg = (string?)null });
-        Assert.Equal(HttpStatusCode.BadRequest, semRg.StatusCode);
-        Assert.Contains("Rg", (await JsonAsync(semRg))["errors"]!.AsObject().Select(e => e.Key));
-
         var cepInexistente = await PutMeAsync(desbravador, new { endereco = new { cep = ViaCepFalso.CepInexistente } });
-        Assert.Equal(HttpStatusCode.BadRequest, cepInexistente.StatusCode);
-
+        HttpResponseMessage viaCepForaDoAr;
         Factory.ViaCep.Responder = (_, _) => throw new HttpRequestException("ViaCEP fora do ar");
         try
         {
-            Assert.Equal(HttpStatusCode.ServiceUnavailable, (await PutMeAsync(desbravador, new { endereco = new { cep = "01001000" } })).StatusCode);
+            viaCepForaDoAr = await PutMeAsync(desbravador, new { endereco = new { cep = "01001000" } });
         }
         finally
         {
@@ -159,16 +149,63 @@ public sealed class AutoatendimentoSqlServerTests(FotosSqlFixture fx) : IClassFi
         }
 
         var salvo = await UsuarioAsync(id);
-        Assert.Equal(((DateOnly?)null, TestHelpers.RgFicticio, (string?)null), (salvo.DataNascimento, salvo.Rg, salvo.EnderecoCep));
-        Assert.Equal(historico, (await HistoricoAsync(id)).Count);
-
+        var historicoAposRecusas = (await HistoricoAsync(id)).Count;
         var comResponsavel = await PutMeAsync(desbravador, new
         {
-            dataNascimento = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-12).ToString("yyyy-MM-dd"),
-            responsavelNome = "Mãe Teste", responsavelEmail = "mae@local.dev", ehCin = true, rg = (string?)null,
+            dataNascimento = nascimentoDeMenor, responsavelNome = "Mãe Teste", responsavelEmail = "mae@local.dev", ehCin = true, rg = (string?)null,
         });
+        var salvoComResponsavel = await UsuarioAsync(id);
+
+        //Assert
+        Assert.Equal(HttpStatusCode.OK, cpfDoOutroGravado.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, cpfProprioGravado.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, cpfDuplicado.StatusCode);
+        Assert.Equal("CPF já cadastrado.", (string)(await JsonAsync(cpfDuplicado))["title"]!);
+        Assert.Equal(HttpStatusCode.BadRequest, semCpf.StatusCode);
+        Assert.Contains("Cpf", (await JsonAsync(semCpf))["errors"]!.AsObject().Select(e => e.Key));
+        Assert.Equal(HttpStatusCode.BadRequest, menorSemResponsavel.StatusCode);
+        Assert.Contains("ResponsavelNome", (await JsonAsync(menorSemResponsavel))["errors"]!.AsObject().Select(e => e.Key));
+        Assert.Equal(HttpStatusCode.BadRequest, semRg.StatusCode);
+        Assert.Contains("Rg", (await JsonAsync(semRg))["errors"]!.AsObject().Select(e => e.Key));
+        Assert.Equal(HttpStatusCode.BadRequest, cepInexistente.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, viaCepForaDoAr.StatusCode);
+        Assert.Equal(((DateOnly?)null, (string?)null, (string?)null), (salvo.DataNascimento, salvo.Rg, salvo.EnderecoCep));
+        Assert.Equal(historico, historicoAposRecusas);
         Assert.True(comResponsavel.StatusCode == HttpStatusCode.OK, await comResponsavel.Content.ReadAsStringAsync());
-        Assert.Equal(("Mãe Teste", (string?)null, true), ((await UsuarioAsync(id)).ResponsavelNome, (await UsuarioAsync(id)).Rg, (await UsuarioAsync(id)).EhCin));
+        Assert.Equal(("Mãe Teste", (string?)null, true), (salvoComResponsavel.ResponsavelNome, salvoComResponsavel.Rg, salvoComResponsavel.EhCin));
+    }
+
+    [Fact(DisplayName = "PUT /api/Me com documento completo recusa alterar cpf, rg e ehCin e aceita reenviar os valores gravados")]
+    public async Task Usuario_PutMe_DocumentoCompleto_RecusaAlterarCpfRgEEhCin()
+    {
+        //Arrange
+        var (desbravador, id) = await UsuarioAsync("DS");
+        var cpf = TestHelpers.NovoCpf();
+        var documento = await PutMeAsync(desbravador, new { cpf, rg = TestHelpers.RgFicticio });
+        var historico = (await HistoricoAsync(id)).Count;
+
+        //Act
+        var trocaDeCpf = await PutMeAsync(desbravador, new { cpf = TestHelpers.NovoCpf() });
+        var trocaDeRg = await PutMeAsync(desbravador, new { rg = "MG-98.765.432" });
+        var paraCin = await PutMeAsync(desbravador, new { ehCin = true, rg = (string?)null });
+        var salvoAposRecusas = await UsuarioAsync(id);
+        var historicoAposRecusas = (await HistoricoAsync(id)).Count;
+        var mesmoDocumento = await PutMeAsync(desbravador, new { cpf = TestHelpers.MascararCpf(cpf), rg = TestHelpers.RgFicticio, ehCin = false, telefone = "(11) 3456-7890" });
+        var salvo = await UsuarioAsync(id);
+
+        //Assert
+        Assert.Equal(HttpStatusCode.OK, documento.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, trocaDeCpf.StatusCode);
+        Assert.Equal(new[] { "Cpf" }, (await JsonAsync(trocaDeCpf))["errors"]!.AsObject().Select(e => e.Key));
+        Assert.Contains("cpf não pode ser alterado: o documento do usuário (CPF com RG ou com CIN) já está cadastrado.", await trocaDeCpf.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.BadRequest, trocaDeRg.StatusCode);
+        Assert.Equal(new[] { "Rg" }, (await JsonAsync(trocaDeRg))["errors"]!.AsObject().Select(e => e.Key));
+        Assert.Equal(HttpStatusCode.BadRequest, paraCin.StatusCode);
+        Assert.Equal(new[] { "Rg", "EhCin" }, (await JsonAsync(paraCin))["errors"]!.AsObject().Select(e => e.Key));
+        Assert.Equal((cpf, TestHelpers.RgFicticio, false), (salvoAposRecusas.Cpf, salvoAposRecusas.Rg, salvoAposRecusas.EhCin));
+        Assert.Equal(historico, historicoAposRecusas);
+        Assert.Equal(HttpStatusCode.OK, mesmoDocumento.StatusCode);
+        Assert.Equal((cpf, TestHelpers.RgFicticio, false, "1134567890"), (salvo.Cpf, salvo.Rg, salvo.EhCin, salvo.Telefone));
     }
 
     [Fact]

@@ -34,7 +34,8 @@ public sealed class MeController(ISender mediator, LimitadorEnvioFotos limitador
     [EndpointSummary("Atualiza os próprios dados pessoais (estado anterior auditado em _usuarios_hist).")]
     [EndpointDescription("Aceita somente cpf, dataNascimento, telefone, rg, ehCin, dataExpiracao, tipoSanguineo, doencasAlergias, endereco " +
         "e responsavelNome/responsavelEmail/responsavelCpf/responsavelTelefone, com as mesmas regras e a mesma semântica de omissão do " +
-        "PUT /api/Usuarios/{id} (omitido mantém; null ou \"\" remove; cpf gravado não pode ser removido; rg exigido sem CIN; responsável " +
+        "PUT /api/Usuarios/{id} (omitido mantém; null ou \"\" remove; cpf gravado não pode ser removido; rg exigido sem CIN; documento " +
+        "completo, CPF com RG ou com CIN, não altera cpf, rg nem ehCin; responsável " +
         "obrigatório para menor de 18 anos; CPF único; CEP consultado no ViaCEP). Qualquer outra propriedade (nome, email, cargoId, senha, " +
         "ativo, id...) é recusada com 400 e nada é gravado: nome, e-mail e cargo são da secretaria/diretoria; senha não muda por aqui. " +
         "409 CPF de outro usuário; 503 ViaCEP indisponível.")]

@@ -132,6 +132,71 @@ public sealed class RegrasCadastroTests
         Assert.Empty(RegraResponsavel.Validar(Maior, null, null, cpf, null, Hoje));
     }
 
+    private const string CPF_GRAVADO = "52998224725";
+    private const string RG_GRAVADO = "52.318.947-6";
+
+    [Theory(DisplayName = "Documento completo, com RG ou com CIN, aceita cpf, rg e ehCin iguais aos gravados")]
+    [InlineData(RG_GRAVADO, false)]
+    [InlineData(null, true)]
+    public void RegraDocumento_ValidarAlteracao_DocumentoCompletoSemMudanca_NaoRetornaErros(string? rg, bool ehCin)
+    {
+        //Arrange
+        var cpfInformado = CPF_GRAVADO;
+
+        //Act
+        var erros = RegraDocumento.ValidarAlteracao(CPF_GRAVADO, rg, ehCin, cpfInformado, rg, ehCin);
+
+        //Assert
+        Assert.Empty(erros);
+    }
+
+    [Theory(DisplayName = "Documento completo com RG recusa a troca de cpf, rg ou ehCin e informa o campo com a mensagem")]
+    [InlineData("10000000604", RG_GRAVADO, false, "Cpf")]
+    [InlineData(CPF_GRAVADO, "11.222.333-4", false, "Rg")]
+    [InlineData(CPF_GRAVADO, null, false, "Rg")]
+    [InlineData(CPF_GRAVADO, RG_GRAVADO, true, "EhCin")]
+    public void RegraDocumento_ValidarAlteracao_DocumentoCompletoComRgAlterado_RetornaErroNoCampo(string? cpf, string? rg, bool ehCin, string campo)
+    {
+        //Arrange
+        var documentoGravado = (Cpf: CPF_GRAVADO, Rg: RG_GRAVADO, EhCin: false);
+
+        //Act
+        var erros = RegraDocumento.ValidarAlteracao(documentoGravado.Cpf, documentoGravado.Rg, documentoGravado.EhCin, cpf, rg, ehCin);
+
+        //Assert
+        Assert.Equal(new[] { campo }, erros.Keys);
+        Assert.Contains("não pode ser alterado: o documento do usuário (CPF com RG ou com CIN) já está cadastrado.", Assert.Single(erros[campo]));
+    }
+
+    [Fact(DisplayName = "Documento completo com CIN recusa sair da CIN informando um RG e aponta rg e ehCin")]
+    public void RegraDocumento_ValidarAlteracao_DocumentoCompletoComCinTrocadoPorRg_RetornaErrosEmRgEEhCin()
+    {
+        //Arrange
+        var documentoGravado = (Cpf: CPF_GRAVADO, Rg: (string?)null, EhCin: true);
+
+        //Act
+        var erros = RegraDocumento.ValidarAlteracao(documentoGravado.Cpf, documentoGravado.Rg, documentoGravado.EhCin, CPF_GRAVADO, RG_GRAVADO, false);
+
+        //Assert
+        Assert.Equal(new[] { "Rg", "EhCin" }, erros.Keys);
+    }
+
+    [Theory(DisplayName = "Cadastro antigo com documento incompleto (sem CPF, ou com CPF sem RG e sem CIN) pode ser completado")]
+    [InlineData(null, null, false)]
+    [InlineData(null, RG_GRAVADO, false)]
+    [InlineData(CPF_GRAVADO, null, false)]
+    public void RegraDocumento_ValidarAlteracao_DocumentoIncompleto_NaoRetornaErros(string? cpfAntigo, string? rgAntigo, bool ehCinAntigo)
+    {
+        //Arrange
+        var novoDocumento = (Cpf: "10000000604", Rg: "11.222.333-4", EhCin: true);
+
+        //Act
+        var erros = RegraDocumento.ValidarAlteracao(cpfAntigo, rgAntigo, ehCinAntigo, novoDocumento.Cpf, novoDocumento.Rg, novoDocumento.EhCin);
+
+        //Assert
+        Assert.Empty(erros);
+    }
+
     [Theory]
     [InlineData("João Conceição D'Ávila")]
     [InlineData("Ângela Müller-Ñúñez")]

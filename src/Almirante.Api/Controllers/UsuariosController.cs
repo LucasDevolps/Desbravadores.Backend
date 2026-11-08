@@ -163,6 +163,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone, rg, tipoSanguineo, doencasAlergias, " +
         "ehCin, dataExpiracao, endereco e os campos do responsável omitidos mantêm o valor atual; null (ou \"\" nos textos) remove, exceto o cpf já " +
         "gravado, que não pode ser removido (400), e ehCin, que só aceita true ou false (false é gravado, não é omissão). " +
+        "Com o documento completo (cpf gravado com rg ou com ehCin true), cpf, rg e ehCin não podem mais ser alterados, por nenhum cargo " +
+        "(400 em errors[\"Cpf\"], errors[\"Rg\"] ou errors[\"EhCin\"]); omitir ou reenviar o valor gravado é aceito. " +
         "Com ehCin efetivo false, o rg é exigido (400) de quem já tinha RG ou era CIN e de quem envia rg ou ehCin; com ehCin true o rg é opcional; " +
         "um cadastro antigo sem RG e sem CIN que não envia esses campos continua editável. " +
         "endereco: omitido mantém; null ou cep null/\"\" remove o endereço inteiro; dentro do objeto, cep, numero e complemento omitidos mantêm o atual. " +

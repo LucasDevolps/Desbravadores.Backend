@@ -17,7 +17,8 @@ public abstract class DadosPessoaisRequest
     /// Obrigatório no cadastro (POST); único entre todos os usuários (inclusive inativos). Espaços externos, pontos e hífen são
     /// removidos antes de salvar e comparar ("123.456.789-09" = "12345678909"); depois disso precisa ter 11 dígitos com dígitos
     /// verificadores válidos. No PUT: omitido mantém o valor atual; null ou "" só é aceito para usuário antigo que ainda não tem CPF
-    /// (um CPF gravado não pode ser removido).
+    /// (um CPF gravado não pode ser removido). Com o documento completo (CPF com RG ou com CIN), cpf, rg e ehCin não podem mais ser
+    /// alterados (400); omitir ou reenviar o valor gravado é aceito.
     /// </summary>
     public string? Cpf { get => _cpf; set { _cpf = value; CpfInformado = true; } }
 

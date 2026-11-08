@@ -326,6 +326,12 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
                 throw ApiProblemException.Invalid("Rg", Rg.ObrigatorioSemCin);
             }
 
+            var errosDocumento = RegraDocumento.ValidarAlteracao(atual.Cpf, atual.Rg, atual.EhCin, cpf, rg, ehCin);
+            if (errosDocumento.Count > 0)
+            {
+                throw new ApiProblemException(StatusCodes.Status400BadRequest, "Dados inválidos.", errors: errosDocumento);
+            }
+
             var erros = RegraResponsavel.Validar(dataNascimento, responsavelNome, responsavelEmail, responsavelCpf, cpf, dataCivil.Hoje());
             if (erros.Count > 0)
             {
