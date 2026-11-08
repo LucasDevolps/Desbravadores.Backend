@@ -10,7 +10,12 @@ public static class DbPrivilegeAuditor
     public const string AuditTable = "lancamentos_deletados";
     public const string EventosAuditTable = "historico_eventos";
     public const string UsuariosAuditTable = "_usuarios_hist";
-    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable];
+    public const string FormacaoAuditTable = "formacao_historico";
+    public const string AlmoxarifadoAuditTable = "almoxarifado_historico";
+    public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable, FormacaoAuditTable, AlmoxarifadoAuditTable];
+
+    /// <summary>Auditoria gravada pela própria aplicação: a role de runtime só lê e insere (UPDATE e DELETE negados).</summary>
+    public static readonly string[] InsertOnlyTables = [Data.AlmiranteDbContext.TabelaAuditoriaHttp];
     public const string SessionsTable = "AuthSessions";
 
     private static readonly string[] ServerRoles =
@@ -60,6 +65,7 @@ public static class DbPrivilegeAuditor
         findings.AddRange(await TablesAsync(connection, "DELETE", $"t.name <> N'{SessionsTable}'", "DELETE em", cancellationToken));
         foreach (var permission in new[] { "INSERT", "UPDATE", "DELETE" })
             findings.AddRange(await TablesAsync(connection, permission, $"t.name IN ({string.Join(", ", AuditTables.Select(t => $"N'{t}'"))})", $"{permission} direto na tabela de auditoria", cancellationToken));
+        findings.AddRange(await TablesAsync(connection, "UPDATE", $"t.name IN ({string.Join(", ", InsertOnlyTables.Select(t => $"N'{t}'"))})", "UPDATE na tabela só de inserção", cancellationToken));
         foreach (var permission in new[] { "ALTER", "CONTROL", "REFERENCES", "TAKE OWNERSHIP" })
             findings.AddRange(await TablesAsync(connection, permission, "1 = 1", $"{permission} em", cancellationToken));
 
@@ -178,7 +184,7 @@ public static class DbPrivilegeAuditor
     {
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken) ?? 0);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)); // toda consulta daqui devolve uma linha; nulo também vale 0
     }
 }
 

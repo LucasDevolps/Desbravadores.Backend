@@ -43,7 +43,7 @@ public sealed class AppDbCredentialProvider
     }
 }
 
-public sealed class AppDbCredentialInterceptor(AppDbCredentialProvider provider) : DbConnectionInterceptor
+public sealed class AppDbCredentialInterceptor(AppDbCredentialProvider provider, TimeProvider tempo) : DbConnectionInterceptor
 {
     public override InterceptionResult ConnectionOpening(DbConnection connection, ConnectionEventData eventData, InterceptionResult result)
     {
@@ -57,7 +57,7 @@ public sealed class AppDbCredentialInterceptor(AppDbCredentialProvider provider)
         var ready = provider.Ready;
         if (!ready.IsCompleted)
         {
-            try { await ready.WaitAsync(AppDbCredentialProvider.SwitchWaitLimit, cancellationToken); }
+            try { await ready.WaitAsync(AppDbCredentialProvider.SwitchWaitLimit, tempo, cancellationToken); }
             catch (TimeoutException) { }
         }
         Apply(connection);

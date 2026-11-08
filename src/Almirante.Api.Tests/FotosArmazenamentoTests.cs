@@ -131,7 +131,7 @@ public sealed class FotosArmazenamentoTests : IDisposable
         await Assert.ThrowsAsync<ArgumentException>(() => _armazenamento.DeleteAsync(invalida, CancellationToken.None));
     }
 
-    [Fact]
+    [FactComLinkSimbolico]
     public async Task PastaDoUsuarioQueEhLink_EhRecusadaNaGravacao()
     {
         var usuario = Guid.NewGuid();
@@ -151,7 +151,7 @@ public sealed class FotosArmazenamentoTests : IDisposable
         }
     }
 
-    [Fact]
+    [FactComLinkSimbolico]
     public async Task ArquivoQueEhLinkParaForaDaRaiz_EhRecusadoNaLeitura()
     {
         var chave = FotoChave.Gerar(Guid.NewGuid());

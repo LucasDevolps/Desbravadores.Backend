@@ -215,3 +215,45 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 { "motivo": "Grupo cancelado pela diretoria", "versao": "COLE_AQUI_A_VERSAO" }
+
+### 19. Senha: trocar a própria (CSRF do passo 2.1; revoga todas as sessões, novo login obrigatório) — docs/senhas.md
+POST {{baseUrl}}/api/Auth/alterar-senha
+Authorization: Bearer {{token}}
+X-CSRF-TOKEN: {{csrf}}
+Content-Type: application/json
+
+{ "senhaAtualSolicitante": "SUA_SENHA_ATUAL", "novaSenha": "UMA FRASE NOVA COM 15 OU MAIS", "confirmacaoNovaSenha": "UMA FRASE NOVA COM 15 OU MAIS" }
+
+### 20. Senha: responsável (ADM/DIR → SEC/TES/DS; SEC → DS) troca a de outro usuário com a PRÓPRIA senha
+POST {{baseUrl}}/api/Usuarios/{{membroId}}/alterar-senha
+Authorization: Bearer {{token}}
+X-CSRF-TOKEN: {{csrf}}
+Content-Type: application/json
+
+{ "senhaAtualSolicitante": "SENHA_DO_RESPONSAVEL", "novaSenha": "UMA FRASE NOVA COM 15 OU MAIS", "confirmacaoNovaSenha": "UMA FRASE NOVA COM 15 OU MAIS", "metodoVerificacao": "AtendimentoPresencial" }
+
+### 21. Recuperação: pedido sem login (sempre 202 genérico; sem e-mail, sem token)
+POST {{baseUrl}}/api/Auth/recuperacao-senha/solicitar
+X-CSRF-TOKEN: {{csrf}}
+Content-Type: application/json
+
+{ "email": "pessoa@exemplo.org" }
+
+### 22. Recuperação: pendências que o responsável pode atender
+GET {{baseUrl}}/api/Usuarios/recuperacao-senha/pendentes?pageSize=20
+Authorization: Bearer {{token}}
+
+### 23. Recuperação: emitir autorização (só depois de confirmar a identidade pessoalmente; token aparece só nesta resposta)
+POST {{baseUrl}}/api/Usuarios/{{membroId}}/recuperacao-senha/autorizacao
+Authorization: Bearer {{token}}
+X-CSRF-TOKEN: {{csrf}}
+Content-Type: application/json
+
+{ "senhaAtualSolicitante": "SENHA_DO_RESPONSAVEL", "metodoVerificacao": "AtendimentoPresencial" }
+
+### 24. Recuperação: titular conclui sem login (CSRF anônimo do passo 0)
+POST {{baseUrl}}/api/Auth/recuperacao-senha/confirmar
+X-CSRF-TOKEN: {{csrf}}
+Content-Type: application/json
+
+{ "token": "COLE_AQUI_O_TOKEN_ENTREGUE", "novaSenha": "UMA FRASE NOVA COM 15 OU MAIS", "confirmacaoNovaSenha": "UMA FRASE NOVA COM 15 OU MAIS" }

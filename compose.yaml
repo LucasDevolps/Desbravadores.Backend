@@ -149,6 +149,9 @@ services:
       # Fotos de usuários (issue #116): pasta fora da aplicação (sobrevive a rebuild e redeploy), montada abaixo.
       # O banco guarda só o caminho relativo; os limites ficam nos padrões de Media:Images (appsettings.json).
       Media__Storage__Path: /var/lib/almirante/fotos
+      # Auditoria HTTP (issue #158): diário em disco dos registros já sanitizados que ainda não chegaram ao banco. Volume próprio, para
+      # sobreviver a reinício e redeploy do container; os demais limites ficam nos padrões de AuditoriaHttp (appsettings.json).
+      AuditoriaHttp__DiretorioPendentes: /var/lib/almirante/auditoria-http
       # Host Header: o padrão "*" aceita qualquer Host, porque este arquivo também serve
       # desenvolvimento local (localhost, 127.0.0.1, IP da LAN) e fixar a lista quebraria isso.
       # Em ambiente PUBLICADO em modo http, defina API_ALLOWED_HOSTS no .env com os nomes reais
@@ -158,6 +161,10 @@ services:
       # Swagger/OpenAPI expõem o mapa completo da API (rotas, DTOs, parâmetros). Fora de Development
       # fica desligado por padrão; ligue conscientemente com SWAGGER_ENABLED=true se precisar.
       Swagger__Enabled: ${SWAGGER_ENABLED:-}
+      # Logs, métricas e traces (Almirante.ServiceDefaults) para o console do Aspire (serviço aspire-dashboard abaixo),
+      # só pela rede interna. Com o console fora do ar, a exportação falha em silêncio e a API segue normal.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+      OTEL_SERVICE_NAME: almirante-api
     networks:
       - almirante-net
     # Só acessível pela rede interna do Compose (pelo nginx). Não publica porta no host: quem
@@ -177,6 +184,7 @@ services:
       # Sem FOTOS_HOST_PATH, o volume nomeado almirante-fotos (desenvolvimento). O deploy Linux define uma pasta
       # absoluta do host ($HOME/almirante/fotos), que ele mesmo cria com o dono "app" antes de subir a API.
       - ${FOTOS_HOST_PATH:-almirante-fotos}:/var/lib/almirante/fotos
+      - almirante-auditoria-http:/var/lib/almirante/auditoria-http
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -186,7 +194,9 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.27-alpine
+    # Tag exata (e não 1.27-alpine): o "server ... resolve" dos .conf exige nginx >= 1.27.3, e uma tag móvel já em
+    # cache no host poderia ser mais antiga. Trocar a tag também faz o "up -d" recriar o nginx.
+    image: nginx:1.27.5-alpine
     container_name: almirante-nginx
     depends_on:
       api:
@@ -217,6 +227,31 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # Console do Aspire (dashboard standalone): logs, traces e métricas da API em tempo real, só em memória (some ao
+  # reiniciar). A interface fica SÓ no loopback do host e exige o token de login que o próprio console gera a cada
+  # início (docker logs almirante-aspire-dashboard 2>&1 | grep 'login?t='); de outra máquina, use túnel SSH
+  # (ssh -L 18888:127.0.0.1:18888 host). A porta OTLP (18889) não é publicada: só a API, pela rede interna, envia
+  # telemetria, então ela fica sem autenticação. Versão e digest fixados (mesma versão do Aspire do AppHost no
+  # deploy Windows); a API não depende deste serviço para subir.
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.5.2@sha256:0ef531119b8073aed12b0db2b4e4ab02866c6c69b7a52264269abd00cfb48a34
+    container_name: almirante-aspire-dashboard
+    environment:
+      Dashboard__Frontend__AuthMode: BrowserToken
+      Dashboard__Otlp__AuthMode: Unsecured
+    networks:
+      - almirante-net
+    ports:
+      - "127.0.0.1:${ASPIRE_DASHBOARD_HOST_PORT:-18888}:18888"
+    expose:
+      - "18889"
+    # A imagem já roda como usuário sem privilégio, nas portas 18888/18889: nenhuma capability é necessária.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
 volumes:
   almirante-sqlserver-data:
     name: almirante-sqlserver-data
@@ -224,3 +259,5 @@ volumes:
     name: almirante-dataprotection
   almirante-fotos:
     name: almirante-fotos
+  almirante-auditoria-http:
+    name: almirante-auditoria-http

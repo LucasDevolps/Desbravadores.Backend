@@ -324,15 +324,17 @@ public sealed class DashboardTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Seguranca_SemTokenRetorna401_CargoSemPermissaoRetorna403_DiretoriaRetorna200()
+    public async Task Seguranca_SemTokenRetorna401_CargoSemPermissaoRetorna403_GestaoRetorna200()
     {
         using var anonimo = _factory.CreateClient();
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonimo.GetAsync("/api/Dashboard")).StatusCode);
 
-        foreach (var role in new[] { "DS", "CONS", "CPT", "INST" })
+        foreach (var role in new[] { "DS", "CONS", "CPT", "INST", "TESU" })
         {
             var (cliente, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, role);
-            Assert.Equal(HttpStatusCode.Forbidden, (await cliente.GetAsync("/api/Dashboard")).StatusCode);
+            var negado = await cliente.GetAsync("/api/Dashboard");
+            Assert.Equal(HttpStatusCode.Forbidden, negado.StatusCode);
+            Assert.DoesNotContain("financeiro", await negado.Content.ReadAsStringAsync());
         }
 
         foreach (var role in new[] { "DIR", "DIRA", "SEC", "TES" })
@@ -340,5 +342,29 @@ public sealed class DashboardTests : IAsyncLifetime
             var (cliente, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, role);
             Assert.Equal(HttpStatusCode.OK, (await cliente.GetAsync("/api/Dashboard")).StatusCode);
         }
+    }
+
+    [Theory]
+    [InlineData("ADM", true)] [InlineData("DIR", true)] [InlineData("DIRA", true)] [InlineData("TES", true)] [InlineData("SEC", false)]
+    public async Task Financeiro_SoParaQuemTemGestaoFinanceira_DemaisIndicadoresIguaisParaTodos(string role, bool veFinanceiro)
+    {
+        await PagoAsync(TipoFluxoLancamento.Entrada, 80m, Hoje);
+        await PagoAsync(TipoFluxoLancamento.Saida, 30m, Hoje);
+        await TestHelpers.AddUsuarioAsync(_factory, "Desbravador contado", "DS");
+        await EventoAsync(Hoje.AddDays(3), "Acampamento", participantes: 2);
+        var (cliente, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, role);
+        var completo = await ObterAsync();
+
+        var resposta = await cliente.GetAsync("/api/Dashboard");
+
+        Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
+        var texto = await resposta.Content.ReadAsStringAsync();
+        var dashboard = JsonSerializer.Deserialize<DashboardResponse>(texto, Json)!;
+        Assert.Equal(veFinanceiro ? new DashboardFinanceiroDto(50m, 80m, 30m) : null, dashboard.Financeiro);
+        Assert.Equal(veFinanceiro, texto.Contains("\"saldo\"") || texto.Contains("\"entradas\"") || texto.Contains("\"saidas\""));
+        Assert.Equal((completo.Periodo, completo.Desbravadores), (dashboard.Periodo, dashboard.Desbravadores));
+        Assert.Equal(completo.ProximosEventos.Select(e => (e.EventoGrupoId, e.QuantidadeParticipantes)),
+            dashboard.ProximosEventos.Select(e => (e.EventoGrupoId, e.QuantidadeParticipantes)));
+        Assert.Equal((1, 1), (dashboard.Desbravadores.QuantidadeAtivos, dashboard.ProximosEventos.Count));
     }
 }

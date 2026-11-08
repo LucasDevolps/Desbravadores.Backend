@@ -177,6 +177,21 @@ jobs:
           docker compose ${{ steps.compose-mode.outputs.files }} logs --tail=100 api
           exit 1
 
+      # Console do Aspire (serviço aspire-dashboard do compose.yaml): confere que a interface responde no loopback e diz
+      # onde achar o link de login. NUNCA imprime o token: o log do Actions é visível a quem lê o repositório. Falha aqui
+      # só avisa: a API já está no ar e não depende do console.
+      - name: Conferir o console do Aspire
+        run: |
+          for i in $(seq 1 20); do
+            endereco=$(docker port almirante-aspire-dashboard 18888/tcp 2> /dev/null | head -1)
+            if [ -n "$endereco" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' "http://${endereco}/")" = "302" ]; then
+              echo "::notice::Console do Aspire em http://${endereco} (só nesta máquina; de outra, ssh -L 18888:${endereco} <host>). Link com o token: docker logs almirante-aspire-dashboard 2>&1 | grep 'login?t='"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::warning::O console do Aspire não respondeu; a API não depende dele. Motivo: docker logs almirante-aspire-dashboard"
+
       - name: Limpar imagens antigas
         if: always()
         run: docker image prune -f
@@ -361,6 +376,89 @@ jobs:
           }
           Write-Host "WebSocket do IIS e log sem query conferidos."
 
+      # Console do Aspire (dashboard standalone, sem Docker): binários do pacote NuGet Aspire.Dashboard.Sdk.win-x64, com o
+      # SHA256 conferido ANTES de extrair (ao subir de versão, troque versão e hash juntos; mesma versão da imagem do
+      # compose.yaml). Fica em C:\desbravadores\aspire-dashboard e roda pela tarefa AspireDashboardAlmirante como LOCAL
+      # SERVICE (não SYSTEM), só em 127.0.0.1: interface na 18888, OTLP na 18889. O token de login é gerado uma vez em
+      # browser-token.txt e nunca impresso; a pasta é legível só por administradores, SYSTEM e LOCAL SERVICE (herança
+      # desligada só na raiz, nunca /T). Roda antes de tirar o site do ar, e qualquer falha aqui só avisa: o console nunca
+      # bloqueia nem derruba o deploy da API.
+      - name: Instalar e (re)iniciar o console do Aspire
+        shell: pwsh
+        env:
+          DASHBOARD_VERSION: 13.5.2
+          DASHBOARD_SHA256: 75a7d51c50816d751c8551d93774bbdb5c2dc578832cee46ad175c8a5c289632
+        run: |
+          $raiz = 'C:\desbravadores\aspire-dashboard'
+          $tarefa = 'AspireDashboardAlmirante'
+          try {
+            if (-not (Test-Path $raiz)) {
+              New-Item -ItemType Directory -Path $raiz | Out-Null
+              icacls $raiz /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' /Q | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "icacls saiu com $LASTEXITCODE em $raiz" }
+            }
+            $logs = Join-Path $raiz 'logs'
+            if (-not (Test-Path $logs)) {
+              New-Item -ItemType Directory -Path $logs | Out-Null
+              icacls $logs /grant:r '*S-1-5-19:(OI)(CI)M' /Q | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "icacls saiu com $LASTEXITCODE em $logs" }
+            }
+            $token = Join-Path $raiz 'browser-token.txt'
+            if (-not (Test-Path $token)) {
+              Set-Content -LiteralPath $token -Value ([Convert]::ToHexStringLower([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))) -NoNewline
+              Write-Host "Token de login do console gerado em $token."
+            }
+
+            # Para o console antes de trocar binários ou o script de início (o executável fica travado enquanto roda).
+            if (Get-ScheduledTask -TaskName $tarefa -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $tarefa }
+            Get-Process Aspire.Dashboard -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$raiz\*" } | Stop-Process -Force
+
+            $bin = Join-Path $raiz 'bin'
+            $versao = Join-Path $bin 'versao.txt'
+            if (-not (Test-Path $versao) -or (Get-Content $versao -Raw).Trim() -ne $env:DASHBOARD_VERSION) {
+              $ProgressPreference = 'SilentlyContinue'
+              # Baixado e extraído dentro da raiz, para herdar a ACL dela (um Move-Item de outra pasta manteria a ACL de origem).
+              $pacote = Join-Path $raiz 'pacote.zip'
+              $extraido = Join-Path $raiz 'pacote'
+              Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/aspire.dashboard.sdk.win-x64/$($env:DASHBOARD_VERSION)/aspire.dashboard.sdk.win-x64.$($env:DASHBOARD_VERSION).nupkg" -OutFile $pacote
+              $hash = (Get-FileHash -Path $pacote -Algorithm SHA256).Hash
+              if ($hash -ne $env:DASHBOARD_SHA256.ToUpperInvariant()) {
+                Remove-Item $pacote -Force -ErrorAction SilentlyContinue
+                throw "SHA256 do pacote do console não confere (esperado $($env:DASHBOARD_SHA256), obtido $hash); nada foi instalado"
+              }
+              Remove-Item $extraido -Recurse -Force -ErrorAction SilentlyContinue
+              Expand-Archive -Path $pacote -DestinationPath $extraido -Force
+              Remove-Item $bin -Recurse -Force -ErrorAction SilentlyContinue
+              Move-Item (Join-Path $extraido 'tools') $bin
+              Set-Content -LiteralPath $versao -Value $env:DASHBOARD_VERSION -NoNewline
+              Remove-Item $pacote, $extraido -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "Console do Aspire $($env:DASHBOARD_VERSION) instalado em $bin (SHA256 conferido)."
+            }
+            Copy-Item 'scripts\windows\iniciar-aspire-dashboard.ps1' (Join-Path $raiz 'iniciar-aspire-dashboard.ps1') -Force
+
+            $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+            $action = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -NonInteractive -File `"$raiz\iniciar-aspire-dashboard.ps1`"" -WorkingDirectory $raiz
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\LOCAL SERVICE' -LogonType ServiceAccount
+            # Sem limite de execução (o padrão de 72 h encerraria o console) e reinício automático se ele cair.
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+              -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName $tarefa -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force `
+              -Description 'Console do Aspire (dashboard standalone) da API Almirante: telemetria em 127.0.0.1:18888.' | Out-Null
+            Start-ScheduledTask -TaskName $tarefa
+
+            $limite = (Get-Date).AddSeconds(60)
+            do {
+              Start-Sleep -Seconds 2
+              $noAr = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 18888 -State Listen -ErrorAction SilentlyContinue
+            } while (-not $noAr -and (Get-Date) -lt $limite)
+            if (-not $noAr) { throw "o console não passou a escutar em 127.0.0.1:18888 em 60 s (veja $logs\dashboard.log)" }
+            Write-Host "Console do Aspire no ar em http://127.0.0.1:18888."
+          } catch {
+            Write-Host "::warning::Console do Aspire não atualizado: $($_.Exception.Message). O deploy da API segue; ela não depende do console."
+          }
+          exit 0
+
       # ANCM observa o app_offline.htm e derruba o processo em execução,
       # liberando os locks de arquivo, sem precisar de direitos de admin do
       # IIS para reciclar o app pool a partir do CI.
@@ -405,6 +503,26 @@ jobs:
           }
           $json | ConvertTo-Json -Depth 10 | Set-Content -Path $path -Encoding utf8
           Write-Host "ReverseProxy:TrustedNetworkCidr e AllowedHosts configurados em appsettings.Production.json."
+
+      # Telemetria da API para o console do Aspire (passo "Instalar e (re)iniciar o console do Aspire"), pelas variáveis do
+      # app pool. Só cria as que faltam: um valor já ajustado pelo operador é preservado. Roda com o site ainda OFFLINE: a
+      # mudança recicla o pool, e o processo novo só sobe quando o app_offline.htm sai (nunca dois workers ao mesmo tempo,
+      # cada inicialização rotaciona a senha SQL de runtime). Com o console fora do ar, a exportação falha em silêncio.
+      - name: Apontar a telemetria do app pool para o console do Aspire
+        shell: pwsh
+        run: |
+          Import-Module WebAdministration -ErrorAction Stop
+          $site = Get-Website | Where-Object { $_.PhysicalPath.TrimEnd('\') -eq "${{ env.SITE_PATH }}".TrimEnd('\') } | Select-Object -First 1
+          $pool = $site.applicationPool
+          $filtro = "system.applicationHost/applicationPools/add[@name='$pool']/environmentVariables"
+          $atuais = Get-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name Collection
+          foreach ($variavel in @(@{ name = 'OTEL_EXPORTER_OTLP_ENDPOINT'; value = 'http://127.0.0.1:18889' }, @{ name = 'OTEL_SERVICE_NAME'; value = 'almirante-api' })) {
+            if (-not ($atuais | Where-Object { $_.name -eq $variavel.name })) {
+              Add-WebConfigurationProperty -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filtro -Name '.' -Value $variavel
+              Write-Host "$($variavel.name) definido no app pool '$pool'."
+            }
+          }
+          Write-Host "Telemetria do app pool '$pool' conferida."
 
 
       - name: Colocar o site no ar novamente
@@ -508,3 +626,4 @@ jobs:
           $uri = "http://127.0.0.1:8090/health"
           $agora = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
           Write-Host "::notice::Consulte a URL $uri (via nginx, com rate limit de login) — a aplicação pode levar até 20 minutos para subir completamente. Deploy publicado às $agora."
+          Write-Host "::notice::Console do Aspire: http://127.0.0.1:18888/login?t=<token>, com o token de C:\desbravadores\aspire-dashboard\browser-token.txt (só administradores)."

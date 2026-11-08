@@ -66,6 +66,19 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         return (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == id);
     }
 
+    private static async Task<UsuarioListItemDto> CriarLegadoSemRgAsync(SqlServerApiFactory fabrica, HttpClient cliente,
+        DateOnly? nascimento = null, string? telefone = null, string role = "DS")
+    {
+        var legado = await TestHelpers.AddUsuarioAsync(fabrica, $"Legado Sem Rg {Guid.NewGuid():N}", role, u =>
+        {
+            u.Cpf = NovoCpf();
+            u.DataNascimento = nascimento;
+            u.Telefone = telefone;
+        });
+
+        return (await cliente.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == legado.Id);
+    }
+
     private static JsonObject CorpoPut(UsuarioListItemDto u, Action<JsonObject>? extras = null)
     {
         var corpo = new JsonObject { ["nome"] = u.Nome, ["email"] = u.Email, ["cargoId"] = u.Cargo.Id.ToString() };
@@ -198,7 +211,7 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
             {
                 "Usuarios.Cpf=varchar(20) NULL", "Usuarios.DataNascimento=date(3) NULL", "Usuarios.Email=varchar(100)",
                 "Usuarios.EmailNormalizado=varchar(100)", "Usuarios.Telefone=varchar(20) NULL",
-                "_usuarios_hist.Cpf=varchar(20) NULL", "_usuarios_hist.DataNascimento=date(3) NULL", "_usuarios_hist.Email=nvarchar(512)",
+                "_usuarios_hist.Cpf=varchar(20) NULL", "_usuarios_hist.DataNascimento=date(3) NULL", "_usuarios_hist.Email=varchar(256)",
                 "_usuarios_hist.Telefone=varchar(20) NULL",
             }.Order(),
             tipos.Order());
@@ -213,19 +226,22 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
             "SELECT COUNT(*) FROM sys.indexes WHERE object_id = OBJECT_ID('dbo._usuarios_hist') AND is_unique = 1 AND is_primary_key = 0"));
     }
 
-    [Fact]
+    [Fact(DisplayName = "PUT em cadastro antigo com documento incompleto troca cpf, nascimento, telefone e e-mail e persiste normalizado")]
     public async Task Put_AtualizaOsQuatroCampos_EPersiste()
     {
-        var alvo = await CriarAsync(NovoCpf(), new DateOnly(1990, 1, 2), "(11) 3456-7890");
+        //Arrange
+        var alvo = await CriarLegadoSemRgAsync(Factory, Client, new DateOnly(1990, 1, 2), "1134567890");
         var novoCpf = NovoCpf();
         var novoEmail = NovoEmail("Atualizado");
 
+        //Act
         var response = await PutAsync(Client, alvo.Id, new
         {
             nome = alvo.Nome, email = novoEmail, cargoId = alvo.Cargo.Id,
             cpf = Mascarar(novoCpf), dataNascimento = "1985-12-31", telefone = "(21) 99999-0000",
         });
 
+        //Assert
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         var dto = (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
         Assert.Equal(novoCpf, dto.Cpf);
@@ -256,29 +272,40 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Empty(await HistoricoAsync(alvo.Id));
     }
 
-    [Fact]
+    [Fact(DisplayName = "PUT com null ou vazio limpa nascimento e telefone, recusa remover o CPF gravado e o histórico guarda os valores anteriores")]
     public async Task Put_NullOuVazioExplicito_LimpaOCampo_MasNaoRemoveCpfGravado_EHistoricoGuardaOValorAnterior()
     {
-        var cpf = NovoCpf();
-        var alvo = await CriarAsync(cpf, new DateOnly(1999, 9, 9), "(41) 4444-4444");
+        //Arrange
+        var alvo = await CriarLegadoSemRgAsync(Factory, Client, new DateOnly(1999, 9, 9), "4144444444");
+        var cpf = alvo.Cpf!;
+        var novoCpf = NovoCpf();
 
+        //Act
+        var recusados = new List<HttpResponseMessage>();
         foreach (var vazio in new JsonNode?[] { "", null })
         {
-            var recusado = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = vazio; c["telefone"] = null; }));
-            Assert.Equal(HttpStatusCode.BadRequest, recusado.StatusCode);
-            Assert.Contains("cpf é obrigatório e não pode ser removido.", await recusado.Content.ReadAsStringAsync());
+            recusados.Add(await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = vazio; c["telefone"] = null; })));
         }
-        Assert.Equal("4144444444", (await UsuarioAsync(alvo.Id)).Telefone);
-        Assert.Empty(await HistoricoAsync(alvo.Id));
 
-        var novoCpf = NovoCpf();
+        var telefoneAposRecusas = (await UsuarioAsync(alvo.Id)).Telefone;
+        var historicoAposRecusas = await HistoricoAsync(alvo.Id);
         var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c =>
         {
             c["cpf"] = novoCpf;
             c["dataNascimento"] = null;
             c["telefone"] = null;
         }));
+        var outro = await CriarAsync(cpf);
 
+        //Assert
+        foreach (var recusado in recusados)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, recusado.StatusCode);
+            Assert.Contains("cpf é obrigatório e não pode ser removido.", await recusado.Content.ReadAsStringAsync());
+        }
+
+        Assert.Equal("4144444444", telefoneAposRecusas);
+        Assert.Empty(historicoAposRecusas);
         Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         var salvo = await UsuarioAsync(alvo.Id);
         Assert.Equal(novoCpf, salvo.Cpf);
@@ -289,8 +316,6 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(cpf, linha.Cpf);
         Assert.Equal(new DateOnly(1999, 9, 9), linha.DataNascimento);
         Assert.Equal("4144444444", linha.Telefone);
-
-        var outro = await CriarAsync(cpf);
         Assert.Equal(cpf, outro.Cpf);
     }
 
@@ -329,15 +354,18 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(antes, await Db(db => db.Usuarios.CountAsync()));
     }
 
-    [Fact]
+    [Fact(DisplayName = "PUT que troca o CPF de documento incompleto pelo CPF mascarado de outro usuário retorna 409 sem alterar nem gerar histórico")]
     public async Task Put_CpfDeOutroUsuario_ComMascara_Retorna409_ENaoAlteraNemGeraHistorico()
     {
+        //Arrange
         var cpfOutro = NovoCpf();
         await CriarAsync(cpfOutro);
-        var alvo = await CriarAsync(NovoCpf());
+        var alvo = await CriarLegadoSemRgAsync(Factory, Client);
 
+        //Act
         var response = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = Mascarar(cpfOutro); c["telefone"] = "(19) 99999-9999"; }));
 
+        //Assert
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal("Existe outro usuário cadastrado com esse CPF.", await DetalheAsync(response));
         var salvo = await UsuarioAsync(alvo.Id);
@@ -360,18 +388,23 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal("5155555555", salvo.Telefone);
     }
 
-    [Fact]
+    [Fact(DisplayName = "CPF de usuário inativo continua reservado: POST e PUT de documento incompleto com esse CPF retornam 409")]
     public async Task CpfDeUsuarioInativo_ContinuaReservado_NoCadastroENaAlteracao()
     {
+        //Arrange
         var cpf = NovoCpf();
         var inativo = await CriarAsync(cpf);
-        Assert.Equal(HttpStatusCode.NoContent, (await DeleteAsync(Client, inativo.Id)).StatusCode);
+        var exclusao = await DeleteAsync(Client, inativo.Id);
+        var cargoId = await CargoIdAsync("DS");
+        var alvo = await CriarLegadoSemRgAsync(Factory, Client);
 
-        var post = await PostAsync(new { nome = "Reuso", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId = await CargoIdAsync("DS"), cpf = Mascarar(cpf), rg = TestHelpers.RgFicticio });
-        Assert.Equal(HttpStatusCode.Conflict, post.StatusCode);
-
-        var alvo = await CriarAsync();
+        //Act
+        var post = await PostAsync(new { nome = "Reuso", email = NovoEmail(), senha = $"Forte-{Guid.NewGuid():N}", cargoId, cpf = Mascarar(cpf), rg = TestHelpers.RgFicticio });
         var put = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["cpf"] = cpf));
+
+        //Assert
+        Assert.Equal(HttpStatusCode.NoContent, exclusao.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, post.StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
         Assert.Equal(alvo.Cpf, (await UsuarioAsync(alvo.Id)).Cpf);
     }
@@ -418,15 +451,18 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Equal(1, await Db(db => db.Usuarios.CountAsync(u => u.Cpf == cpf)));
     }
 
-    [Fact]
+    [Fact(DisplayName = "PUTs concorrentes de documentos incompletos disputando o mesmo CPF: um vence e os demais recebem 409 sem histórico")]
     public async Task Put_UsuariosDiferentesDisputandoOMesmoCpf_UmVence_OOutroRecebe409_SemHistoricoDoPerdedor()
     {
+        //Arrange
         var cpf = NovoCpf();
         var alvos = new List<UsuarioListItemDto>();
-        for (var i = 0; i < 6; i++) alvos.Add(await CriarAsync());
+        for (var i = 0; i < 6; i++) alvos.Add(await CriarLegadoSemRgAsync(Factory, Client));
 
+        //Act
         var respostas = await Task.WhenAll(alvos.Select((a, i) => PutAsync(Client, a.Id, CorpoPut(a, c => c["cpf"] = i % 2 == 0 ? cpf : Mascarar(cpf)))));
 
+        //Assert
         var vencedores = alvos.Where((_, i) => respostas[i].StatusCode == HttpStatusCode.OK).ToList();
         var vencedor = Assert.Single(vencedores);
         Assert.All(respostas.Where(r => r.StatusCode != HttpStatusCode.OK), r => Assert.Equal(HttpStatusCode.Conflict, r.StatusCode));
@@ -445,41 +481,50 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         }
     }
 
-    [Fact]
-    public async Task Put_ViolacaoDoIndiceNoUpdate_ViraConflito_MesmoQuandoAConsultaPreviaNaoEncontra()
+    [Theory(DisplayName = "Violação do índice único de cpf ou e-mail no UPDATE vira 409 mesmo quando a consulta prévia não encontra o conflito")]
+    [InlineData("cpf")]
+    [InlineData("email")]
+    public async Task Put_ViolacaoDoIndiceNoUpdate_ViraConflito_MesmoQuandoAConsultaPreviaNaoEncontra(string campo)
     {
-        var cpf = NovoCpf();
+        //Arrange
+        var valor = campo == "cpf" ? NovoCpf() : NovoEmail();
         var pausa = new PausaDeComandoInterceptor();
         using var fabrica = new SqlServerApiFactory(configureDb: o => o.AddInterceptors(pausa));
         using var cliente = await TestHelpers.CreateAuthenticatedClientAsync(fabrica);
-        var alvoLocal = await CriarNaFabricaAsync(fabrica, cliente);
+        var alvoLocal = await CriarLegadoSemRgAsync(fabrica, cliente);
         var outroLocal = await CriarNaFabricaAsync(fabrica, cliente);
-
         var gate = pausa.Armar(sql => sql.StartsWith("UPDATE dbo.Usuarios SET Nome", StringComparison.Ordinal));
-        var put = PutAsync(cliente, alvoLocal.Id, CorpoPut(alvoLocal, c => c["cpf"] = cpf));
+
+        //Act
+        var put = PutAsync(cliente, alvoLocal.Id, CorpoPut(alvoLocal, c => c[campo] = valor));
         await gate.Atingida;
+        int linhasDoOutro;
         await using (var conexao = new SqlConnection(fabrica.ConnectionString))
         {
             await conexao.OpenAsync();
             await using var comando = conexao.CreateCommand();
-            comando.CommandText = """
+            comando.CommandText = $"""
                 EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=@resp;
                 EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value='127.0.0.1';
-                UPDATE dbo.Usuarios SET Cpf = @cpf WHERE Id = @id;
+                UPDATE dbo.Usuarios SET {(campo == "cpf" ? "Cpf = @valor" : "Email = @valor, EmailNormalizado = UPPER(@valor)")} WHERE Id = @id;
                 """;
             comando.Parameters.AddWithValue("@resp", outroLocal.Id);
-            comando.Parameters.AddWithValue("@cpf", cpf);
+            comando.Parameters.Add(new SqlParameter("@valor", System.Data.SqlDbType.VarChar, 100) { Value = valor });
             comando.Parameters.AddWithValue("@id", outroLocal.Id);
-            Assert.Equal(1, await comando.ExecuteNonQueryAsync());
+            linhasDoOutro = await comando.ExecuteNonQueryAsync();
         }
-        gate.Liberar();
 
+        gate.Liberar();
         var resposta = await put;
+
+        //Assert
+        Assert.Equal(1, linhasDoOutro);
         Assert.Equal(HttpStatusCode.Conflict, resposta.StatusCode);
         var corpo = await resposta.Content.ReadAsStringAsync();
-        Assert.Contains("Existe outro usuário cadastrado com esse CPF.", corpo);
+        Assert.Contains(campo == "cpf" ? "Existe outro usuário cadastrado com esse CPF." : "Existe outro usuário cadastrado com esse e-mail.", corpo);
         AssertSemDetalheInterno(corpo);
-        Assert.Equal(alvoLocal.Cpf, (await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvoLocal.Id))).Cpf);
+        var gravado = await TestHelpers.WithDbAsync(fabrica, db => db.Usuarios.AsNoTracking().SingleAsync(u => u.Id == alvoLocal.Id));
+        Assert.Equal((alvoLocal.Cpf, alvoLocal.Email), (gravado.Cpf, gravado.Email));
         Assert.Empty(await TestHelpers.WithDbAsync(fabrica, db => db.UsuariosHistorico.Where(h => h.UsuarioId == alvoLocal.Id).ToListAsync()));
     }
 
@@ -491,23 +536,29 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         return (await response.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
     }
 
-    [Fact]
+    [Fact(DisplayName = "Cada PUT grava em _usuarios_hist o estado anterior completo, inclusive cpf, nascimento, telefone e cargo")]
     public async Task Put_HistoricoGuardaOEstadoAnteriorCompleto_ACadaAlteracao()
     {
-        var cpf1 = NovoCpf();
-        var alvo = await CriarAsync(cpf1, new DateOnly(1980, 3, 4), "(11) 2000-0001", role: "SEC");
+        //Arrange
+        var alvo = await CriarLegadoSemRgAsync(Factory, Client, new DateOnly(1980, 3, 4), "1120000001", role: "SEC");
+        var cpf1 = alvo.Cpf!;
         var email1 = alvo.Email;
         var cpf2 = NovoCpf();
         var email2 = NovoEmail("segunda-versao");
+        var cargoDiretor = await CargoIdAsync("DIR");
 
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, new
+        //Act
+        var primeiraAlteracao = await PutAsync(Client, alvo.Id, new
         {
-            nome = "Versão 2", email = email2, cargoId = await CargoIdAsync("DIR"), cpf = cpf2, dataNascimento = "1981-04-05", telefone = "(21) 2000-0002",
-        })).StatusCode);
+            nome = "Versão 2", email = email2, cargoId = cargoDiretor, cpf = cpf2, dataNascimento = "1981-04-05", telefone = "(21) 2000-0002",
+        });
         var v2 = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == alvo.Id);
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(v2, c => c["telefone"] = "(31) 3000-0003"))).StatusCode);
-
+        var segundaAlteracao = await PutAsync(Client, alvo.Id, CorpoPut(v2, c => c["telefone"] = "(31) 3000-0003"));
         var historico = await HistoricoAsync(alvo.Id);
+
+        //Assert
+        Assert.Equal(HttpStatusCode.OK, primeiraAlteracao.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, segundaAlteracao.StatusCode);
         Assert.Equal(2, historico.Count);
 
         Assert.Equal(alvo.Nome, historico[0].Nome);
@@ -594,23 +645,23 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         Assert.Null((await UsuarioAsync(alvo.Id)).DataNascimento);
     }
 
-    [Fact]
+    [Fact(DisplayName = "Falha ao gravar o histórico desfaz o PUT e a exclusão lógica, retorna 500 sem detalhe interno e não deixa histórico")]
     public async Task FalhaAoGravarHistorico_DesfazAAlteracao_NoPutENaExclusaoLogica()
     {
+        //Arrange
         var cpf = NovoCpf();
         var alvo = await CriarAsync(cpf, new DateOnly(1970, 1, 1), "(81) 3888-8888");
         var versaoAntes = (await UsuarioAsync(alvo.Id)).SecurityVersion;
-
         var constraint = $"CK_teste_falha_{Guid.NewGuid():N}";
         await ExecSqlAsync($"ALTER TABLE dbo._usuarios_hist WITH NOCHECK ADD CONSTRAINT [{constraint}] CHECK (UsuarioId <> '{alvo.Id}')");
+
+        //Act
+        HttpResponseMessage put;
+        HttpResponseMessage delete;
         try
         {
-            var put = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["cpf"] = NovoCpf(); c["telefone"] = "(11) 2000-0000"; c["dataNascimento"] = "1971-01-01"; }));
-            Assert.Equal(HttpStatusCode.InternalServerError, put.StatusCode);
-            Assert.DoesNotContain(constraint, await put.Content.ReadAsStringAsync());
-
-            var delete = await DeleteAsync(Client, alvo.Id);
-            Assert.Equal(HttpStatusCode.InternalServerError, delete.StatusCode);
+            put = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => { c["telefone"] = "(11) 2000-0000"; c["dataNascimento"] = "1971-01-01"; }));
+            delete = await DeleteAsync(Client, alvo.Id);
         }
         finally
         {
@@ -618,15 +669,22 @@ public sealed class UsuariosDadosPessoaisSqlServerTests(EventosSqlFixture fx) : 
         }
 
         var salvo = await UsuarioAsync(alvo.Id);
+        var historicoAposFalhas = await HistoricoAsync(alvo.Id);
+        var putAposRemoverAFalha = await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["telefone"] = "(11) 3000-0000"));
+        var historicoFinal = await HistoricoAsync(alvo.Id);
+
+        //Assert
+        Assert.Equal(HttpStatusCode.InternalServerError, put.StatusCode);
+        Assert.DoesNotContain(constraint, await put.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.InternalServerError, delete.StatusCode);
         Assert.Equal(cpf, salvo.Cpf);
         Assert.Equal(new DateOnly(1970, 1, 1), salvo.DataNascimento);
         Assert.Equal("8138888888", salvo.Telefone);
         Assert.True(salvo.Ativo);
         Assert.Equal(versaoAntes, salvo.SecurityVersion);
-        Assert.Empty(await HistoricoAsync(alvo.Id));
-
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(Client, alvo.Id, CorpoPut(alvo, c => c["telefone"] = "(11) 3000-0000"))).StatusCode);
-        Assert.Single(await HistoricoAsync(alvo.Id));
+        Assert.Empty(historicoAposFalhas);
+        Assert.Equal(HttpStatusCode.OK, putAposRemoverAFalha.StatusCode);
+        Assert.Single(historicoFinal);
     }
 
     [Fact]

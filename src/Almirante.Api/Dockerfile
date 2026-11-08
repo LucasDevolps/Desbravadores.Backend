@@ -48,6 +48,12 @@ RUN mkdir -p /var/lib/almirante/fotos \
     && chown app:app /var/lib/almirante/fotos \
     && chmod 700 /var/lib/almirante/fotos
 
+# Diário da auditoria HTTP (AuditoriaHttp__DiretorioPendentes no compose.yaml, issue #158): registros já sanitizados aguardando o banco.
+# Mesmo motivo dos diretórios acima: o volume nomeado vazio herda o dono "app" e a permissão 700.
+RUN mkdir -p /var/lib/almirante/auditoria-http \
+    && chown app:app /var/lib/almirante/auditoria-http \
+    && chmod 700 /var/lib/almirante/auditoria-http
+
 USER app
 
 COPY --from=build /app/publish .

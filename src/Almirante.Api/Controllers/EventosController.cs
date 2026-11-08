@@ -7,9 +7,15 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Controllers;
 
+/// <summary>
+/// Gestão de eventos (GestaoEventos: ADM, DIR, DIRA, SEC, TES). Cadastro e cobranças são uma operação só: criar, editar ou excluir um
+/// evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes na mesma transação (idempotência, rowversion e
+/// auditoria preservadas). Registrar ou corrigir pagamentos continua em /api/Lancamentos (GestaoFinanceira). Participantes consultam
+/// os próprios eventos em /api/Me/Eventos.
+/// </summary>
 [ApiController]
 [Route("api/Eventos")]
-[Authorize(Policy = Policies.GestaoFinanceira)]
+[Authorize(Policy = Policies.GestaoEventos)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class EventosController(ISender mediator) : ControllerBase
@@ -49,6 +55,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
         "a data mínima só se aplica a operações novas. 409: chave com dados diferentes, evento já excluído, membro já em outro grupo ativo do mesmo passeio, " +
         "passeio em uso por outra operação, ou operação registrada antes de a resposta original ser guardada (codigo EVENTO_IDEMPOTENCIA_SEM_RESPOSTA_ORIGINAL: consulte o evento existente). " +
         "404: eventoReferenciaId inexistente/inativo.")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status415UnsupportedMediaType)]
     [ProducesResponseType<EventoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -74,8 +81,9 @@ public sealed class EventosController(ISender mediator) : ControllerBase
 
     [HttpPut("{id:guid}")]
     [EndpointSummary("Atualiza um cadastro de evento e sincroniza participantes e lançamentos.")]
-    [EndpointDescription("Exige versao (rowversion). Com todos os lançamentos pendentes, atualiza mantidos, cria novos e desativa removidos " +
-        "(motivo obrigatório na remoção). Com lançamento Pago/Atrasado, qualquer mudança na composição de custos (transporte, ehGratis, alimentação, individual, seguro — não só o total), participantes ou data retorna 409; o local ainda pode ser corrigido. " +
+    [EndpointDescription("Exige versao (rowversion). Sem lançamento Pago, atualiza mantidos, cria novos e desativa removidos " +
+        "(motivo obrigatório na remoção); um lançamento Atrasado acompanha o novo valor e a nova data e volta a Pendente se a data ainda não passou. " +
+        "Com lançamento Pago, qualquer mudança na composição de custos (transporte, ehGratis, alimentação, individual, seguro — não só o total), participantes ou data retorna 409; o local ainda pode ser corrigido. " +
         "membros aceita GUID ou GUID[] como no POST. Data e local não mudam quando o passeio tem mais de um cadastro ativo (409).")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -96,8 +104,8 @@ public sealed class EventosController(ISender mediator) : ControllerBase
 
     [HttpDelete("{id:guid}")]
     [EndpointSummary("Exclui logicamente um cadastro de evento (auditado por trigger).")]
-    [EndpointDescription("Corpo: motivo (1–255) e versao. Desativa o cadastro, seus participantes e lançamentos pendentes na mesma transação; " +
-        "outros grupos do passeio permanecem. 409 se houver lançamento Pago/Atrasado ou versão desatualizada; 404 se inexistente ou já excluído.")]
+    [EndpointDescription("Corpo: motivo (1–255) e versao. Desativa o cadastro, seus participantes e lançamentos (Pendente ou Atrasado) na mesma transação; " +
+        "outros grupos do passeio permanecem. 409 se houver lançamento Pago ou versão desatualizada; 404 se inexistente ou já excluído.")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]

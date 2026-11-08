@@ -88,7 +88,7 @@ public static class TestHelpers
         return (client, usuario.Id);
     }
 
-    public static async Task<Usuario> AddUsuarioAsync(WebApplicationFactory<Program> factory, string nome, string role)
+    public static async Task<Usuario> AddUsuarioAsync(WebApplicationFactory<Program> factory, string nome, string role, Action<Usuario>? ajustar = null)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
@@ -107,6 +107,7 @@ public static class TestHelpers
             CargoId = cargoId,
         };
         usuario.SenhaHash = hasher.HashPassword(usuario, SenhaPadraoTeste);
+        ajustar?.Invoke(usuario);
 
         db.Usuarios.Add(usuario);
         await db.SaveChangesAsync();

@@ -710,15 +710,13 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(mesPassado, (await EventosTestKit.LerAsync(corrigido)).DataEvento);
     }
 
-    [Theory]
-    [InlineData("Pago")]
-    [InlineData("Atrasado")]
-    public async Task Put_ComLancamentoPagoOuAtrasado_BloqueiaValorParticipantesEData_PreservandoOPagamento(string status)
+    [Fact]
+    public async Task Put_ComLancamentoPago_BloqueiaValorParticipantesEData_PreservandoOPagamento()
     {
         var m = await MembrosAsync(3);
         var dto = await CriarAsync(new[] { m[0], m[1] });
         var pago = dto.Lancamentos[0];
-        await PagarAsync(pago.Id, status);
+        await PagarAsync(pago.Id);
         dto = await ObterAsync(dto.Id);
 
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, dto.Membros, transporte: 99m))).StatusCode);
@@ -729,9 +727,53 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var lancamentos = await LancamentosDe(dto.Id);
         Assert.Equal(2, lancamentos.Count);
         Assert.All(lancamentos, l => Assert.Equal((20m, true), (l.Valor, l.Ativo)));
-        Assert.Equal(Enum.Parse<StatusLancamento>(status), lancamentos.Single(l => l.Id == pago.Id).Status);
+        Assert.Equal(StatusLancamento.Pago, lancamentos.Single(l => l.Id == pago.Id).Status);
         Assert.Equal(StatusLancamento.Pendente, lancamentos.Single(l => l.Id != pago.Id).Status);
         Assert.Equal(dto.Versao, (await ObterAsync(dto.Id)).Versao);
+    }
+
+    /// <summary>Issue #184: Atrasado é um Pendente vencido; não trava o cadastro e, com a data ainda por vir, volta a Pendente.</summary>
+    [Fact]
+    public async Task Put_ComLancamentoAtrasado_AtualizaValorParticipantesEData_EVoltaAPendenteComDataFutura()
+    {
+        var m = await MembrosAsync(3);
+        var dto = await CriarAsync(new[] { m[0], m[1] });
+        var atrasado = dto.Lancamentos[0];
+        await PagarAsync(atrasado.Id, "Atrasado");
+        dto = await ObterAsync(dto.Id);
+        var novaData = dto.DataEvento.AddDays(1);
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { m[0], m[1], m[2] }, transporte: 12m, data: novaData));
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var lancamentos = await LancamentosDe(dto.Id);
+        Assert.Equal(3, lancamentos.Count);
+        Assert.All(lancamentos, l => Assert.Equal((22m, novaData, StatusLancamento.Pendente, true), (l.Valor, l.Vencimento, l.Status, l.Ativo)));
+        Assert.Equal(fx.AdminId, lancamentos.Single(l => l.Id == atrasado.Id).AtualizadoPorUsuarioId);
+    }
+
+    [Fact]
+    public async Task Put_ComLancamentoAtrasadoEDataPassada_AtualizaOValor_EMantemAtrasado()
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m);
+        var mesPassado = DateOnly.FromDateTime(DateTime.UtcNow).AddMonths(-1);
+        await using (var conexao = await ConexaoAsync())
+        {
+            await ExecAsync(conexao, "UPDATE dbo.eventos SET DataEvento = @d WHERE Id = @id", ("@d", mesPassado.ToDateTime(TimeOnly.MinValue)), ("@id", dto.Id));
+            await ExecAsync(conexao, "UPDATE dbo.Lancamentos SET Vencimento = @d WHERE EventoId = @id", ("@d", mesPassado.ToDateTime(TimeOnly.MinValue)), ("@id", dto.Id));
+            await ExecAsync(conexao, "UPDATE dbo.Lancamentos SET Status = 2 WHERE Id = @id", ("@id", dto.Lancamentos[0].Id));
+        }
+
+        dto = await ObterAsync(dto.Id);
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 15m));
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var lancamentos = await LancamentosDe(dto.Id);
+        Assert.All(lancamentos, l => Assert.Equal((25m, mesPassado), (l.Valor, l.Vencimento)));
+        Assert.Equal(StatusLancamento.Atrasado, lancamentos.Single(l => l.Id == dto.Lancamentos[0].Id).Status);
+        // O outro, Pendente e vencido, fica para a rotina de vencimento, que o marca e notifica o membro.
+        Assert.Equal(StatusLancamento.Pendente, lancamentos.Single(l => l.Id != dto.Lancamentos[0].Id).Status);
     }
 
     [Fact]
@@ -813,14 +855,12 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(1, await Db(db => db.LancamentosDeletados.CountAsync(d => d.EventoId == dto.Id)));
     }
 
-    [Theory]
-    [InlineData("Pago")]
-    [InlineData("Atrasado")]
-    public async Task Delete_ComLancamentoPagoOuAtrasado_Retorna409_SemAlterarNenhumRegistro(string status)
+    [Fact]
+    public async Task Delete_ComLancamentoPago_Retorna409_SemAlterarNenhumRegistro()
     {
         var m = await MembrosAsync(2);
         var dto = await CriarAsync(m);
-        await PagarAsync(dto.Lancamentos[0].Id, status);
+        await PagarAsync(dto.Lancamentos[0].Id);
         dto = await ObterAsync(dto.Id);
 
         var response = await EventosTestKit.DeleteAsync(Client, dto.Id, "tentativa", dto.Versao);
@@ -832,6 +872,22 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(0, await Db(db => db.HistoricoEventos.CountAsync(h => h.EventoId == dto.Id)));
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.EventoId == dto.Id)));
         Assert.Equal(dto.Versao, (await ObterAsync(dto.Id)).Versao);
+    }
+
+    [Fact]
+    public async Task Delete_ComLancamentoAtrasado_ExcluiOCadastro_EDesativaTodosOsLancamentos()
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m);
+        await PagarAsync(dto.Lancamentos[0].Id, "Atrasado");
+        dto = await ObterAsync(dto.Id);
+
+        var response = await EventosTestKit.DeleteAsync(Client, dto.Id, "passeio cancelado", dto.Versao);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.False(await Db(db => db.Eventos.Where(e => e.Id == dto.Id).Select(e => e.Ativo).SingleAsync()));
+        Assert.All(await LancamentosDe(dto.Id), l => Assert.False(l.Ativo));
+        Assert.Equal(2, await Db(db => db.LancamentosDeletados.CountAsync(d => d.EventoId == dto.Id)));
     }
 
     [Fact]
@@ -1306,12 +1362,10 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(antes.Lancamentos, atual.Lancamentos);
     }
 
-    [Theory]
-    [InlineData("Pago")]
-    [InlineData("Atrasado")]
-    public async Task Put_RedistribuirCustosComMesmaSoma_ComLancamentoPagoOuAtrasado_Retorna409_SemAlterarNada(string status)
+    [Fact]
+    public async Task Put_RedistribuirCustosComMesmaSoma_ComLancamentoPago_Retorna409_SemAlterarNada()
     {
-        var (dto, m) = await EventoComPagamentoAsync(status);
+        var (dto, m) = await EventoComPagamentoAsync("Pago");
 
         var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 5m, alimentacao: 13m));
 

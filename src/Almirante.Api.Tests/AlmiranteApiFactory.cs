@@ -31,7 +31,16 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
 
     public ViaCepFalso ViaCep { get; } = new();
 
+    /// <summary>
+    /// Mantém a rotina que marca lançamentos vencidos como Atrasado (issue #184). Desligada por padrão: com o relógio real ela rodaria
+    /// na subida e na virada do dia, em corrida com os lançamentos vencidos que cada teste cria; os testes dela a executam explicitamente.
+    /// </summary>
+    public bool RotinaDeAtrasados { get; init; }
+
     public string FotosPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-fotos", Guid.NewGuid().ToString("N"));
+
+    /// <summary>Diário da auditoria HTTP desta factory: o padrão é derivado da connection string, igual em todas as factories em memória.</summary>
+    public string AuditoriaPath { get; } = Path.Combine(Path.GetTempPath(), "almirante-testes-auditoria", Guid.NewGuid().ToString("N"));
 
     protected virtual string EnvironmentName => "Development";
     protected virtual void ConfigureSettings(IDictionary<string, string?> settings) { }
@@ -57,7 +66,11 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
                 ["SeedAdmin:Senha"] = AdminSenha,
                 ["LoginProtection:RateLimit:PermitLimit"] = "10000",
                 ["LoginProtection:Lockout:MaxFailedAttempts"] = "1000",
+                ["Senhas:TentativasPorUsuario"] = "10000",
+                ["Senhas:TentativasPorIp"] = "10000",
+                ["Senhas:RecuperacoesPorIp"] = "10000",
                 ["Media:Storage:Path"] = FotosPath,
+                ["AuditoriaHttp:DiretorioPendentes"] = AuditoriaPath,
                 ["ViaCep:TimeoutMs"] = "600",
             };
             ConfigureSettings(settings);
@@ -68,6 +81,13 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
         {
             logging.SetMinimumLevel(LogLevel.Trace);
             logging.AddProvider(Logs);
+            // No Windows o WebApplication registra o EventLog por padrão: teste não escreve no log de eventos da máquina, e esse
+            // provedor às vezes já estava descartado quando o aviso de encerramento da auditoria HTTP chegava (StopAsync falhava).
+            foreach (var eventLog in logging.Services
+                .Where(d => d.ImplementationType?.FullName == "Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider").ToList())
+            {
+                logging.Services.Remove(eventLog);
+            }
         });
 
         builder.ConfigureServices(services =>
@@ -83,6 +103,14 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
             }
 
             ConfigureDatabase(services);
+            if (!RotinaDeAtrasados)
+            {
+                foreach (var rotina in services.Where(d => d.ImplementationType == typeof(Almirante.Api.Services.LancamentosAtrasadosService)).ToList())
+                {
+                    services.Remove(rotina);
+                }
+            }
+
             services.AddSingleton<IStartupFilter, TestEndpointsStartupFilter>();
             services.AddHttpClient(Almirante.Api.Services.ViaCepClient.NomeHttpClient).ConfigurePrimaryHttpMessageHandler(() => ViaCep);
             ConfigureTestServices(services);
@@ -97,10 +125,20 @@ public class AlmiranteApiFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (disposing && Directory.Exists(FotosPath))
+        if (disposing)
         {
-            Directory.Delete(FotosPath, recursive: true);
+            ApagarPastaTemporaria(FotosPath);
+            ApagarPastaTemporaria(AuditoriaPath);
         }
+    }
+
+    // Melhor esforço, como em ApiProcess: no Windows um arquivo ainda aberto (antivírus, indexador) faz o Delete lançar
+    // IOException, e uma sobra na pasta temporária não pode reprovar a classe de testes inteira.
+    private static void ApagarPastaTemporaria(string pasta)
+    {
+        try { if (Directory.Exists(pasta)) Directory.Delete(pasta, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private sealed class TestEndpointsStartupFilter : IStartupFilter

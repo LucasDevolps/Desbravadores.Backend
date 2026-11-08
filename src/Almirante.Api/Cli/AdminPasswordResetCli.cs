@@ -57,6 +57,18 @@ public static class AdminPasswordResetCli
                 sessao.RevocationReason = MotivoRevogacao;
             }
 
+            // A autorização emitida antes já ficaria obsoleta pela SecurityVersion; encerrá-la tira o pedido das pendências. O CLI não tem
+            // usuário autenticado: não grava em Usuarios_alteracoes_senha nem inventa responsável (limite documentado).
+            var recuperacoesAbertas = await db.RecuperacoesSenha
+                .Where(r => r.UsuarioId == usuario.Id && (r.Status == StatusRecuperacaoSenha.Pendente || r.Status == StatusRecuperacaoSenha.Autorizada))
+                .ToListAsync(cancellationToken);
+            foreach (var recuperacao in recuperacoesAbertas)
+            {
+                recuperacao.Status = StatusRecuperacaoSenha.Invalidada;
+                recuperacao.EncerradaEmUtc = agora;
+                recuperacao.MotivoEncerramento = MotivoRevogacao;
+            }
+
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
@@ -68,20 +80,24 @@ public static class AdminPasswordResetCli
         }
     }
 
-    public static async Task<int> RunAsync(IServiceProvider services, string[] args, string? connectionStringOverride = null, CancellationToken cancellationToken = default)
+    public static Task<int> RunAsync(IServiceProvider services, string[] args, string? connectionStringOverride = null, CancellationToken cancellationToken = default) =>
+        ExecutarAsync(services, args, TerminalCli.Console, connectionStringOverride, cancellationToken);
+
+    public static async Task<int> ExecutarAsync(IServiceProvider services, string[] args, TerminalCli terminal, string? connectionStringOverride = null,
+        CancellationToken cancellationToken = default)
     {
         if (args.Length < 2 || string.IsNullOrWhiteSpace(args[1]))
         {
-            Console.Error.WriteLine($"Uso: dotnet run --project src/Almirante.Api -- {CommandName} <email>");
+            terminal.Erro.WriteLine($"Uso: dotnet run --project src/Almirante.Api -- {CommandName} <email>");
             return 1;
         }
 
         var email = args[1];
-        var senha = ReadPasswordFromConsole("Nova senha: ");
-        var confirmacao = ReadPasswordFromConsole("Confirme a nova senha: ");
+        var senha = ReadPasswordFromConsole(terminal, "Nova senha: ");
+        var confirmacao = ReadPasswordFromConsole(terminal, "Confirme a nova senha: ");
         if (!string.Equals(senha, confirmacao, StringComparison.Ordinal))
         {
-            Console.Error.WriteLine("As senhas informadas não coincidem.");
+            terminal.Erro.WriteLine("As senhas informadas não coincidem.");
             return 1;
         }
 
@@ -96,37 +112,37 @@ public static class AdminPasswordResetCli
         switch (resultado)
         {
             case ResetResult.UsuarioNaoEncontrado:
-                Console.Error.WriteLine("Nenhum usuário encontrado com esse e-mail.");
+                terminal.Erro.WriteLine("Nenhum usuário encontrado com esse e-mail.");
                 return 1;
             case ResetResult.SenhaInvalida:
-                Console.Error.WriteLine("Senha não atende à política de senha: " + string.Join(" ", erros));
+                terminal.Erro.WriteLine("Senha não atende à política de senha: " + string.Join(" ", erros));
                 return 1;
             default:
-                Console.WriteLine("Senha atualizada e sessões ativas dessa conta foram revogadas (novo login será exigido em todo dispositivo).");
+                terminal.Saida.WriteLine("Senha atualizada e sessões ativas dessa conta foram revogadas (novo login será exigido em todo dispositivo).");
                 return 0;
         }
     }
 
-    private static string ReadPasswordFromConsole(string prompt)
+    private static string ReadPasswordFromConsole(TerminalCli terminal, string prompt)
     {
-        Console.Write(prompt);
-        if (Console.IsInputRedirected)
+        terminal.Saida.Write(prompt);
+        if (terminal.EntradaRedirecionada)
         {
-            var line = Console.In.ReadLine();
-            Console.WriteLine();
+            var line = terminal.Entrada.ReadLine();
+            terminal.Saida.WriteLine();
             return line ?? "";
         }
 
         var buffer = new System.Text.StringBuilder();
         ConsoleKeyInfo key;
-        while ((key = Console.ReadKey(intercept: true)).Key != ConsoleKey.Enter)
+        while ((key = terminal.LerTecla()).Key != ConsoleKey.Enter)
         {
             if (key.Key == ConsoleKey.Backspace)
             {
                 if (buffer.Length > 0)
                 {
                     buffer.Length--;
-                    Console.Write("\b \b");
+                    terminal.Saida.Write(" ");
                 }
                 continue;
             }
@@ -134,11 +150,21 @@ public static class AdminPasswordResetCli
             if (!char.IsControl(key.KeyChar))
             {
                 buffer.Append(key.KeyChar);
-                Console.Write('*');
+                terminal.Saida.Write('*');
             }
         }
 
-        Console.WriteLine();
+        terminal.Saida.WriteLine();
         return buffer.ToString();
     }
+}
+
+/// <summary>
+/// Entrada e saída da CLI. O padrão é o console do processo (prompt sem eco por <see cref="System.Console.ReadKey(bool)"/>); os testes
+/// passam um terminal próprio para exercitar o prompt, a confirmação e as mensagens sem depender de um console real.
+/// </summary>
+public sealed record TerminalCli(bool EntradaRedirecionada, TextReader Entrada, Func<ConsoleKeyInfo> LerTecla, TextWriter Saida, TextWriter Erro)
+{
+    public static TerminalCli Console => new(System.Console.IsInputRedirected, System.Console.In, () => System.Console.ReadKey(intercept: true),
+        System.Console.Out, System.Console.Error);
 }

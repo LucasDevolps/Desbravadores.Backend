@@ -38,6 +38,9 @@ public static class DbSeeder
         }
         catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.Number == 1801)
         {
+            // Outra instância criou o banco entre o "existe?" e o CREATE DATABASE. A abertura que falhou antes (banco inexistente) fica
+            // no bloqueio do pool do SqlClient: sem limpá-lo, a nova tentativa veria o banco como inexistente e repetiria o CREATE.
+            Microsoft.Data.SqlClient.SqlConnection.ClearPool((Microsoft.Data.SqlClient.SqlConnection)db.Database.GetDbConnection());
             await db.Database.MigrateAsync(cancellationToken);
         }
     }
@@ -100,7 +103,7 @@ public static class DbSeeder
     private static async Task SeedLancamentosAsync(AlmiranteDbContext db, CancellationToken cancellationToken)
     {
         if (await db.Lancamentos.AnyAsync(cancellationToken)) return;
-        var membroId = await db.Usuarios.Select(u => u.Id).FirstOrDefaultAsync(cancellationToken);
+        var membroId = await db.Usuarios.Where(u => u.Ativo).Select(u => u.Id).FirstOrDefaultAsync(cancellationToken);
         if (membroId == Guid.Empty) return;
         db.Lancamentos.Add(new Lancamento
         {

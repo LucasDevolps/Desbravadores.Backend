@@ -39,6 +39,8 @@ public partial class UnifyLancamentosFlow : Migration
         migrationBuilder.RenameColumn(name: "Finalidade", table: "LancamentosOperacoes", newName: "Tipo");
         migrationBuilder.RenameColumn(name: "Finalidade", table: "lancamentos_deletados", newName: "Tipo");
         migrationBuilder.CreateIndex(name: "IX_Lancamentos_Tipo", table: "Lancamentos", column: "Tipo");
+        // Volta ao trigger de AddTipoFluxo (Tipo/MembroNome/Moeda): sem ele o rollback deixaria a exclusão lógica sem auditoria.
+        migrationBuilder.Sql(AddTipoFluxo.TriggerAuditoriaComTipoFluxo);
     }
 
     private static void CreateTrigger(MigrationBuilder migrationBuilder) => migrationBuilder.Sql("""

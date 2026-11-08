@@ -61,6 +61,44 @@ public static class NotificacoesFabrica
             evento.Id, lancamento.Id);
     }
 
+    /// <summary>A chave inclui o vencimento: um débito prorrogado que volta a vencer gera um aviso novo, e o mesmo atraso nunca dois.</summary>
+    public static string ChaveDebitoAtrasado(Guid lancamentoId, DateOnly vencimento) =>
+        $"atraso:{lancamentoId:N}:{vencimento.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}";
+
+    /// <summary>Débito (ver <see cref="EhDebito"/>) que a rotina de vencimento acabou de marcar como Atrasado.</summary>
+    public static Notificacao DebitoAtrasado(Lancamento lancamento, DateTime agoraUtc)
+    {
+        var finalidade = string.IsNullOrWhiteSpace(lancamento.Finalidade) ? null : lancamento.Finalidade.Trim();
+        var descricao = string.IsNullOrWhiteSpace(lancamento.Descricao) ? null : lancamento.Descricao.Trim();
+        var referente = (finalidade, descricao) switch
+        {
+            ({ } f, { } d) => $" referente a {f} ({d})",
+            ({ } f, null) => $" referente a {f}",
+            (null, { } d) => $" referente a {d}",
+            _ => "",
+        };
+        return Nova(lancamento.MembroId!.Value, TipoNotificacao.DebitoAtrasado, ChaveDebitoAtrasado(lancamento.Id, lancamento.Vencimento), agoraUtc,
+            finalidade is null ? "Débito em atraso" : $"Débito em atraso: {finalidade}",
+            $"O débito de {Moeda(lancamento.Valor)}{referente} venceu em {Data(lancamento.Vencimento)} e ainda não tem pagamento registrado.",
+            lancamento.EventoId, lancamento.Id);
+    }
+
+    public static string ChaveSenhaAlterada(Guid alteracaoSenhaId) => $"senha:{alteracaoSenhaId:N}";
+
+    /// <summary>
+    /// Aviso ao titular de que outra pessoa alterou a senha dele (troca administrativa) ou autorizou a recuperação que ele concluiu. A
+    /// origem é a auditoria da alteração: uma por alteração. Sem senha, token, e-mail ou IP no texto.
+    /// </summary>
+    public static Notificacao SenhaAlterada(Guid destinatarioId, Guid alteracaoSenhaId, TipoAlteracaoSenha tipo, DateTime agoraUtc) =>
+        Nova(destinatarioId, TipoNotificacao.SenhaAlterada, ChaveSenhaAlterada(alteracaoSenhaId), agoraUtc,
+            "Senha de acesso alterada",
+            tipo == TipoAlteracaoSenha.RecuperacaoAssistida
+                ? "Sua senha de acesso foi redefinida com uma autorização de recuperação emitida por um usuário autorizado da administração. " +
+                  "Se você não reconhece esta ação, entre em contato com a administração."
+                : "Sua senha de acesso foi alterada por um usuário autorizado da administração. " +
+                  "Se você não reconhece esta ação, entre em contato com a administração.",
+            eventoId: null, lancamentoId: null);
+
     public static string Moeda(decimal valor)
     {
         var texto = Math.Abs(valor).ToString("#,##0.00", CultureInfo.InvariantCulture);

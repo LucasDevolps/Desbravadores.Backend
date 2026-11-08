@@ -8,7 +8,8 @@ public sealed class UsuariosFotoOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
-        if (context.MethodInfo.DeclaringType != typeof(UsuariosController) || context.MethodInfo.Name != nameof(UsuariosController.EnviarFoto))
+        var controller = context.MethodInfo.DeclaringType;
+        if ((controller != typeof(UsuariosController) && controller != typeof(MeController)) || context.MethodInfo.Name != nameof(UsuariosController.EnviarFoto))
         {
             return;
         }

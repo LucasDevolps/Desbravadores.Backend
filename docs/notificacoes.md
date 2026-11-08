@@ -13,7 +13,8 @@ seguir. O frontend ainda não foi implementado nem validado.
 - Cada notificação pertence a um único destinatário. A identidade vem sempre do token validado; nenhum
   endpoint aceita `usuarioId` do cliente.
 - Qualquer usuário autenticado com sessão válida usa o próprio módulo, inclusive desbravadores (`DS`).
-  Os endpoints administrativos de eventos e lançamentos continuam restritos à diretoria.
+  Os endpoints de gestão de eventos e lançamentos seguem as policies `GestaoEventos` e `GestaoFinanceira`
+  (matriz em [`authentication-security.md`](authentication-security.md#perfis-e-matriz-de-acesso-31-127)).
 
 ## Quando uma notificação é criada
 
@@ -22,6 +23,8 @@ seguir. O frontend ainda não foi implementado nem validado.
 | `POST /api/Lancamentos/Registrar` individual, `tipoFluxo: Entrada` | o `membroId` do lançamento | `DebitoCadastrado` | `lancamentoId` |
 | `POST /api/Lancamentos/Registrar` com `aplicarATodosOsMembros: true`, `Entrada` | cada usuário que recebeu um lançamento na operação (a regra atual não mudou: todos os usuários cadastrados), cada um com a própria notificação | `DebitoCadastrado` | `lancamentoId` do lançamento daquele usuário |
 | `POST /api/Eventos` (novo cadastro) | cada participante (`membros`) daquele cadastro, uma vez | `EventoCadastrado` | `eventoId` e `lancamentoId` |
+| Rotina de vencimento (issue #184): o lançamento passa de `Pendente` a `Atrasado` | o `membroId` do débito (`Entrada` com membro), uma vez por vencimento | `DebitoAtrasado` | `lancamentoId` (e `eventoId` no lançamento de evento); `ChaveOrigem` = `atraso:{lancamentoId}:{vencimento yyyyMMdd}` |
+| `POST /api/Usuarios/{id}/alterar-senha` e `POST /api/Auth/recuperacao-senha/confirmar` (issue #159) | só o titular da senha alterada, quando quem agiu foi outra pessoa (a troca própria não notifica) | `SenhaAlterada` | nenhuma (`ChaveOrigem` = `senha:{id da auditoria}`) — ver [`senhas.md`](senhas.md#notificação-interna) |
 
 Regras:
 
@@ -93,9 +96,10 @@ Autenticação: `Authorization: Bearer <access token>`, como no resto da API. As
 
 Sem pendências: `{ "items": [], "naoLidas": 0, "pageSize": 20, "proximoCursor": null }`.
 
-`eventoId` e `lancamentoId` são metadados. Eles **não** dão acesso a `/api/Eventos` nem a
-`/api/Lancamentos`, que continuam restritos à diretoria. Todo o conteúdo que o usuário precisa ver já
-está em `titulo` e `mensagem`.
+`eventoId` e `lancamentoId` são metadados e não dão acesso por si. O destinatário consulta o evento em
+`GET /api/Me/Eventos/{eventoId}` (só enquanto participa dele; evento excluído, alheio ou do qual foi removido
+devolve `404`), com data, local, composição do valor e a própria cobrança. `/api/Eventos` e `/api/Lancamentos`
+continuam restritos às policies de gestão. O resumo também está em `titulo` e `mensagem`.
 
 ### Marcar como lida
 

@@ -47,6 +47,39 @@ public sealed class LancamentosTests : IClassFixture<AlmiranteApiFactory>
         Assert.Equal(HttpStatusCode.NotFound,(await client.PostAsJsonAsync("/api/Lancamentos/Registrar",Body(Guid.NewGuid(),false))).StatusCode);
     }
 
+    [Fact]
+    public async Task RegistrarIndividual_MembroInativo_Retorna404_SemNotificacao()
+    {
+        var membro = await TestHelpers.AddUsuarioAsync(factory, "Inativo individual", "DS");
+        await TestHelpers.WithDbAsync(factory, async db => { (await db.Usuarios.SingleAsync(u => u.Id == membro.Id)).Ativo = false; return await db.SaveChangesAsync(); });
+        var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync("/api/Lancamentos/Registrar", Body(membro.Id, false))).StatusCode);
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.AnyAsync(l => l.MembroId == membro.Id)));
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Notificacoes.AnyAsync(n => n.DestinatarioId == membro.Id)));
+    }
+
+    [Fact]
+    public async Task RegistrarTodos_IgnoraMembrosInativos()
+    {
+        var ativo = await TestHelpers.AddUsuarioAsync(factory, "Geral ativo", "DS");
+        var inativo = await TestHelpers.AddUsuarioAsync(factory, "Geral inativo", "DS");
+        await TestHelpers.WithDbAsync(factory, async db => { (await db.Usuarios.SingleAsync(u => u.Id == inativo.Id)).Ativo = false; return await db.SaveChangesAsync(); });
+        var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/Lancamentos/Registrar") { Content = JsonContent.Create(Body(null, true)) };
+        req.Headers.Add("Idempotency-Key", $"inativos-{Guid.NewGuid():N}");
+
+        var response = await client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var geral = await response.Content.ReadFromJsonAsync<LancamentoGeralResponse>();
+        var ativos = await TestHelpers.WithDbAsync(factory, db => db.Usuarios.CountAsync(u => u.Ativo));
+        Assert.Equal(ativos, geral!.LancamentosCriados);
+        Assert.True(await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.AnyAsync(l => l.MembroId == ativo.Id && l.OperacaoId == geral.OperacaoId)));
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Lancamentos.AnyAsync(l => l.MembroId == inativo.Id)));
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Notificacoes.AnyAsync(n => n.DestinatarioId == inativo.Id)));
+    }
+
     [Theory]
     [InlineData(0)] [InlineData(-1)]
     public async Task Registrar_RejeitaValorNaoPositivo(decimal valor)

@@ -14,6 +14,12 @@ namespace Almirante.Api.Controllers;
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
+    [EndpointSummary("Lista os lançamentos, paginados, com filtros por busca, status, finalidade e vencimento.")]
+    [EndpointDescription("Sem filtros ativos (search, status, finalidade e vencimento ausentes; status/finalidade \"Todos\" contam como ausentes), " +
+        "a ordem é por prioridade de status: Atrasado, depois Pendente, depois Pago; dentro do mesmo status, vencimento mais recente primeiro e Id como desempate. " +
+        "Com qualquer filtro ativo, a ordem é vencimento mais recente primeiro e Id como desempate. " +
+        "Status atualizado automaticamente: um lançamento ativo Pendente com vencimento anterior a hoje (fuso do clube) passa a " +
+        "Atrasado na subida da API e depois a cada hora ou logo após a virada do dia. Vencimento igual a hoje continua Pendente.")]
     [ProducesResponseType<LancamentosResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<LancamentosResponse>> List(
@@ -32,6 +38,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [EndpointSummary("Consulta um lançamento ativo.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<LancamentoDto>> GetById(Guid id, CancellationToken cancellationToken)
@@ -46,7 +53,8 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         "Modo individual: 201 com o lançamento. Idempotency-Key é opcional no modo individual: sem ele, cada POST cria uma nova cobrança " +
         "(nada é deduplicado por conteúdo); com ele, reenviar a mesma chave e os mesmos dados devolve 200 com o lançamento já criado, " +
         "e a mesma chave com dados diferentes (inclusive outro membro ou o outro modo) devolve 409. " +
-        "Lançamentos de Entrada atribuídos a um membro (débitos) geram uma notificação para esse membro na mesma transação; Saída não notifica.")]
+        "Lançamentos de Entrada atribuídos a um membro (débitos) geram uma notificação para esse membro na mesma transação; Saída não notifica. " +
+        "Só membros ativos são cobrados: no modo individual, membro inexistente ou inativo devolve 404; no modo geral, inativos ficam de fora.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<LancamentoGeralResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -88,9 +96,13 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [EndpointSummary("Atualiza um lançamento.")]
+    [EndpointDescription("Campos omitidos não mudam. status Pago só pelo endpoint de pagamento (409). Trocar o status para Pendente com vencimento " +
+        "anterior a hoje no fuso do clube retorna 400: o lançamento vencido e não pago fica Atrasado (a rotina de vencimento o marcaria de novo).")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<LancamentoDto>> Update(Guid id, [FromBody] UpdateLancamentoRequest request, CancellationToken cancellationToken)
     {
         if (!User.TentarObterUsuarioId(out var usuarioResponsavelId))
@@ -142,9 +154,11 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [EndpointSummary("Exclui logicamente um lançamento; a exclusão é auditada.")]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Delete(Guid id, [FromBody] DeleteLancamentoRequest request, CancellationToken cancellationToken)
     {
         if (!User.TentarObterUsuarioId(out var usuarioId)) return IdentidadeInvalida();

@@ -5,34 +5,20 @@ using FluentValidation;
 
 namespace Almirante.Api.Validation.Usuarios;
 
-public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T : UsuarioConteudoRequest
+/// <summary>Regras dos dados pessoais, as mesmas no cadastro administrativo e no autoatendimento (PUT /api/Me).</summary>
+public abstract class DadosPessoaisValidator<T> : AbstractValidator<T> where T : DadosPessoaisRequest
 {
-    protected UsuarioConteudoValidator(TimeProvider clock)
+    protected DadosPessoaisValidator() => RuleLevelCascadeMode = CascadeMode.Stop;
+
+    protected void RegrasDosDadosPessoais(TimeProvider clock)
     {
-        RuleLevelCascadeMode = CascadeMode.Stop;
-
-        RuleFor(x => x.Nome)
-            .Must(nome => !string.IsNullOrWhiteSpace(nome)).WithMessage("nome é obrigatório.")
-            .Must(nome => nome!.Trim().Length <= UsuariosService.NomeMaximo)
-            .WithMessage($"nome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.");
-
-        RuleFor(x => x.Email)
-            .Must(email => !string.IsNullOrWhiteSpace(email)).WithMessage("email é obrigatório.")
-            .Must(email => email!.Trim().Length <= UsuariosService.EmailMaximo)
-            .WithMessage($"email deve ter no máximo {UsuariosService.EmailMaximo} caracteres.")
-            .Must(email => UsuariosService.SomenteAsciiImprimivel(email!.Trim()))
-            .WithMessage("email deve conter apenas caracteres ASCII (sem acentos).")
-            .Must(UsuariosService.EmailValido).WithMessage("email em formato inválido.");
-
-        RuleFor(x => x.CargoId).Must(cargoId => cargoId is not null && cargoId != Guid.Empty).WithMessage("cargoId é obrigatório.");
-
-        CpfOpcional(x => x.Cpf, nameof(UsuarioConteudoRequest.Cpf), "cpf");
-        TelefoneOpcional(x => x.Telefone, nameof(UsuarioConteudoRequest.Telefone), "telefone");
+        CpfOpcional(x => x.Cpf, nameof(DadosPessoaisRequest.Cpf), "cpf");
+        TelefoneOpcional(x => x.Telefone, nameof(DadosPessoaisRequest.Telefone), "telefone");
 
         RuleFor(x => x.DataNascimento!.Value)
             .LessThanOrEqualTo(_ => DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime))
             .WithMessage("dataNascimento não pode ser uma data futura.")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.DataNascimento))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.DataNascimento))
             .When(x => x.DataNascimento.HasValue);
 
         RuleFor(x => UsuariosService.NormalizarTexto(x.ResponsavelNome))
@@ -40,7 +26,7 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .WithMessage($"responsavelNome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.")
             .Must(nome => TextoVarchar.CabeNaPagina1252(nome!))
             .WithMessage("responsavelNome contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.ResponsavelNome))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.ResponsavelNome))
             .When(x => UsuariosService.NormalizarTexto(x.ResponsavelNome) is not null);
 
         RuleFor(x => UsuariosService.NormalizarTexto(x.ResponsavelEmail))
@@ -49,23 +35,23 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .Must(email => UsuariosService.SomenteAsciiImprimivel(email!))
             .WithMessage("responsavelEmail deve conter apenas caracteres ASCII (sem acentos).")
             .Must(email => UsuariosService.EmailValido(email)).WithMessage("responsavelEmail em formato inválido.")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.ResponsavelEmail))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.ResponsavelEmail))
             .When(x => UsuariosService.NormalizarTexto(x.ResponsavelEmail) is not null);
 
-        CpfOpcional(x => x.ResponsavelCpf, nameof(UsuarioConteudoRequest.ResponsavelCpf), "responsavelCpf");
-        TelefoneOpcional(x => x.ResponsavelTelefone, nameof(UsuarioConteudoRequest.ResponsavelTelefone), "responsavelTelefone");
+        CpfOpcional(x => x.ResponsavelCpf, nameof(DadosPessoaisRequest.ResponsavelCpf), "responsavelCpf");
+        TelefoneOpcional(x => x.ResponsavelTelefone, nameof(DadosPessoaisRequest.ResponsavelTelefone), "responsavelTelefone");
 
         RuleFor(x => Rg.Normalizar(x.Rg))
             .Must(rg => rg!.Length <= Rg.Maximo).WithMessage($"rg deve ter no máximo {Rg.Maximo} caracteres.")
             .Must(Rg.EhValido)
             .WithMessage("rg inválido: use letras sem acento, dígitos, ponto, hífen, barra ou espaço, com pelo menos um dígito.")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.Rg))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.Rg))
             .When(x => Rg.Normalizar(x.Rg) is not null);
 
         RuleFor(x => TipoSanguineo.Normalizar(x.TipoSanguineo))
             .Must(TipoSanguineo.EhValido)
             .WithMessage($"tipoSanguineo inválido: informe um de {string.Join(", ", TipoSanguineo.Valores)} ou deixe em branco.")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.TipoSanguineo))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.TipoSanguineo))
             .When(x => TipoSanguineo.Normalizar(x.TipoSanguineo) is not null);
 
         RuleFor(x => UsuariosService.NormalizarTexto(x.DoencasAlergias))
@@ -73,7 +59,7 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .WithMessage($"doencasAlergias deve ter no máximo {UsuariosService.DoencasAlergiasMaximo} caracteres.")
             .Must(texto => TextoVarchar.CabeNaPagina1252(texto!, permitirQuebraDeLinha: true))
             .WithMessage("doencasAlergias contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.DoencasAlergias))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.DoencasAlergias))
             .When(x => UsuariosService.NormalizarTexto(x.DoencasAlergias) is not null);
 
         RuleFor(x => x.EhCin)
@@ -94,7 +80,7 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .Must(texto => texto!.Length <= maximo).WithMessage($"{nomeJson} deve ter no máximo {maximo} caracteres.")
             .Must(texto => TextoVarchar.CabeNaPagina1252(texto!))
             .WithMessage($"{nomeJson} contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
-            .OverridePropertyName($"{nameof(UsuarioConteudoRequest.Endereco)}.{propriedade}")
+            .OverridePropertyName($"{nameof(DadosPessoaisRequest.Endereco)}.{propriedade}")
             .When(x => x.Endereco is not null && UsuariosService.NormalizarTexto(campo(x)) is not null);
 
     private void CpfOpcional(Func<T, string?> campo, string propriedade, string nomeJson) =>
@@ -112,17 +98,42 @@ public abstract class UsuarioConteudoValidator<T> : AbstractValidator<T> where T
             .When(x => UsuariosService.NormalizarTelefone(campo(x)) is not null);
 }
 
+public abstract class UsuarioConteudoValidator<T> : DadosPessoaisValidator<T> where T : UsuarioConteudoRequest
+{
+    protected UsuarioConteudoValidator(TimeProvider clock)
+    {
+        RuleFor(x => x.Nome)
+            .Must(nome => !string.IsNullOrWhiteSpace(nome)).WithMessage("nome é obrigatório.")
+            .Must(nome => nome!.Trim().Length <= UsuariosService.NomeMaximo)
+            .WithMessage($"nome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.")
+            .Must(nome => TextoVarchar.CabeNaPagina1252(nome!.Trim()))
+            .WithMessage("nome contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).");
+
+        RuleFor(x => x.Email)
+            .Must(email => !string.IsNullOrWhiteSpace(email)).WithMessage("email é obrigatório.")
+            .Must(email => email!.Trim().Length <= UsuariosService.EmailMaximo)
+            .WithMessage($"email deve ter no máximo {UsuariosService.EmailMaximo} caracteres.")
+            .Must(email => UsuariosService.SomenteAsciiImprimivel(email!.Trim()))
+            .WithMessage("email deve conter apenas caracteres ASCII (sem acentos).")
+            .Must(UsuariosService.EmailValido).WithMessage("email em formato inválido.");
+
+        RuleFor(x => x.CargoId).Must(cargoId => cargoId is { } id && id != Guid.Empty).WithMessage("cargoId é obrigatório.");
+
+        RegrasDosDadosPessoais(clock);
+    }
+}
+
 public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<RegistrarUsuarioRequest>
 {
     public RegistrarUsuarioRequestValidator(TimeProvider clock, DataCivil dataCivil) : base(clock)
     {
         RuleFor(x => UsuariosService.NormalizarCpf(x.Cpf))
             .NotNull().WithMessage("cpf é obrigatório.")
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.Cpf));
+            .OverridePropertyName(nameof(DadosPessoaisRequest.Cpf));
 
         RuleFor(x => Rg.Normalizar(x.Rg))
             .NotNull().WithMessage(Rg.ObrigatorioSemCin)
-            .OverridePropertyName(nameof(UsuarioConteudoRequest.Rg))
+            .OverridePropertyName(nameof(DadosPessoaisRequest.Rg))
             .When(x => x.EhCin != true);
 
         RuleFor(x => Cep.Normalizar(x.Endereco!.Cep))
@@ -155,3 +166,9 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
 }
 
 public sealed class UpdateUsuarioRequestValidator(TimeProvider clock) : UsuarioConteudoValidator<UpdateUsuarioRequest>(clock);
+
+/// <summary>PUT /api/Me: só dados pessoais; nome, e-mail, cargo e senha não existem no contrato.</summary>
+public sealed class AtualizarMeusDadosRequestValidator : DadosPessoaisValidator<AtualizarMeusDadosRequest>
+{
+    public AtualizarMeusDadosRequestValidator(TimeProvider clock) => RegrasDosDadosPessoais(clock);
+}

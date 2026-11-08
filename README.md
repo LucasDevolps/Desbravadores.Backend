@@ -4,7 +4,8 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 
 Backend (API HTTP) do projeto **Almirante**, que centraliza a gestão dos Desbravadores:
-autenticação e gestão de usuários, eventos com cobranças por membro e lançamentos financeiros.
+autenticação e gestão de usuários, senhas, eventos com cobranças por membro, lançamentos financeiros, dashboard,
+notificações em tempo real, formação (classes e especialidades), almoxarifado e auditoria HTTP.
 
 - **Stack:** .NET 10 / ASP.NET Core, SQL Server com Entity Framework Core, autenticação JWT Bearer.
 - **Estado:** MVP funcional, com CI no GitHub Actions — detalhes em [Estado atual](#estado-atual).
@@ -15,9 +16,14 @@ autenticação e gestão de usuários, eventos com cobranças por membro e lanç
 O backend está em fase de **MVP funcional** e possui:
 
 - login com e-mail e senha e emissão de token JWT;
-- consulta dos dados do usuário autenticado;
+- cadastro, edição, exclusão lógica e listagem de usuários (CPF, RG/CIN, endereço consultado no ViaCEP, responsável, saúde e foto),
+  com histórico por trigger;
+- troca de senha própria e de terceiros por matriz de cargos, e recuperação assistida sem e-mail ([`docs/senhas.md`](docs/senhas.md));
+- consulta dos dados do usuário autenticado e autoatendimento (dados pessoais, foto e eventos do próprio usuário);
+- permissões por perfil (cadastros, financeiro, eventos, painel e autoatendimento) com hierarquia de cargos;
+- acompanhamento de classes (regulares, avançadas e de liderança) e especialidades por membro, requisito por requisito,
+  com revisões de requisitos, conclusão, investidura/entrega, registros históricos e relatórios;
 - sessões persistidas, refresh rotativo e logout com revogação efetiva;
-- listagem de usuários;
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
 - registro e correção do pagamento efetivo (data e valor liquidados) de cada lançamento;
 - dashboard administrativo com saldo realizado, entradas, saídas, desbravadores ativos e próximos eventos;
@@ -28,12 +34,16 @@ O backend está em fase de **MVP funcional** e possui:
 - validação dos dados recebidos e respostas de erro no padrão Problem Details;
 - migrações do banco executadas na inicialização;
 - carga inicial idempotente de um administrador e de lançamentos demonstrativos;
-- Swagger/OpenAPI com suporte a Bearer Token, disponível em todos os ambientes;
+- Swagger/OpenAPI com suporte a Bearer Token, ligado por padrão só em Development (`Swagger:Enabled` / `SWAGGER_ENABLED`);
+- patrimônio e lista de desejos do almoxarifado ([`docs/almoxarifado.md`](docs/almoxarifado.md));
+- auditoria de toda chamada HTTP com sanitização e diário em disco ([`docs/auditoria-http.md`](docs/auditoria-http.md));
 - health checks de prontidão e atividade;
-- telemetria com OpenTelemetry por meio do Service Defaults do Aspire;
+- telemetria com OpenTelemetry por meio do Service Defaults do Aspire, exportada para o console do Aspire nos deploys;
 - Nginx como reverse proxy no Docker Compose, com rate limit no login e encaminhamento do IP real do cliente;
 - execução local com Docker Compose ou .NET Aspire;
-- testes de integração da autenticação, dos lançamentos e do encaminhamento de IP real;
+- testes unitários, de componente e de integração com SQL Server real, cobertura de 100% de linhas e branches na medição
+  combinada como gate do CI ([`docs/test-coverage.md`](docs/test-coverage.md)) e matriz de rastreabilidade
+  ([`docs/rastreabilidade.md`](docs/rastreabilidade.md));
 - integração contínua com GitHub Actions em runners hospedados e descartáveis.
 - releases SemVer a partir de tags, com a imagem da API publicada no GHCR e rollback por digest.
 
@@ -69,13 +79,22 @@ O backend está em fase de **MVP funcional** e possui:
 │       └── release.yml             # release: tag SemVer → imagem no GHCR + GitHub Release
 ├── src/
 │   ├── Almirante.Api/              # API, regras, persistência e migrações
-│   ├── Almirante.Api.Tests/        # testes de integração
+│   ├── Almirante.Api.Tests/        # testes unitários, de componente e de integração (SQL Server real)
 │   ├── Almirante.AppHost/          # orquestração local com Aspire
 │   ├── Almirante.ServiceDefaults/  # health checks, telemetria e service discovery
+│   ├── coverage.runsettings        # coleta de cobertura (Coverlet)
+│   ├── coverage-baseline*.json     # gates de cobertura combinada (100%) e unitária
 │   └── Almirante.slnx
+├── docs/                           # guias por módulo, segurança, cobertura, rastreabilidade, arquitetura (C4 e ADRs), SQL
 ├── nginx/
-│   └── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
+│   ├── nginx.conf                  # reverse proxy e rate limit do login (Docker Compose)
+│   ├── https.conf                  # listener HTTPS local (compose.https.yaml)
+│   ├── nginx.tls.conf              # ambiente publicado com certificado real (compose.tls.yaml)
+│   └── nginx.windows.conf          # nginx nativo do deploy Windows/IIS
+├── scripts/                        # bootstrap SQL, preflight do deploy, cobertura e seus testes (scripts/tests)
 ├── compose.yaml
+├── compose.https.yaml              # overlay: HTTPS local com certificado autoassinado
+├── compose.tls.yaml                # overlay: TLS publicado com certificado real
 ├── compose.release.yaml            # overlay: API a partir da imagem de uma release (GHCR)
 ├── .env.example
 ├── CONTRIBUTING.md
@@ -121,7 +140,7 @@ Com os valores do `.env.example`, os serviços ficam disponíveis em:
 
 - API (HTTPS, obrigatório para autenticação): `https://localhost:8443`;
 - API (HTTP): `http://localhost:8090`;
-- Swagger: `http://localhost:8090/swagger`;
+- Swagger: `http://localhost:8090/swagger` (só em Development ou com `SWAGGER_ENABLED=true`);
 - readiness: `http://localhost:8090/health`;
 - liveness: `http://localhost:8090/alive`;
 - SQL Server: `localhost,14330`.
@@ -335,13 +354,21 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `API_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.https.yaml` (desenvolvimento local, certificado autoassinado) | `8443` |
 | `NGINX_CONF_FILE` | arquivo em `nginx/` montado como config do nginx; `nginx.tls.conf` ativa TLS publicado (redirect 80→443) com `compose.tls.yaml` | `nginx.conf` |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | caminhos, fora do Git, do certificado/chave privada reais montados por `compose.tls.yaml` | obrigatórias só com `compose.tls.yaml` |
-| `TLS_HTTPS_HOST_PORT` | porta HTTPS publicada no host pelo nginx com `compose.tls.yaml` (ambiente publicado, certificado real) | `443` |
+| `DEPLOY_MODE` | modo do deploy Linux: `http`, `https` (HTTPS local em `API_HTTPS_HOST_PORT`) ou `tls` (`compose.tls.yaml`) | `http` |
+| `TLS_PUBLIC_HOST` | nome DNS do certificado real; o nginx só aceita esse host no modo `tls` (a porta HTTPS é sempre 443) | obrigatória só com `compose.tls.yaml` |
+| `API_ALLOWED_HOSTS` | `AllowedHosts` da API; defina num ambiente publicado em modo `http` | `*` |
+| `SQL_BIND_ADDRESS` | interface onde a porta do SQL Server é publicada | `127.0.0.1` |
+| `SQL_REQUIRE_TRUSTED_CERTIFICATE` | com `compose.tls.yaml`, exige certificado confiável do SQL Server (`TrustServerCertificate=False`) | `true` no overlay TLS |
+| `SWAGGER_ENABLED` | liga/desliga o Swagger; vazio segue o padrão (ligado só em Development) | vazio (`false` no overlay TLS) |
+| `FOTOS_HOST_PATH` | pasta do host para as fotos de usuários; sem ela, o volume nomeado `almirante-fotos` | `almirante-fotos` |
+| `ASPIRE_DASHBOARD_HOST_PORT` | porta do console do Aspire, só em `127.0.0.1` | `18888` |
 | `API_TRUSTED_PROXY_CIDR` | rede (CIDR) confiável para os headers X-Forwarded-For/X-Forwarded-Proto enviados pelo nginx; deve corresponder à subnet de `almirante-net` no `compose.yaml` | `172.30.0.0/24` |
 | `ASPNETCORE_ENVIRONMENT` | ambiente da aplicação | `Production` |
 | `JWT_ISSUER` | emissor do token JWT | `Almirante.Api` |
 | `JWT_AUDIENCE` | audiência do token JWT | `Almirante.Frontend` |
 | `JWT_ACTIVE_KEY_ID` | `kid` usado para novas assinaturas | `v1` |
 | `JWT_KEY_V1` | chave HS256 Base64 associada a `v1` | obrigatória |
+| `JWT_KEY_V2` | segunda chave, só durante/depois de uma rotação ([`docs/authentication-security.md`](docs/authentication-security.md#rotação-de-valores-expostos-pendência-operacional)) | vazia |
 | `JWT_ACCESS_TOKEN_MINUTES` | duração máxima do access token | `10` |
 | `AUTH_SESSION_DAYS` | limite absoluto da sessão | `7` |
 | `AUTH_REFRESH_INACTIVITY_HOURS` | inatividade máxima entre login/refresh | `24` |
@@ -352,7 +379,7 @@ O arquivo `.env.example` é consumido pelo Docker Compose e documenta as configu
 | `SEED_ADMIN_SENHA` | senha do administrador inicial | obrigatória |
 | `CORS_ORIGIN_1` | primeira origem permitida pelo CORS | `http://localhost:4200` |
 | `CORS_ORIGIN_2` | segunda origem permitida pelo CORS | `http://localhost:4201` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint opcional para exportação OTLP | não definido |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | endpoint OTLP; o Compose aponta para o console do Aspire (`http://aspire-dashboard:18889`) | definido pelo `compose.yaml` |
 
 A chave decodificada deve possuir pelo menos 32 bytes aleatórios e ser diferente em cada ambiente.
 
@@ -377,20 +404,44 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `POST` | `/api/Auth/refresh` | rotaciona o refresh cookie e retorna novo access token |
 | `POST` | `/api/Auth/logout` | revoga persistentemente a sessão apresentada e remove o cookie |
 | `GET` | `/api/Auth/Me` | retorna o perfil do usuário autenticado (qualquer cargo) |
-| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC, TES) |
-| `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`) |
-| `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API) |
-| `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto |
-| `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (ADM, DIR, DIRA, SEC, TES; nada é gravado) |
-| `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC, TES) |
+| `POST` | `/api/Auth/alterar-senha` | troca a própria senha com a senha atual; revoga todas as sessões (novo login obrigatório) |
+| `POST` | `/api/Auth/recuperacao-senha/solicitar` | pedido de ajuda sem login; sempre `202` genérico, sem e-mail nem token |
+| `POST` | `/api/Auth/recuperacao-senha/confirmar` | conclui a recuperação com a autorização entregue pessoalmente pelo responsável |
+
+Troca de senha de outro usuário e recuperação assistida (`/api/Usuarios/{id}/alterar-senha`, `/api/Usuarios/recuperacao-senha/pendentes`,
+`/api/Usuarios/{id}/recuperacao-senha/autorizacao`) seguem uma matriz explícita (ADM e DIR → SEC, TES e DS; SEC → DS), confirmada com a
+senha do responsável. Política de senha (15 a 128 caracteres), auditoria, concorrência, notificação e limites em
+[`docs/senhas.md`](docs/senhas.md). Nenhum e-mail é enviado: não há provedor configurado.
+
+Cadastros, autoatendimento e rotas de apoio (a lista completa de rotas, com código e testes, está em
+[`docs/rastreabilidade.md`](docs/rastreabilidade.md)):
+
+| Método | Rota | Comportamento |
+| --- | --- | --- |
+| `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC) |
+| `POST` | `/api/Usuarios` | cadastra um usuário (`201`; CPF obrigatório e único, RG conforme `ehCin`, endereço pelo ViaCEP) |
+| `PUT` | `/api/Usuarios/{id}` | atualiza; campo omitido mantém o valor, `null` remove (regras abaixo) |
+| `DELETE` | `/api/Usuarios/{id}` | exclusão lógica: inativa o usuário e revoga as sessões dele |
+| `POST` | `/api/Usuarios/{usuarioId}/alterar-senha` | troca a senha de outro usuário pela matriz de cargos ([`docs/senhas.md`](docs/senhas.md)) |
+| `GET` | `/api/Usuarios/recuperacao-senha/pendentes` | pedidos de recuperação que o responsável pode atender |
+| `POST` | `/api/Usuarios/{usuarioId}/recuperacao-senha/autorizacao` | emite a autorização de recuperação entregue pessoalmente |
+| `PUT` | `/api/Usuarios/{id}/foto` | envia ou substitui a foto de perfil (multipart, campo `arquivo`; ADM, DIR, DIRA, SEC) |
+| `GET` | `/api/Usuarios/{id}/foto` | baixa a foto (WebP gerado pela API; ADM, DIR, DIRA, SEC) |
+| `DELETE` | `/api/Usuarios/{id}/foto` | remove a foto (ADM, DIR, DIRA, SEC) |
+| `GET` | `/api/Membros` | id, nome e cargo dos membros ativos, para seletores (ADM, DIR, DIRA, SEC, TES) |
+| `GET` / `PUT` | `/api/Me` | dados do próprio usuário / atualização dos dados pessoais permitidos (qualquer cargo) |
+| `GET` / `PUT` / `DELETE` | `/api/Me/foto` | a própria foto (qualquer cargo) |
+| `GET` | `/api/Me/Eventos`, `/api/Me/Eventos/{id}` | eventos de que o usuário participa (qualquer cargo) |
+| `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (qualquer cargo; nada é gravado) |
+| `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
 
 **Dados pessoais de usuários.** `POST`, `PUT` e `GET /api/Usuarios` trafegam `cpf`, `dataNascimento`
 (`yyyy-MM-dd`, sem horário, não futura) e `telefone`, `null` em cadastros antigos. O **`cpf` é obrigatório no
-cadastro** (`POST` sem CPF retorna `400`); no `PUT` ele pode ser trocado, mas um CPF já gravado não pode ser removido
-(`400`), e cadastros antigos sem CPF continuam editáveis sem ele. Data de nascimento e telefone são opcionais. O
-`email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é aceito com ou sem máscara, precisa ter 11
+cadastro** (`POST` sem CPF retorna `400`); no `PUT` um CPF já gravado não pode ser removido (`400`), não pode ser trocado
+quando o documento está completo (abaixo), e cadastros antigos sem CPF continuam editáveis sem ele. Data de nascimento e
+telefone são opcionais. O `email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é aceito com ou sem máscara, precisa ter 11
 dígitos com dígitos verificadores válidos e é gravado só com os dígitos; é único entre todos os usuários, inclusive
 inativos (índice `UX_Usuarios_Cpf`; duplicidade gera `409`). O telefone é fixo (10 dígitos, começando de 2 a 5) ou
 celular (11 dígitos, começando com 9), com DDD válido, com ou sem a máscara `(11) 98765-4321`, e é gravado só com
@@ -420,6 +471,12 @@ opcional (pode ser informado e continua gravado); com `ehCin: false` (ou omitido
 `errors["Rg"]`). No `PUT` a regra usa os valores efetivos (corpo ou gravados) e segue o padrão do CPF: com `ehCin` false, um RG
 gravado não pode ser removido, sair da CIN exige RG e quem informa `rg` ou `ehCin` no corpo precisa ter RG; um cadastro antigo
 sem RG e sem CIN que não envia esses campos continua editável.
+
+**Documento completo não muda.** Com o documento completo gravado (CPF com RG, ou CPF com `ehCin: true`), `cpf`, `rg` e `ehCin`
+não podem mais ser alterados, por nenhum cargo, nem em `PUT /api/Usuarios/{id}` nem em `PUT /api/Me`: a tentativa retorna `400`
+com a mensagem em `errors["Cpf"]`, `errors["Rg"]` ou `errors["EhCin"]` e nada é gravado. Omitir esses campos ou reenviar o valor
+gravado (o CPF com ou sem máscara) é aceito. Um cadastro antigo com documento incompleto (sem CPF, ou com CPF sem RG e sem CIN)
+continua podendo ser completado; depois disso, também fica travado.
 
 **Endereço (issue #131).** O cliente envia `endereco: { cep, numero, complemento }` e a API consulta o
 [ViaCEP](https://viacep.com.br) e grava cada campo em sua coluna (`Usuarios.Endereco*`, `varchar`): `cep` (8 dígitos, sem
@@ -462,7 +519,8 @@ aplica a orientação do EXIF, remove todos os metadados (EXIF com GPS, XMP, IPT
 máximo 1024x1024; o original nunca é guardado. O banco grava só o caminho relativo (`Usuarios.FotoCaminho`) e o arquivo
 fica na pasta `Media:Storage:Path`, fora do site. A troca apaga a foto anterior só depois de gravar a nova, e a troca ou
 remoção vai para `_usuarios_hist`. A listagem traz `fotoUrl` (`null` sem foto). Mesma autorização do CRUD de usuários
-(só um Administrador gerencia a foto de um Administrador); o envio exige usuário ativo, a remoção vale também para
+(hierarquia de cargos: só um Administrador gerencia a foto de um Administrador, e só a diretoria a de cargos de gestão);
+o próprio usuário gerencia a sua em `/api/Me/foto`; o envio exige usuário ativo, a remoção vale também para
 inativo. Respostas: `400` multipart inválido, `404`, `409` usuário inativo, `413` acima do limite, `415` formato ou
 `Content-Encoding` não suportado, `422` imagem inválida ou fora dos limites, `429` excesso de envios (com
 `Retry-After`), `503` armazenamento indisponível. Decisão e alternativas: [ADR-0011](docs/architecture/adr/0011-armazenar-fotos-em-disco-fora-do-site-e-servir-pela-api.md).
@@ -494,8 +552,9 @@ Uma faxina diária remove gravações interrompidas e fotos sem referência no b
 
 ## Lançamentos
 
-O agregado financeiro possui um único fluxo de criação, protegido pelas roles `ADM`, `DIR`,
-`DIRA`, `SEC` e `TES`. Sem autenticação válida a resposta é `401`; autenticado com outro cargo, `403`.
+O agregado financeiro possui um único fluxo de criação, protegido pela policy `GestaoFinanceira`
+(`ADM`, `DIR`, `DIRA` e `TES`; o Secretário não opera lançamentos nem pagamentos). Sem autenticação
+válida a resposta é `401`; autenticado com outro cargo, `403`.
 
 | Método | Rota | Finalidade |
 |---|---|---|
@@ -551,10 +610,41 @@ Categoria, status e fluxo são enums com valores explícitos e `Description`:
 | `StatusLancamento` | `0 = Pendente`, `1 = Pago`, `2 = Atrasado` |
 | `TipoFluxoLancamento` | `0 = Entrada`, `1 = Saida` (descrição: “Saída”) |
 
+### Atualização automática para Atrasado (issue #184)
+
+A rotina `LancamentosAtrasadosService` (`BackgroundService`) marca como `Atrasado` todo lançamento
+**ativo** e `Pendente` cujo `Vencimento` é **anterior a hoje** na data civil do clube
+(`Clube:FusoHorario`, `DataCivil.Hoje()`, não a data UTC). Vale para `Entrada` e `Saida`.
+
+- Vencimento igual a hoje continua `Pendente`; só fica atrasado a partir do dia seguinte. `Pago`
+  nunca muda e lançamentos inativos não são tocados.
+- Roda na subida da API e depois a cada hora, ou logo após a meia-noite do clube se ela vier antes.
+- A atualização é em lote no banco, em blocos de 500, cada bloco numa transação: lê as linhas com
+  `UPDLOCK, READPAST`, aplica `ExecuteUpdateAsync` (`Status`, `DataAtualizacao`, e
+  `AtualizadoPorUsuarioId = NULL`, que indica alteração do sistema) e grava as notificações. Outra
+  instância pula as linhas travadas, e depois do commit elas já não são `Pendente`: duas instâncias
+  ou duas execuções seguidas não duplicam nada. Um `PUT` ou pagamento simultâneo espera o bloco
+  terminar (no máximo recebe o `409` de concorrência de sempre e pode reenviar).
+- Falha numa execução só gera log de erro; a API continua no ar e a próxima execução tenta de novo.
+- Cada débito (lançamento de `Entrada` com membro) que passa a `Atrasado` gera, na mesma transação, a
+  notificação `DebitoAtrasado` para o membro (ver [`docs/notificacoes.md`](docs/notificacoes.md)).
+- `PUT /api/Lancamentos/{id}` recusa com `400` a troca do status para `Pendente` quando o vencimento
+  (o enviado no mesmo pedido ou o atual) é anterior a hoje no fuso do clube: a rotina o marcaria de
+  novo. Reenviar o status atual e mudar só o vencimento continuam aceitos. O registro de pagamento
+  aceita lançamentos `Atrasado`, como antes.
+- Eventos: só lançamento `Pago` trava o cadastro (ver [Eventos](#eventos)).
+
 O JSON continua retornando nomes textuais; criação e atualização aceitam tanto nomes quanto
 os códigos numéricos correspondentes e rejeitam valores fora do enum. `status` na listagem
 aceita nome, código ou `Todos`. Clientes que enviavam `tipoFluxo: "Despesa"` devem passar a
 usar `"Saida"` ou `1`. A descrição com acento é metadado do enum; o nome no JSON é `Saida`.
+
+**Ordem da listagem (issue #99).** Sem filtros ativos em `GET /api/Lancamentos` (`search`,
+`status`, `finalidade` e `vencimento` ausentes; `status`/`finalidade` = `Todos` contam como
+ausentes), os itens saem por prioridade de status: `Atrasado`, depois `Pendente`, depois `Pago`.
+Dentro do mesmo status vale o critério anterior (vencimento mais recente primeiro, `Id` como
+desempate), o que mantém a ordem estável entre as páginas. Com qualquer filtro ativo, a ordem
+continua sendo só vencimento mais recente primeiro e `Id`.
 
 `LancamentosService` coordena consultas e alterações individuais. `LancamentoGeralService`
 cuida da criação atômica em lote/idempotência; `LancamentoExclusaoService`, da transação e
@@ -614,9 +704,11 @@ informando a data e o valor reais. `DataAtualizacao` nunca é usada como data de
 
 `/api/Eventos` cadastra **grupos de cobrança** de passeios/eventos. Cada `POST` cria um cadastro
 (uma composição de custos + uma lista de membros) e gera **um lançamento pendente por membro**,
-reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Mesma
-política dos lançamentos (`Policies.GestaoFinanceira`: `ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401`
-sem autenticação, `403` sem permissão). Contrato completo, exemplos e códigos no Swagger.
+reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Policy
+`GestaoEventos` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401` sem autenticação, `403` sem permissão):
+o Secretário gerencia eventos e o Tesoureiro executa as mesmas operações, mas registrar pagamentos
+continua só em `/api/Lancamentos` (`GestaoFinanceira`). O participante consulta os próprios eventos
+em `/api/Me/Eventos`. Contrato completo, exemplos e códigos no Swagger.
 
 | Método | Rota | Resultado |
 |---|---|---|
@@ -689,18 +781,20 @@ pagamento recarrega o estado sob o lock e, se o commit falhar de forma ambígua,
 foi efetivado antes de responder sucesso.
 
 **PUT.** Campos editáveis = os do POST + `versao` (+ `motivo`); não altera `id`, `eventoGrupoId`,
-`eventoReferenciaId`, total, valor por membro nem status. Com tudo pendente: mantidos são atualizados,
+`eventoReferenciaId`, total, valor por membro nem status. Sem lançamento `Pago`: mantidos são atualizados,
 novos ganham lançamento pendente e removidos são desativados (participação + lançamento, com auditoria
-do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. Com algum lançamento
-`Pago`/`Atrasado`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
+do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. `Atrasado` é só um
+`Pendente` vencido (issue #184): acompanha o novo valor e a nova data e volta a `Pendente` se a nova data
+ainda não passou (com data passada, o `Pendente` fica para a rotina de vencimento). Com algum lançamento
+`Pago`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
 `individual`, seguro — não só o total), participantes ou data (pagamentos nunca voltam a pendente nem
 geram estorno); só o **local** pode ser corrigido (a descrição de todos os lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo
 local; valor, vencimento e status do pagamento não mudam). Data/local não mudam por PUT isolado quando o passeio
 tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.
 
 **DELETE** `{ "motivo": "...", "versao": "..." }`: exclusão lógica (`Ativo = false`) do cadastro, das
-participações e dos lançamentos pendentes, na mesma transação; outros grupos do passeio permanecem.
-`Pago`/`Atrasado` → `409` sem alterar nada; inexistente/já excluído → `404`.
+participações e dos lançamentos (`Pendente` ou `Atrasado`), na mesma transação; outros grupos do passeio
+permanecem. `Pago` → `409` sem alterar nada; inexistente/já excluído → `404`.
 
 **Auditoria (`historico_eventos`).** Trigger `TR_eventos_AuditoriaExclusaoLogica` (`AFTER UPDATE`, só na
 transição `Ativo 1 → 0`, várias linhas) grava snapshot completo (IDs, grupo/referência, data, local,
@@ -727,15 +821,17 @@ composta `evento_membros(EventoId, EventoGrupoId)`), recria `TR_Lancamentos_Audi
 (lançamentos de evento voltam com `Finalidade = ''`). Aplicação pelo startup como as demais; nenhuma
 variável de ambiente, porta ou credencial nova.
 
-**Frontend (issue #57).** Use `GET /api/Usuarios` para os IDs; envie `membros` como GUID ou array;
+**Frontend (issue #57).** Use `GET /api/Membros` (id, nome e cargo, disponível também ao Tesoureiro) para os IDs; envie `membros` como GUID ou array;
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
 retentativas da mesma tentativa; aplique `dataMinimaCadastro` no seletor de data do cadastro.
 
 ## Dashboard
 
 `GET /api/Dashboard[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` devolve, numa resposta só, os
-indicadores do clube. Mesma autorização dos lançamentos (policy `GestaoFinanceira`: `ADM`, `DIR`,
-`DIRA`, `SEC`, `TES`): sem token `401`, outro cargo `403`, filtros inválidos `400`.
+indicadores do clube. Policy `Painel` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`): sem token `401`, outro
+cargo `403`, filtros inválidos `400`. O bloco `financeiro` só é calculado e enviado para quem também
+tem `GestaoFinanceira` (`ADM`, `DIR`, `DIRA`, `TES`); para o Secretário vem `"financeiro": null`, com
+os demais indicadores iguais.
 
 ```json
 {
@@ -767,7 +863,7 @@ pagamento, lançamentos excluídos logicamente nem pagamentos fora do período. 
 `IX_Lancamentos_DataPagamento` atende a consulta.
 
 **Desbravadores.** Total atual de usuários **ativos** com o cargo Desbravador (`Cargos.Role = 'DS'`).
-Diretoria (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`), demais cargos (conselheiros, instrutores, cargos de
+Gestão (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`), demais cargos (conselheiros, instrutores, cargos de
 unidade etc.) e usuários inativos não contam. Não depende do período.
 
 **Próximos eventos.** Até 5 passeios com data igual ou posterior a hoje (fuso do clube), em ordem de
@@ -775,6 +871,103 @@ data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoRefe
 uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
 participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
 Não depende do período.
+
+## Perfis e autoatendimento (issue #127)
+
+Cada cargo acessa só o que corresponde à sua responsabilidade; a matriz completa por endpoint, a hierarquia de cargos
+e as pendências estão em [`docs/authentication-security.md`](docs/authentication-security.md#perfis-e-matriz-de-acesso-31-127).
+Resumo: ADM, DIR e DIRA acessam todos os módulos de negócio (exceção: só ADM gerencia usuários ADM); SEC cuida de
+cadastros e eventos, sem financeiro; TES cuida do financeiro e das operações de evento, sem cadastros nem cargos;
+qualquer cargo ativo (inclusive DS) usa o próprio autoatendimento e as próprias notificações.
+
+| Método | Rota | Resultado |
+|---|---|---|
+| `GET` | `/api/Me` | `200` dados do próprio usuário (`fotoUrl` em `/api/Me/foto`) |
+| `PUT` | `/api/Me` | `200` com os dados atualizados; `400` campo inválido ou não aceito; `409` CPF de outro usuário; `503` ViaCEP |
+| `GET` / `PUT` / `DELETE` | `/api/Me/foto` | mesma regra e respostas de `/api/Usuarios/{id}/foto` |
+| `GET` | `/api/Me/Eventos` | `200` `{ items }`: eventos de que participa, passados e futuros |
+| `GET` | `/api/Me/Eventos/{id}` | `200` / `404` (inexistente, excluído, alheio ou removido: mesma resposta) |
+| `GET` | `/api/Membros` | `200` `[{ id, nome, cargo, role }]` dos ativos (ADM, DIR, DIRA, SEC, TES) |
+
+```http
+PUT /api/Me
+Authorization: Bearer SEU_TOKEN
+Content-Type: application/json
+
+{ "telefone": "(11) 98765-4321", "endereco": { "cep": "04382-160", "numero": "12" }, "doencasAlergias": "Asma leve" }
+```
+
+Campos aceitos: `cpf`, `dataNascimento`, `telefone`, `rg`, `ehCin`, `dataExpiracao`, `tipoSanguineo`,
+`doencasAlergias`, `endereco` e os quatro campos do responsável, com as regras e a semântica de omissão do
+`PUT /api/Usuarios/{id}` (omitido mantém; `null` remove). Nome, e-mail de login, cargo, senha e situação não
+mudam por aqui: um corpo com `cargoId`, `nome`, `email`, `senha`, `ativo` ou qualquer outra propriedade recebe
+
+```json
+{ "status": 400, "errors": { "$.cargoId": ["Campo não aceito nesta operação."] } }
+```
+
+e nada é gravado. A alteração é auditada em `_usuarios_hist` com o próprio usuário como responsável.
+
+```http
+GET /api/Me/Eventos/6f0c…            (eventoId recebido na notificação EventoCadastrado)
+
+200 { "id": "6f0c…", "dataEvento": "2026-11-10", "local": "Acampamento",
+      "transporte": { "valor": 10.00, "ehGratis": false }, "alimentacao": { "individual": false, "valor": 8.00 },
+      "seguroObrigatorio": 2.00, "valorPorMembro": 20.00,
+      "minhaCobranca": { "valor": 20.00, "vencimento": "2026-11-10", "status": "Pendente" } }
+```
+
+**Impacto para os consumidores.** SEC deixa de acessar `/api/Lancamentos` (inclusive pagamentos) e recebe
+`"financeiro": null` no dashboard; TES deixa de acessar `/api/Usuarios` (inclusive fotos de terceiros) e
+`/api/Cargos` e passa a usar `GET /api/Membros` nos seletores de membros; SEC só atribui ou gerencia cargos sem
+acesso de gestão (`403` para DIR, DIRA, SEC e TES); `GET /api/Cep/{cep}` passa a valer para qualquer cargo ativo; o
+`DashboardResponse.financeiro` passa a ser anulável. Os demais contratos (payloads, idempotência, versões e códigos)
+não mudaram.
+
+## Classes, liderança e especialidades (issue #125)
+
+Acompanhamento individual da formação de cada membro (inclusive diretoria e adultos): catálogo fixo das 15 classes
+(enum `ClasseDesbravador`, sem CRUD), catálogo administrável de especialidades, revisões imutáveis dos requisitos
+(grupos "todos", "escolher uma" e "N entre as opções", e exigência de especialidades como evidência), progresso por
+requisito, conclusão separada da investidura/entrega, regras e validações externas da liderança, registros históricos,
+cancelamento, retomada e reabertura auditados. O contrato completo, com regras de cálculo, filtros e limitações, está em
+[`docs/formacao.md`](docs/formacao.md); a decisão, no [ADR-0014](docs/architecture/adr/0014-acompanhar-formacao-com-catalogo-fixo-e-revisoes-imutaveis.md).
+
+| Rotas | Quem |
+|---|---|
+| `GET /api/Classes…`, `GET /api/Especialidades…`, `GET /api/RevisoesRequisitos/{id}` | qualquer cargo ativo (rascunhos só para quem gerencia) |
+| `GET /api/Me/Formacao`, `/api/Me/Formacao/Classes/{id}`, `/api/Me/Formacao/Especialidades/{id}` | qualquer cargo ativo, só a própria formação |
+| escrita de especialidades e revisões; `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios/Participantes` | `GestaoFormacao`: ADM, DIR, DIRA, SEC |
+
+Tesoureiro, instrutor e demais cargos só consultam os catálogos e a própria formação. A migration
+`AddFormacaoClassesEspecialidades` cria as tabelas e os triggers de histórico (`formacao_historico`, tabela de auditoria
+só com `SELECT` para o runtime) sem alterar dados existentes. Não há carga inicial de especialidades nem de cartões de
+requisitos: o clube os cadastra a partir da fonte oficial, como explicado nas limitações do documento.
+
+## Patrimônio e lista de desejos do almoxarifado (issue #126)
+
+Gestão patrimonial do clube e lista de desejos do almoxarifado:
+- cadastro de bens físicos com tombo gerado pelo sistema, incluindo bens sem valor comercial e acervo antigo com
+  data de aquisição desconhecida;
+- empréstimos com atraso calculado, devoluções, perda ou furto, manutenção, baixa justificada e exclusão lógica;
+- histórico por trigger, relatórios em JSON e CSV, e inventário imutável com registro posterior da votação da Comissão;
+- necessidades de aquisição com três níveis de urgência e atendimentos parciais idempotentes, que criam ou vinculam
+  os bens recebidos.
+
+Nada disso gera lançamento financeiro nem altera o dashboard. O contrato completo está em
+[`docs/almoxarifado.md`](docs/almoxarifado.md) e a decisão, no
+[ADR-0015](docs/architecture/adr/0015-gerir-patrimonio-e-lista-de-desejos-com-auditoria-por-trigger.md).
+
+| Rotas | Quem |
+|---|---|
+| `GET /api/Almoxarifado/…` (bens, empréstimos, inventários, desejos, históricos, relatórios, CSV, enums, responsáveis) | `ConsultaAlmoxarifado`: qualquer cargo ativo exceto DS, e o responsável designado |
+| escrita em `/api/Almoxarifado/Bens…`, `Emprestimos…`, `Manutencoes…`, `Inventarios…`, `Desejos…` | `GestaoAlmoxarifado`: ADM, DIR, DIRA, SEC, ALM e o responsável designado |
+| `POST /api/Almoxarifado/Responsaveis…` (designar/revogar) | `DesignacaoAlmoxarifado`: ADM, DIR, DIRA, SEC |
+
+A migration `AddAlmoxarifadoPatrimonio` cria dez tabelas, os triggers de histórico (`almoxarifado_historico`, tabela de
+auditoria só com `SELECT` para o runtime) e os triggers de imutabilidade do inventário. Ela só altera dados numa
+instalação já semeada sem o cargo `ALM`: nesse caso, cria o cargo `Almoxarife` (`ALM`). Nenhuma variável de ambiente
+nova.
 
 ## Notificações (issue #130)
 
@@ -803,6 +996,27 @@ com nova tentativa e retomada após reinício. A API REST é a fonte da verdade.
 IIS) e o runtime mínimo (ASP.NET Core 10.0.13, garantido pelo `Dockerfile` e pelo deploy Windows) estão
 no documento.
 
+## Auditoria HTTP (issue #158)
+
+A API grava na tabela `auditoria_http` uma linha por chamada HTTP que chega ao pipeline: sucesso,
+redirecionamento, validação, 401, 403, 404, 429, exceções, health checks, Swagger e o HTTP do hub
+SignalR. Não há amostragem. O login (`/api/Auth/login`) fica totalmente fora. Cada linha traz a URL, o
+método, o status, a duração, o IP observado depois do proxy confiável, o id do usuário autenticado (ou
+`ANONIMO`), o trace, os cabeçalhos permitidos, os corpos e a exceção.
+
+Tudo é sanitizado antes de sair da memória da requisição, por uma lista explícita de campos revisados.
+CPF, e-mail, telefone, dados de responsáveis, RG, saúde, endereço, fotos, arquivos, senhas, tokens e
+cookies nunca são gravados, nem em caminho, query, cabeçalho, corpo ou exceção. As rotas de credenciais
+gravam só metadados.
+
+Os registros passam por um diário em disco antes do banco. Por isso sobrevivem a banco fora do ar, a
+reinício e ao rollback do negócio, sem duplicar. A tabela só aceita inserção.
+
+O guia completo está em [`docs/auditoria-http.md`](docs/auditoria-http.md): política de sanitização,
+estados de captura, limites de cobertura, garantia de entrega, configuração (`AuditoriaHttp:*`, todas
+opcionais), custos e consultas. A decisão está no
+[ADR-0016](docs/architecture/adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md).
+
 ## Banco de dados e migrations
 
 Migrations são aplicadas incrementalmente no startup.
@@ -829,47 +1043,45 @@ antiga e nova da API simultaneamente contra o schema convertido.
 ## Testes
 
 ```bash
-dotnet test src/Almirante.slnx
+dotnet test src/Almirante.slnx --filter "Category!=RequiresDocker&Category!=RequiresSqlServer"   # sem dependências externas
+ALMIRANTE_TEST_SQLSERVER="..." dotnet test src/Almirante.slnx --filter "Category=RequiresSqlServer" # SQL Server real
 ```
 
-A suíte cobre contrato e validação, membro inexistente, criação individual e geral, idempotência,
-conflito de chave, soft delete, contrato de login/`/Me`, validação do JWT (assinatura, emissor,
-audiência, algoritmo, expiração, tamanho), matriz RBAC (401/403/sucesso por cargo), rate limiting e
-lockout, forwarded headers, segredos/política de senha, cabeçalhos de segurança e descoberta das
-migrations.
+O projeto `src/Almirante.Api.Tests` tem duas suítes:
 
-Os testes de eventos (`EventosRegrasTests`, `EventosApiTests`) e `ModelBindingErrorsTests` (sanitização dos erros `400` de
-model binding, sem nomes de tipos CLR) rodam sem banco; `EventosSqlServerTests`,
-`EventosMigrationTests` e `ApiProcessEventosTests` (`Category=RequiresSqlServer`) exigem `ALMIRANTE_TEST_SQLSERVER`
-e provam transação/rollback, `rowversion`, índice único filtrado, triggers, `SESSION_CONTEXT`, concorrência,
-Up/Down da migration e o fluxo no processo real da API com a identidade de runtime de menor privilégio.
-A corrida entre mudança de status de um lançamento e o PUT que remove o participante também é coberta: o status nunca
-é gravado em lançamento já desativado (o `Ativo` é relido do banco depois do lock do evento).
+- **Sem dependências externas** (~1.380 casos, job `build-and-test`): regras e validadores puros, e a API em processo
+  (`WebApplicationFactory`) com EF InMemory e ViaCEP simulado: contratos HTTP, matriz de autorização por cargo (`AuthorizationTests`),
+  JWT, CSRF, rate limit e lockout, cabeçalhos de segurança, forwarded headers, auditoria HTTP (sanitização, diário em disco,
+  resiliência), fotos, notificações, CLI de reset de senha, startup e serviços em segundo plano com relógio manual.
+- **`Category=RequiresSqlServer`** (~450 casos, job `sqlserver-integration`): SQL Server 2022 real, com migrations completas (inclusive
+  o `Down` de todas até o banco vazio), triggers de auditoria e `SESSION_CONTEXT`, transações e rollback, `rowversion`,
+  `sp_getapplock`, índices únicos filtrados, concorrência e corridas injetadas, identidades SQL de menor privilégio e a API no
+  processo real (`ApiProcess*`).
 
-Sem `ALMIRANTE_TEST_SQLSERVER`, todos os testes `RequiresSqlServer` falham de propósito com `Defina ALMIRANTE_TEST_SQLSERVER`
-(no `dotnet test` puro isso aparece como ~145 falhas). Para rodar localmente sem tocar na instância do Windows, use um SQL Server
-descartável em contêiner e a conexão `sa` no formato do CI:
+A medição de cobertura (unitária separada da combinada, gate de 100% na combinada) está em
+[`docs/test-coverage.md`](docs/test-coverage.md), e a matriz que liga cada endpoint e regra aos testes em
+[`docs/rastreabilidade.md`](docs/rastreabilidade.md) (verificada por `RastreabilidadeTests`).
+
+Sem `ALMIRANTE_TEST_SQLSERVER`, os testes `RequiresSqlServer` falham de propósito com `Defina ALMIRANTE_TEST_SQLSERVER`. Para rodá-los
+localmente sem tocar na instância do Windows, use um SQL Server descartável em contêiner e a conexão `sa` no formato do CI:
 
 ```bash
-ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx
+ALMIRANTE_TEST_SQLSERVER="Server=127.0.0.1,<porta>;User ID=sa;Password=<senha>;Encrypt=True;TrustServerCertificate=True"   dotnet test src/Almirante.slnx --filter Category=RequiresSqlServer -- xUnit.MaxParallelThreads=2
 ```
 
-Testes marcados `Category=RequiresSqlServer` rodam contra um SQL Server real (migrations completas,
-lockout concorrente, corrida login/reset, modelo de identidades SQL sem `sa`, rotação de senha com pools,
-privilégios e auditoria por trigger, startup real da API). Cada teste cria e remove bancos exclusivos e os
-usuários/logins de teste. A conexão de `ALMIRANTE_TEST_SQLSERVER` é do *harness* (cria e remove o ambiente, como o
-bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o CI usa um contêiner com `sa` descartável).
-A API sob teste nunca usa essa conexão. Exemplo com Windows Auth:
+Cada teste cria e remove bancos exclusivos e os usuários/logins de teste. A conexão de `ALMIRANTE_TEST_SQLSERVER` é do *harness* (cria e
+remove o ambiente, como o bootstrap): use uma instância descartável dedicada a testes, com sysadmin (o CI usa um contêiner com `sa`
+descartável). A API sob teste nunca usa essa conexão. Com pouca memória (SQL Server no WSL com ~4 GB), rode essa suíte sozinha e com
+`MaxParallelThreads=2`.
 
-```bash
-ALMIRANTE_TEST_SQLSERVER="Server=localhost;Trusted_Connection=True;TrustServerCertificate=True" dotnet test src/Almirante.slnx --filter Category=RequiresSqlServer
-```
+Os scripts de infraestrutura têm testes próprios (`scripts/tests/*.test.sh`, job `deploy-scripts`), inclusive o nginx real com HTTP,
+HTTPS, TLS e o `429` do login (`nginx.test.sh`).
 
 ### Cenários manuais do rate limit do Nginx
 
-O rate limit em si (`limit_req` do Nginx) não é coberto pela suíte automatizada acima — ela roda
-sobre `WebApplicationFactory`, sem o Nginx. Depois de `docker compose up --build`, valide
-manualmente contra `http://localhost:8090` (ajuste para o valor de `API_HOST_PORT` se alterado):
+O rate limit em si (`limit_req` do Nginx) não é coberto pela suíte .NET, que roda sem o Nginx; `scripts/tests/nginx.test.sh`
+o verifica em contêineres descartáveis (HTTP, HTTPS e `429`). Para conferir um ambiente já publicado, depois de
+`docker compose up --build`, valide manualmente contra `http://localhost:8090` (ajuste para o valor de `API_HOST_PORT` se alterado):
 
 1. **Login válido** — 1ª tentativa com credenciais corretas → `200 OK` e token JWT.
 2. **Credenciais inválidas** — 1ª tentativa incorreta → `401 Unauthorized` (nunca `429`).
@@ -908,15 +1120,15 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
   com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
 - `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
   com certificados de teste e containers descartáveis.
-- `coverage`: consolida a cobertura (Coverlet) das duas suítes de teste com o ReportGenerator, mostra
-  linhas e branches no Job Summary, publica o relatório HTML/Cobertura (`coverage-<sha>`) e aplica um
-  quality gate contra regressão em relação ao baseline medido. Detalhes, baseline e política em
+- `coverage`: publica a cobertura unitária (só a suíte sem dependências) separada da combinada (as duas suítes,
+  unidas pelo OpenCover), com as lacunas por arquivo no Job Summary e os relatórios no artifact `coverage-<sha>`. A
+  combinada exige **100% de linhas e branches**; a unitária não pode regredir. Detalhes em
   [docs/test-coverage.md](docs/test-coverage.md).
 
 Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
 Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
 
-O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`), e o workflow só reporta sucesso quando o endpoint `/health` responde.
+O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`). O job Linux só reporta sucesso quando o endpoint `/health` responde; o job Windows termina depois de publicar e deixa um aviso para conferir o `/health` manualmente (as migrations podem demorar mais que qualquer espera razoável do job).
 
 O deploy de `develop` continua construindo a imagem na própria máquina e não gera versão. Versões
 numeradas são publicadas pelo `.github/workflows/release.yml`, a partir de tags SemVer em `main`, em
@@ -934,7 +1146,8 @@ branch, `enforcement: active`). As demais branches (`feature/*`, `fix/*`, `chore
 - Não há aprovação humana obrigatória (0 aprovações) enquanto o projeto é mantido
   individualmente; o quality gate é o CI.
 - Checks obrigatórios, todos verdes, publicados pelo GitHub Actions: `build-and-test`,
-  `sqlserver-integration` e `deploy-scripts`. Os jobs de `backend-deploy.yml` não são checks de PR.
+  `sqlserver-integration` e `deploy-scripts`. O `coverage` (gates de cobertura) só bloqueia o merge se for
+  incluído nos rulesets, o que é configuração do repositório. Os jobs de `backend-deploy.yml` não são checks de PR.
 - A branch do PR precisa estar atualizada com a branch de destino (`strict`).
 - Sem bypass: nenhum usuário, admin, app ou deploy key ignora as regras. Mudanças de política
   são feitas conscientemente nas configurações do ruleset.
@@ -982,15 +1195,41 @@ O projeto `Almirante.ServiceDefaults` configura:
 - `/health` para readiness;
 - `/alive` para liveness.
 
-As requisições aos health checks são excluídas dos traces.
+As requisições aos health checks são excluídas dos traces. O `/health` inclui a verificação
+`auditoria-http`, que fica `Degraded` (ainda 200) quando a auditoria HTTP perde garantias: diário em
+disco indisponível, banco recusando a gravação ou registros descartados ([`docs/auditoria-http.md`](docs/auditoria-http.md)).
+
+### Console do Aspire nos deploys
+
+Os dois deploys publicam o **console do Aspire** (dashboard standalone, versão 13.5.2, a mesma do AppHost) ao lado da
+API, que envia para ele logs, traces e métricas por OTLP. A telemetria fica só em memória: reiniciar o console a apaga.
+A interface escuta **só no loopback** da máquina e exige um token de login; a porta OTLP não é exposta para fora.
+
+| Deploy | Endereço | Token de login | Como roda |
+|---|---|---|---|
+| Linux (Docker Compose) | `http://127.0.0.1:18888` (`ASPIRE_DASHBOARD_HOST_PORT`) | `docker logs almirante-aspire-dashboard 2>&1 \| grep 'login?t='` (novo a cada início do container) | serviço `aspire-dashboard` do `compose.yaml`, imagem fixada por digest, sem capabilities |
+| Windows (IIS) | `http://127.0.0.1:18888` | `C:\desbravadores\aspire-dashboard\browser-token.txt` (só administradores; fixo entre reinícios) | tarefa agendada `AspireDashboardAlmirante` como `LOCAL SERVICE`, binários do pacote NuGet `Aspire.Dashboard.Sdk.win-x64` com SHA256 conferido |
+
+- Abra `http://127.0.0.1:18888/login?t=<token>`. De outra máquina, use túnel SSH (`ssh -L 18888:127.0.0.1:18888 <host>`);
+  nunca publique a porta.
+- O token nunca aparece no log do GitHub Actions.
+- O console é opcional para a API: fora do ar, a exportação falha em silêncio, e uma falha ao instalá-lo ou iniciá-lo
+  só gera um aviso no deploy, sem bloquear nem derrubar a API.
+- No Windows, o deploy só cria `OTEL_EXPORTER_OTLP_ENDPOINT` e `OTEL_SERVICE_NAME` no app pool quando ainda não
+  existem. Para desligar a exportação, remova essas variáveis do pool; um valor ajustado à mão é preservado.
+- O AppHost (`dotnet run --project src/Almirante.AppHost`) continua sendo o caminho de desenvolvimento, com o próprio
+  console. Nos deploys ele não é usado, porque subiria outro SQL Server.
 
 ## Swagger
 
-O Swagger UI está disponível em `/swagger` em todos os ambientes, inclusive quando a API é executada como `Production` no IIS.
+O Swagger UI fica em `/swagger` quando habilitado: por padrão só em `Development`; fora dele, só com `Swagger:Enabled=true`
+(`SWAGGER_ENABLED` no Compose). O overlay `compose.tls.yaml` o desliga por padrão, mesmo com a API em `Development`.
 
-O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato da API, essa decisão é adequada ao MVP interno atual. Antes de uma exposição pública, recomenda-se restringir o acesso por autenticação, rede ou configuração de ambiente.
+Para testar rotas autenticadas, informe em **Authorize** só o token, sem o prefixo `Bearer`. As rotas públicas de `/api/Auth` aparecem sem cadeado.
 
-## Segurança (issues #29, #31, #33, #34, #35 e #36)
+O Swagger recebe uma Content-Security-Policy própria (scripts só da própria origem); as demais rotas usam a CSP restritiva da API JSON. Como a documentação expõe o contrato completo da API, mantenha-o desligado em ambiente exposto.
+
+## Segurança (issues #29, #31, #33, #34, #35, #36 e #127)
 
 Resumo: RBAC por policies com `401`/`403` distintos; rate limiting e lockout do login na própria API; segredos fora do Git com validação no startup e política de senha; `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, CSP e HSTS (fora de Development, em HTTPS) em todas as respostas. **A autenticação exige TLS** (cookies `Secure`): em HTTP puro, `csrf`/`login` respondem `500`. A API também recusa iniciar em `Production` se a connection string do SQL Server tiver `TrustServerCertificate=True` ou `Encrypt=False` (#36). Detalhes, decisões, rotação de segredos expostos e pendências em [`docs/authentication-security.md`](docs/authentication-security.md).
 

@@ -84,13 +84,16 @@ if (dbCredentialOptions.Enabled)
     builder.Services.AddHealthChecks().AddCheck<DbConnectivityHealthCheck>("almirante-db");
     builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante",
         configureSettings: settings => settings.DisableHealthChecks = true,
-        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider)));
+        configureDbContextOptions: options => options.AddInterceptors(new AppDbCredentialInterceptor(appCredentialProvider, TimeProvider.System)));
 }
 else
 {
     builder.AddSqlServerDbContext<AlmiranteDbContext>("almirante");
 }
 
+// PBKDF2-HMAC-SHA512 do ASP.NET Core Identity com o custo de PasswordPolicy.IteracoesHash; hashes antigos (100.000) seguem válidos e são
+// regravados no próximo login (SuccessRehashNeeded). Decisão documentada em docs/authentication-security.md.
+builder.Services.Configure<PasswordHasherOptions>(options => options.IterationCount = PasswordPolicy.IteracoesHash);
 builder.Services.AddSingleton<IPasswordHasher<Usuario>, PasswordHasher<Usuario>>();
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -105,7 +108,30 @@ builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<NotificacoesService>();
+builder.Services.AddScoped<CatalogoFormacaoService>();
+builder.Services.AddScoped<FormacaoService>();
+builder.Services.AddOptions<SenhasOptions>().Bind(builder.Configuration.GetSection(SenhasOptions.SectionName))
+    .ValidateDataAnnotations().ValidateOnStart();
+builder.Services.AddSingleton<LimitadorTentativasSenha>();
+builder.Services.AddScoped<ContasSenha>();
+builder.Services.AddScoped<AlteracaoSenhaService>();
+builder.Services.AddScoped<RecuperacaoSenhaService>();
+builder.Services.AddScoped<PatrimonioService>();
+builder.Services.AddScoped<InventarioService>();
+builder.Services.AddScoped<DesejosAlmoxarifadoService>();
+builder.Services.AddScoped<ResponsaveisAlmoxarifadoService>();
 builder.Services.AddLoginRateLimiting(builder.Configuration);
+
+// Auditoria HTTP (issue #158, docs/auditoria-http.md): middleware -> diário em disco já sanitizado -> gravador em segundo plano -> auditoria_http.
+builder.Services.AddOptions<AuditoriaHttpOptions>().Bind(builder.Configuration.GetSection(AuditoriaHttpOptions.SectionName))
+    .ValidateDataAnnotations().ValidateOnStart();
+builder.Services.AddSingleton<PoliticaAuditoriaHttp>();
+builder.Services.AddSingleton<DiarioAuditoriaHttp>();
+builder.Services.AddSingleton<IRepositorioAuditoriaHttp, RepositorioAuditoriaHttp>();
+builder.Services.AddSingleton<GravadorAuditoriaHttp>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<GravadorAuditoriaHttp>());
+builder.Services.AddHealthChecks().AddCheck<AuditoriaHttpHealthCheck>("auditoria-http",
+    failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded);
 
 builder.Services.AddOptions<NotificacoesOptions>().Bind(builder.Configuration.GetSection(NotificacoesOptions.SectionName))
     .ValidateDataAnnotations().ValidateOnStart();
@@ -185,6 +211,7 @@ builder.Services.AddHsts(options =>
     options.Preload = hsts.GetValue("Preload", false);
 });
 builder.Services.AddHostedService<AuthSessionCleanupService>();
+builder.Services.AddHostedService<LancamentosAtrasadosService>();
 
 builder.Services.AddMediatR(cfg =>
 {
@@ -281,11 +308,8 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
         };
     });
 
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy(Policies.GestaoFinanceira, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Diretoria));
-    options.AddPolicy(Policies.GestaoCadastros, policy => policy.RequireAuthenticatedUser().RequireRole(Roles.Diretoria));
-});
+builder.Services.AddAuthorization(Policies.Registrar);
+builder.Services.AddScoped<IAuthorizationHandler, AcessoAlmoxarifadoHandler>();
 
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 
@@ -316,6 +340,8 @@ builder.Services.AddSwaggerGen(options =>
     options.SchemaFilter<MembrosSchemaFilter>();
     options.OperationFilter<EventosOperationFilter>();
     options.OperationFilter<UsuariosFotoOperationFilter>();
+    options.OperationFilter<AlmoxarifadoOperationFilter>();
+    options.OperationFilter<AutenticacaoOperationFilter>();
 
     options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {
@@ -324,15 +350,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = Microsoft.OpenApi.ParameterLocation.Header,
-        Description = "Informe: Bearer {seu token}",
-    });
-
-    options.AddSecurityRequirement(_ => new Microsoft.OpenApi.OpenApiSecurityRequirement
-    {
-        {
-            new Microsoft.OpenApi.OpenApiSecuritySchemeReference("Bearer", null, null),
-            new List<string>()
-        },
+        Description = "Informe só o token: o prefixo Bearer é acrescentado pelo Swagger UI.",
     });
 });
 
@@ -369,17 +387,22 @@ app.MapDefaultEndpoints();
 
 app.UseForwardedHeaders();
 
+// Depois do IP real (proxy confiável) e antes de tudo o que pode encerrar a chamada, para registrar inclusive 404, 401, 403, 429 e erros.
+app.UseMiddleware<AuditoriaHttpMiddleware>();
+
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.Use((context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase))
+    // /api/Auth inteiro e as rotas com senha ou token fora dele ([ConteudoSensivel]), em toda resposta: sucesso, 401/403/429 e erros.
+    context.Response.OnStarting(static state =>
     {
-        context.Response.OnStarting(static state =>
+        var httpContext = (HttpContext)state;
+        if (httpContext.Request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase) || ConteudoSensivelAttribute.Aplica(httpContext))
         {
-            ((HttpContext)state).Response.Headers.CacheControl = "no-store";
-            return Task.CompletedTask;
-        }, context);
-    }
+            httpContext.Response.Headers.CacheControl = "no-store";
+        }
+        return Task.CompletedTask;
+    }, context);
     return next(context);
 });
 

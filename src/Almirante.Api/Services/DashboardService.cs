@@ -19,6 +19,20 @@ public sealed class DashboardService(AlmiranteDbContext db, DataCivil dataCivil)
             ? (GetDashboardQueryValidator.Ler(query.DataInicial), GetDashboardQueryValidator.Ler(query.DataFinal))
             : (new DateOnly(hoje.Year, hoje.Month, 1), new DateOnly(hoje.Year, hoje.Month, 1).AddMonths(1).AddDays(-1));
 
+        var desbravadores = await db.Usuarios.AsNoTracking()
+            .CountAsync(u => u.Ativo && u.Cargo!.Role == Roles.Desbravador, ct);
+
+        return new DashboardResponse
+        {
+            Periodo = new DashboardPeriodoDto(inicial, final),
+            Financeiro = query.IncluirFinanceiro ? await FinanceiroAsync(inicial, final, ct) : null,
+            Desbravadores = new DashboardDesbravadoresDto(desbravadores),
+            ProximosEventos = await ProximosEventosAsync(hoje, ct),
+        };
+    }
+
+    private async Task<DashboardFinanceiroDto> FinanceiroAsync(DateOnly inicial, DateOnly final, CancellationToken ct)
+    {
         var totais = await db.Lancamentos.AsNoTracking()
             .Where(l => l.Ativo && l.Status == StatusLancamento.Pago && l.DataPagamento != null && l.ValorPago != null
                 && l.DataPagamento >= inicial && l.DataPagamento <= final)
@@ -27,17 +41,7 @@ public sealed class DashboardService(AlmiranteDbContext db, DataCivil dataCivil)
             .ToListAsync(ct);
         var entradas = totais.Where(t => t.TipoFluxo == TipoFluxoLancamento.Entrada).Sum(t => t.Total);
         var saidas = totais.Where(t => t.TipoFluxo == TipoFluxoLancamento.Saida).Sum(t => t.Total);
-
-        var desbravadores = await db.Usuarios.AsNoTracking()
-            .CountAsync(u => u.Ativo && u.Cargo!.Role == Roles.Desbravador, ct);
-
-        return new DashboardResponse
-        {
-            Periodo = new DashboardPeriodoDto(inicial, final),
-            Financeiro = new DashboardFinanceiroDto(entradas - saidas, entradas, saidas),
-            Desbravadores = new DashboardDesbravadoresDto(desbravadores),
-            ProximosEventos = await ProximosEventosAsync(hoje, ct),
-        };
+        return new DashboardFinanceiroDto(entradas - saidas, entradas, saidas);
     }
 
     private async Task<IReadOnlyList<DashboardEventoDto>> ProximosEventosAsync(DateOnly hoje, CancellationToken ct)

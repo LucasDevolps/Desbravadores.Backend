@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using static Almirante.Api.Tests.NotificacoesTestKit;
 
 namespace Almirante.Api.Tests;
@@ -301,6 +302,54 @@ public sealed class NotificacoesSqlServerTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.InternalServerError, resposta.StatusCode);
         Assert.Equal((0, 0), await TestHelpers.WithDbAsync(factory, async db => (await db.Eventos.CountAsync(), await db.Notificacoes.CountAsync())));
+    }
+
+    [Fact]
+    public async Task Publicador_AvisoQueEsgotaAsTentativas_LidoDepoisDaReserva_ECanceladoNoMeioDoEnvio()
+    {
+        var (_, membroId) = await MembroAsync();
+        Assert.Equal(HttpStatusCode.Created, (await RegistrarDebitoAsync(_tesouraria, membroId)).StatusCode);
+        await AguardarAsync(async () => await Db(db => db.Notificacoes.AllAsync(n => n.AvisoPendente == null)), "aviso inicial emitido");
+        var id = Assert.Single(await NotificacoesAsync()).Id;
+        // Próxima tentativa amanhã pelo relógio real: o publicador hospedado não alcança; o do teste roda com o relógio dois dias à frente.
+        var amanha = DateTime.UtcNow.AddDays(1);
+        Task Pendente(int tentativas, DateTime? lidaEm) => Db(db => db.Notificacoes.Where(n => n.Id == id).ExecuteUpdateAsync(s => s
+            .SetProperty(n => n.AvisoPendente, AvisoNotificacao.Criada).SetProperty(n => n.AvisoTentativas, tentativas)
+            .SetProperty(n => n.AvisoProximaTentativaEmUtc, amanha).SetProperty(n => n.LidaEmUtc, lidaEm)));
+        var logs = new CapturingLoggerFactory();
+        Almirante.Api.Services.PublicadorAvisosNotificacoes Publicador(IEmissorAvisosNotificacoes emissor) => new(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>(), new Almirante.Api.Services.SinalAvisosNotificacoes(), emissor,
+            new RelogioManualDeTeste(DateTimeOffset.UtcNow.AddDays(2)),
+            Microsoft.Extensions.Options.Options.Create(new Almirante.Api.Options.NotificacoesOptions { MaxTentativasAviso = 2 }),
+            logs.CreateLogger<Almirante.Api.Services.PublicadorAvisosNotificacoes>());
+
+        // A última tentativa falha: o aviso é abandonado, e a notificação continua na consulta de pendências.
+        await Pendente(1, null);
+        Assert.Equal(1, await Publicador(new EmissorQueFalha()).ProcessarLoteAsync(CancellationToken.None));
+        Assert.Contains(logs.Entries, e => e.Contains("abandonado após 2 tentativas", StringComparison.Ordinal));
+        Assert.Equal(0, await Publicador(new EmissorQueFalha()).ProcessarLoteAsync(CancellationToken.None));
+
+        // Lida entre a reserva e o envio: não há o que emitir, e o aviso é concluído sem chamar o hub.
+        await Pendente(0, DateTime.UtcNow);
+        var gravador = new EmissorGravador();
+        Assert.Equal(1, await Publicador(gravador).ProcessarLoteAsync(CancellationToken.None));
+        Assert.False(gravador.Emitidos.Reader.TryRead(out _));
+        Assert.Null(Assert.Single(await NotificacoesAsync()).AvisoPendente);
+
+        // Encerramento no meio do envio: o cancelamento sobe, e o aviso continua pendente para o próximo início.
+        await Pendente(0, null);
+        using var parada = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Publicador(new EmissorQueCancela(parada)).ProcessarLoteAsync(parada.Token));
+        Assert.Equal(AvisoNotificacao.Criada, Assert.Single(await NotificacoesAsync()).AvisoPendente);
+    }
+
+    private sealed class EmissorQueCancela(CancellationTokenSource parada) : IEmissorAvisosNotificacoes
+    {
+        public Task EmitirAsync(Guid destinatarioId, string evento, object payload, CancellationToken ct)
+        {
+            parada.Cancel();
+            throw new OperationCanceledException(ct);
+        }
     }
 
     [Fact]

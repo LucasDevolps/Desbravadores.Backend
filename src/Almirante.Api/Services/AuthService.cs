@@ -68,8 +68,8 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         var hash = SHA256.HashData(Base64UrlTextEncoder.Decode(rawToken));
         var token = await db.RefreshTokens.Include(x => x.Session)!.ThenInclude(x => x!.Usuario)!.ThenInclude(x => x!.Cargo)
             .SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
-        if (token?.Session is null) return null;
-        var session = token.Session;
+        if (token is null) return null;
+        var session = token.Session!; // FK obrigatória e Include acima: todo refresh token tem sessão.
         var now = clock.GetUtcNow().UtcDateTime;
 
         if (token.ConsumedAtUtc is not null)
@@ -80,7 +80,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         var user = session.Usuario;
         if (token.RevokedAtUtc is not null || session.RevokedAtUtc is not null || token.ExpiresAtUtc <= now ||
             session.AbsoluteExpiresAtUtc <= now || session.LastRenewedAtUtc.AddHours(_options.RefreshInactivityHours) <= now ||
-            user?.Cargo is null || !user.Cargo.Ativo || user.SecurityVersion != session.SecurityVersion) return null;
+            user is null || !user.Ativo || user.Cargo is null || !user.Cargo.Ativo || user.SecurityVersion != session.SecurityVersion) return null;
 
         var raw = CreateRefreshToken();
         var successor = NewRefresh(session.Id, raw, now, session.AbsoluteExpiresAtUtc);
@@ -112,7 +112,7 @@ public sealed class AuthService(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         if (session is not null && session.RevokedAtUtc is null) { session.RevokedAtUtc = clock.GetUtcNow().UtcDateTime; session.RevocationReason = "logout"; await db.SaveChangesAsync(ct); }
     }
 
-    public Task<MeDto?> GetMeAsync(Guid id, CancellationToken ct) => db.Usuarios.AsNoTracking().Where(x => x.Id == id && x.Cargo != null && x.Cargo.Ativo)
+    public Task<MeDto?> GetMeAsync(Guid id, CancellationToken ct) => db.Usuarios.AsNoTracking().Where(x => x.Id == id && x.Ativo && x.Cargo != null && x.Cargo.Ativo)
         .Select(x => new MeDto { Id = x.Id, Nome = x.Nome, Email = x.Email,
             Cargo = new MeCargoDto { Id = x.Cargo!.Id, Nome = x.Cargo.Nome, Role = x.Cargo.Role } }).SingleOrDefaultAsync(ct);
 

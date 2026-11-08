@@ -1,3 +1,4 @@
+using System.Data;
 using Almirante.Api.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -17,40 +18,45 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
             db.ChangeTracker.Clear();
             var sessao = new SessaoAuditoria(db);
             await db.Database.OpenConnectionAsync(ct);
-            var conexao = db.Database.GetDbConnection() as SqlConnection;
+            T resultado;
             try
             {
                 await using var tx = await db.Database.BeginTransactionAsync(ct);
-                var resultado = await trabalho(sessao);
+                resultado = await trabalho(sessao);
                 await tx.CommitAsync(ct);
-                return resultado;
             }
             finally
             {
-                try
+                // LimparAsync não lança. Se a limpeza falhou, o pool é descartado: nenhuma conexão volta a ele com o contexto de auditoria.
+                if (!await sessao.LimparAsync(logger))
                 {
-                    var limpo = await sessao.LimparAsync(logger);
-                    if (!limpo && conexao is not null)
-                    {
-                        SqlConnection.ClearPool(conexao);
-                    }
+                    SqlConnection.ClearPool((SqlConnection)db.Database.GetDbConnection());
                 }
-                finally
-                {
-                    await db.Database.CloseConnectionAsync();
-                }
+
+                await db.Database.CloseConnectionAsync();
             }
+
+            return resultado;
         });
     }
 
     public async Task DefinirContextoAuditoriaAsync(Guid usuarioId, string ip, string motivo, CancellationToken ct)
     {
         _definido = true;
+        // varchar como as colunas de auditoria (IpResponsavel varchar(45), Motivo varchar(255)): os triggers leem com TRY_CAST.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value={usuarioId};
-            EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={ip};
-            EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value={motivo};
+            EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value={new SqlParameter("@ip", SqlDbType.VarChar, 45) { Value = ip }};
+            EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value={new SqlParameter("@motivo", SqlDbType.VarChar, 255) { Value = motivo }};
             """, ct);
+    }
+
+    /// <summary>Contexto dos triggers de formacao_historico: além do responsável e do motivo (justificativa), a ação executada.</summary>
+    public async Task DefinirContextoFormacaoAsync(Guid usuarioId, string ip, string acao, string? justificativa, CancellationToken ct)
+    {
+        await DefinirContextoAuditoriaAsync(usuarioId, ip, justificativa ?? string.Empty, ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"EXEC sys.sp_set_session_context @key=N'AcaoAuditoria', @value={new SqlParameter("@acao", SqlDbType.VarChar, 40) { Value = acao }};", ct);
     }
 
     public async Task<bool> LimparAsync(ILogger logger)
@@ -66,6 +72,7 @@ public sealed class SessaoAuditoria(AlmiranteDbContext db)
                 EXEC sys.sp_set_session_context @key=N'UsuarioResponsavelId', @value=NULL;
                 EXEC sys.sp_set_session_context @key=N'IpResponsavelExclusao', @value=NULL;
                 EXEC sys.sp_set_session_context @key=N'MotivoExclusao', @value=NULL;
+                EXEC sys.sp_set_session_context @key=N'AcaoAuditoria', @value=NULL;
                 """, CancellationToken.None);
             return true;
         }

@@ -33,7 +33,9 @@ public class LoginProtectionTests
     [Fact]
     public async Task RateLimit_EsgotaPorIp_Retorna429ComRetryAfter_EDepoisRecupera()
     {
-        using var factory = RateLimitFactory(permits: 3, windowSeconds: 2);
+        // Janela folgada: cada login com senha errada custa um PBKDF2 de 210.000 iterações (issue #159), e três tentativas sob carga
+        // (cobertura, testes em paralelo) passavam dos 2 s antes usados, reabrindo a janela no meio do teste.
+        using var factory = RateLimitFactory(permits: 3, windowSeconds: 6);
         using var client = await ClientWithCsrfAsync(factory);
 
         for (var i = 0; i < 3; i++)
@@ -41,13 +43,13 @@ public class LoginProtectionTests
 
         var bloqueada = await TestHelpers.PostLoginAsync(client, AlmiranteApiFactory.AdminEmail, AlmiranteApiFactory.AdminSenha, "203.0.113.10");
         Assert.Equal(HttpStatusCode.TooManyRequests, bloqueada.StatusCode);
-        Assert.True(int.Parse(Assert.Single(bloqueada.Headers.GetValues("Retry-After"))) is >= 1 and <= 2);
+        Assert.True(int.Parse(Assert.Single(bloqueada.Headers.GetValues("Retry-After"))) is >= 1 and <= 6);
         Assert.Equal("application/problem+json", bloqueada.Content.Headers.ContentType?.MediaType);
         Assert.Equal("Muitas tentativas de login.", (await bloqueada.Content.ReadFromJsonAsync<ProblemDetails>())!.Title);
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Auth/csrf")).StatusCode);
 
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        await Task.Delay(TimeSpan.FromSeconds(6.5));
         Assert.Equal(HttpStatusCode.OK, (await TestHelpers.PostLoginAsync(client, AlmiranteApiFactory.AdminEmail, AlmiranteApiFactory.AdminSenha, "203.0.113.10")).StatusCode);
     }
 

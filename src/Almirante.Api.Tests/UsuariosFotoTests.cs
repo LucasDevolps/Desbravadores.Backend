@@ -237,12 +237,31 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
             await client.DeleteAsync(Rota(id)),
             await client.PutAsJsonAsync($"/api/Usuarios/{id}", new { nome = "x", email = "x@local.dev", cargoId = Guid.NewGuid() }),
             await client.DeleteAsync($"/api/Usuarios/{id}"),
+            await client.GetAsync("/api/Me"),
+            await client.PutAsJsonAsync("/api/Me", new { telefone = "11987654321" }),
+            await client.GetAsync("/api/Me/foto"),
+            await client.PutAsync("/api/Me/foto", FotosTestKit.Multipart(FotosTestKit.Jpeg(100, 100))),
+            await client.DeleteAsync("/api/Me/foto"),
+            await client.GetAsync("/api/Me/Eventos"),
+            await client.GetAsync($"/api/Me/Eventos/{id}"),
+            await client.PostAsJsonAsync("/api/Eventos", new { dataEvento = "2030-01-10", local = "x", membros = id }),
+            await client.PutAsJsonAsync($"/api/Eventos/{id}", new { local = "x" }),
+            await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Eventos/{id}") { Content = JsonContent.Create(new { motivo = "x" }) }),
+            await client.PostAsJsonAsync("/api/Lancamentos/Registrar", new { membroId = id, finalidade = "Mensalidade", descricao = "x", categoria = "Clube", tipoFluxo = "Entrada", valor = 1m, vencimento = "2030-01-10", aplicarATodosOsMembros = false }),
+            await client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { descricao = "x" }),
+            await client.PostAsJsonAsync($"/api/Lancamentos/{id}/Pagamento", new { dataPagamento = "2026-01-01", valorPago = 1 }),
+            await client.PutAsJsonAsync($"/api/Lancamentos/{id}/Pagamento", new { dataPagamento = "2026-01-01", valorPago = 1 }),
+            await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "x" }) }),
+            await client.GetAsync("/api/Notificacoes/Pendentes"),
+            await client.PostAsync($"/api/Notificacoes/{id}/Leitura", null),
         };
 
         foreach (var response in respostas)
         {
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            Assert.Equal("Identidade autenticada inválida.", (string)JsonNode.Parse(await response.Content.ReadAsStringAsync())!["title"]!);
+            var corpo = await response.Content.ReadAsStringAsync();
+            Assert.True(response.StatusCode == HttpStatusCode.Unauthorized,
+                $"{response.RequestMessage!.Method} {response.RequestMessage.RequestUri!.AbsolutePath}: {(int)response.StatusCode} {corpo}");
+            Assert.Equal("Identidade autenticada inválida.", (string)JsonNode.Parse(corpo)!["title"]!);
         }
     }
 
@@ -259,5 +278,30 @@ public sealed class UsuariosFotoTests(AlmiranteApiFactory factory) : IClassFixtu
         Assert.Equal("binary", (string)schema["properties"]!["arquivo"]!["format"]!);
         Assert.Contains("arquivo", schema["required"]!.AsArray().Select(r => (string)r!));
         Assert.Null(documento["paths"]!["/api/Usuarios/{id}"]!["put"]!["requestBody"]!["content"]!["multipart/form-data"]);
+
+        var propria = documento["paths"]!["/api/Me/foto"]!["put"]!["requestBody"]!;
+        Assert.Equal(schema.ToJsonString(), propria["content"]!["multipart/form-data"]!["schema"]!.ToJsonString());
+        Assert.Null(documento["paths"]!["/api/Me"]!["put"]!["requestBody"]!["content"]!["multipart/form-data"]);
+        Assert.Null(documento["paths"]!["/api/Me/foto"]!["get"]!["requestBody"]);
+    }
+
+    [Fact]
+    public async Task FotoPropria_LimitePorUsuario_RecusaComRetryAfter_SemConsultarOsDados()
+    {
+        using var fabrica = new ConfiguredApiFactory(overrides: new Dictionary<string, string?> { ["Media:Images:UploadsPerUserPerWindow"] = "1" });
+        var (client, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(fabrica, "DS");
+        HttpContent Corpo()
+        {
+            var corpo = FotosTestKit.Multipart(FotosTestKit.Jpeg(100, 100));
+            corpo.Headers.ContentEncoding.Add("gzip");
+            return corpo;
+        }
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, (await client.PutAsync("/api/Me/foto", Corpo())).StatusCode);
+        var segundo = await client.PutAsync("/api/Me/foto", Corpo());
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, segundo.StatusCode);
+        Assert.True(int.Parse(segundo.Headers.RetryAfter!.ToString()) >= 1);
+        Assert.Equal("Muitos envios de foto.", (string)JsonNode.Parse(await segundo.Content.ReadAsStringAsync())!["title"]!);
     }
 }

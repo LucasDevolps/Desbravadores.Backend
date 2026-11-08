@@ -14,7 +14,10 @@ public sealed record NotificacaoDto
     /// <summary>Nula enquanto a notificação está pendente.</summary>
     public DateTime? LidaEmUtc { get; init; }
 
-    /// <summary>Metadados do registro de origem; não concedem acesso a /api/Eventos nem a /api/Lancamentos.</summary>
+    /// <summary>
+    /// Metadados do registro de origem; não concedem acesso por si: o destinatário consulta o evento em GET /api/Me/Eventos/{eventoId}
+    /// (só enquanto participa dele); /api/Eventos e /api/Lancamentos seguem as policies de gestão.
+    /// </summary>
     public Guid? EventoId { get; init; }
     public Guid? LancamentoId { get; init; }
 }

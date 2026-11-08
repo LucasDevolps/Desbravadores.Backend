@@ -33,6 +33,11 @@
     <ProjectReference Include="..\Almirante.ServiceDefaults\Almirante.ServiceDefaults.csproj" />
   </ItemGroup>
 
+  <!-- Os testes exercitam os guardas das classes internas de acesso ao banco (AlmoxarifadoBanco, FormacaoBanco) sem torná-las públicas. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Almirante.Api.Tests" />
+  </ItemGroup>
+
   <!-- O binário nativo do Skia para Windows vem com o libSkiaSharp.pdb (~90 MB por arquitetura): símbolos de depuração da
        biblioteca nativa, sem uso no servidor. Fica fora da saída do build e do publish. -->
   <Target Name="SemPdbNativoDoSkia" AfterTargets="ResolvePackageAssets">

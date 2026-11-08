@@ -114,18 +114,76 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
         Assert.Contains("CargoId", JsonNode.Parse(await response.Content.ReadAsStringAsync())!["errors"]!.AsObject().Select(e => e.Key));
     }
 
-    [Fact]
-    public async Task Post_AdministradorSoPodeSerCriadoPorAdministrador()
+    [Theory]
+    [InlineData("DIR")] [InlineData("DIRA")] [InlineData("SEC")]
+    public async Task Post_AdministradorSoPodeSerCriadoPorAdministrador(string role)
     {
-        var (tesoureiro, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "TES");
+        var (solicitante, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, role);
         var corpo = new { nome = "Novo Admin", email = $"adm-{Guid.NewGuid():N}@local.dev", senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync("ADM"), cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio };
 
-        var negado = await tesoureiro.PostAsJsonAsync("/api/Usuarios", corpo);
+        var negado = await solicitante.PostAsJsonAsync("/api/Usuarios", corpo);
         Assert.Equal(HttpStatusCode.Forbidden, negado.StatusCode);
+        Assert.Equal("Somente um Administrador pode gerenciar usuários com o cargo Administrador.",
+            (string)JsonNode.Parse(await negado.Content.ReadAsStringAsync())!["detail"]!);
         Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == corpo.email)));
 
         using var admin = await TestHelpers.CreateAuthenticatedClientAsync(factory);
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsJsonAsync("/api/Usuarios", corpo)).StatusCode);
+    }
+
+    /// <summary>Hierarquia: a diretoria atribui qualquer cargo (exceto ADM); o secretário só cargos sem acesso de gestão.</summary>
+    [Theory]
+    [InlineData("SEC", "DS", true)] [InlineData("SEC", "CONS", true)] [InlineData("SEC", "TESU", true)] [InlineData("SEC", "ALM", true)]
+    [InlineData("SEC", "SEC", false)] [InlineData("SEC", "TES", false)] [InlineData("SEC", "DIR", false)] [InlineData("SEC", "DIRA", false)]
+    [InlineData("DIR", "TES", true)] [InlineData("DIR", "SEC", true)] [InlineData("DIR", "DIRA", true)] [InlineData("DIR", "DIR", true)]
+    [InlineData("DIRA", "DIR", true)] [InlineData("DIRA", "TES", true)] [InlineData("ADM", "DIR", true)]
+    public async Task Post_CargoAtribuidoRespeitaAHierarquia(string solicitanteRole, string cargoRole, bool permitido)
+    {
+        var (solicitante, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, solicitanteRole);
+        var email = $"hier-{Guid.NewGuid():N}@local.dev";
+        var corpo = new { nome = "Hierarquia", email, senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync(cargoRole), cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio };
+
+        var resposta = await solicitante.PostAsJsonAsync("/api/Usuarios", corpo);
+
+        Assert.Equal(permitido ? HttpStatusCode.Created : HttpStatusCode.Forbidden, resposta.StatusCode);
+        Assert.Equal(permitido, await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == email)));
+        if (!permitido)
+        {
+            Assert.StartsWith("Somente a diretoria (Administrador, Diretor ou Diretor Associado)",
+                (string)JsonNode.Parse(await resposta.Content.ReadAsStringAsync())!["detail"]!);
+        }
+    }
+
+    [Fact]
+    public async Task Post_CargoIdVazio_Retorna400_SemCriar()
+    {
+        using var client = await TestHelpers.CreateAuthenticatedClientAsync(factory);
+        var email = $"vazio-{Guid.NewGuid():N}@local.dev";
+
+        var response = await client.PostAsJsonAsync("/api/Usuarios", new
+        {
+            nome = "Sem cargo", email, senha = "Forte-Senha-9x2k", cargoId = Guid.Empty, cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio,
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("cargoId é obrigatório.", (string)JsonNode.Parse(await response.Content.ReadAsStringAsync())!["errors"]!["CargoId"]![0]!);
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == email)));
+    }
+
+    [Fact]
+    public async Task Post_CargoDoSolicitanteNoCorpo_EhIgnorado_ESecretarioContinuaSemAtribuirTesoureiro()
+    {
+        var (secretario, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(factory, "SEC");
+        var email = $"forja-{Guid.NewGuid():N}@local.dev";
+
+        var resposta = await secretario.PostAsJsonAsync("/api/Usuarios", new
+        {
+            nome = "Forjado", email, senha = "Forte-Senha-9x2k", cargoId = await CargoIdAsync("TES"), cpf = TestHelpers.NovoCpf(), rg = TestHelpers.RgFicticio,
+            solicitanteRole = "ADM", solicitanteEhAdmin = true, role = "ADM",
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, resposta.StatusCode);
+        Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == email)));
     }
 
     [Fact]
