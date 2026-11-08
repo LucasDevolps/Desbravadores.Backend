@@ -439,9 +439,9 @@ Cadastros, autoatendimento e rotas de apoio (a lista completa de rotas, com cód
 
 **Dados pessoais de usuários.** `POST`, `PUT` e `GET /api/Usuarios` trafegam `cpf`, `dataNascimento`
 (`yyyy-MM-dd`, sem horário, não futura) e `telefone`, `null` em cadastros antigos. O **`cpf` é obrigatório no
-cadastro** (`POST` sem CPF retorna `400`); no `PUT` ele pode ser trocado, mas um CPF já gravado não pode ser removido
-(`400`), e cadastros antigos sem CPF continuam editáveis sem ele. Data de nascimento e telefone são opcionais. O
-`email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é aceito com ou sem máscara, precisa ter 11
+cadastro** (`POST` sem CPF retorna `400`); no `PUT` um CPF já gravado não pode ser removido (`400`), não pode ser trocado
+quando o documento está completo (abaixo), e cadastros antigos sem CPF continuam editáveis sem ele. Data de nascimento e
+telefone são opcionais. O `email` de login passou a ter no máximo 100 caracteres ASCII. O CPF é aceito com ou sem máscara, precisa ter 11
 dígitos com dígitos verificadores válidos e é gravado só com os dígitos; é único entre todos os usuários, inclusive
 inativos (índice `UX_Usuarios_Cpf`; duplicidade gera `409`). O telefone é fixo (10 dígitos, começando de 2 a 5) ou
 celular (11 dígitos, começando com 9), com DDD válido, com ou sem a máscara `(11) 98765-4321`, e é gravado só com
@@ -471,6 +471,12 @@ opcional (pode ser informado e continua gravado); com `ehCin: false` (ou omitido
 `errors["Rg"]`). No `PUT` a regra usa os valores efetivos (corpo ou gravados) e segue o padrão do CPF: com `ehCin` false, um RG
 gravado não pode ser removido, sair da CIN exige RG e quem informa `rg` ou `ehCin` no corpo precisa ter RG; um cadastro antigo
 sem RG e sem CIN que não envia esses campos continua editável.
+
+**Documento completo não muda.** Com o documento completo gravado (CPF com RG, ou CPF com `ehCin: true`), `cpf`, `rg` e `ehCin`
+não podem mais ser alterados, por nenhum cargo, nem em `PUT /api/Usuarios/{id}` nem em `PUT /api/Me`: a tentativa retorna `400`
+com a mensagem em `errors["Cpf"]`, `errors["Rg"]` ou `errors["EhCin"]` e nada é gravado. Omitir esses campos ou reenviar o valor
+gravado (o CPF com ou sem máscara) é aceito. Um cadastro antigo com documento incompleto (sem CPF, ou com CPF sem RG e sem CIN)
+continua podendo ser completado; depois disso, também fica travado.
 
 **Endereço (issue #131).** O cliente envia `endereco: { cep, numero, complemento }` e a API consulta o
 [ViaCEP](https://viacep.com.br) e grava cada campo em sua coluna (`Usuarios.Endereco*`, `varchar`): `cep` (8 dígitos, sem

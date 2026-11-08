@@ -142,81 +142,86 @@ public sealed class UsuariosCinEnderecoSqlServerTests : IClassFixture<EventosSql
         Assert.Null((await UsuarioAsync(alvo.Id)).EnderecoCep);
     }
 
-    [Fact]
+    [Fact(DisplayName = "CIN, validade e endereço: omissão preserva, ehCin do documento completo não muda e cada alteração grava o estado anterior no histórico")]
     public async Task Crud_CinValidadeEEndereco_OmissaoPreserva_AlteracaoSoNosNovosCamposGeraHistoricoComOEstadoAnterior()
     {
+        //Arrange
         var alvo = await CriarAsync(c =>
         {
             c["ehCin"] = true;
             c["dataExpiracao"] = "2031-05-10";
             c["endereco"] = Endereco("04382-160", "100", "Casa 2");
         });
+        var consultasAposCadastro = Factory.ViaCep.Consultas.Count;
+
+        //Act
+        var semCampos = await PutOkAsync(alvo);
+        var historicoSemCampos = await HistoricoAsync(alvo.Id);
+        var consultasSemCampos = Factory.ViaCep.Consultas.Count;
+        var trocaDeCin = await PutAsync(alvo.Id, CorpoPut(alvo, c => c["ehCin"] = false));
+        var salvoAposTrocaDeCin = await UsuarioAsync(alvo.Id);
+        var novaValidade = await PutOkAsync(alvo, c => c["dataExpiracao"] = "2019-01-31");
+        var salvoAposValidade = await UsuarioAsync(alvo.Id);
+        var mesmoCep = await PutOkAsync(alvo, c => c["endereco"] = Endereco("04382-160", "100A"));
+        var consultasMesmoCep = Factory.ViaCep.Consultas.Count;
+        var outroCep = await PutOkAsync(alvo, c => c["endereco"] = Endereco("01310-200", "1578"));
+        var salvoOutroCep = await UsuarioAsync(alvo.Id);
+        var complemento = await PutOkAsync(alvo, c => c["endereco"] = Endereco(complemento: "Sala 3", comCep: false));
+        var item = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == alvo.Id);
+        var limpo = await PutOkAsync(alvo, c => { c["endereco"] = null; c["dataExpiracao"] = null; });
+        var salvoLimpo = await UsuarioAsync(alvo.Id);
+        var historico = await HistoricoAsync(alvo.Id);
+
+        //Assert
         UsuariosCinEnderecoTests.AssertEnderecoExemplo(alvo.Endereco, "04382160", "100", "Casa 2");
-        Assert.Single(Factory.ViaCep.Consultas);
+        Assert.Equal(1, consultasAposCadastro);
 
         // PUT sem os campos novos: nada muda, nenhum histórico, nenhuma consulta ao ViaCEP.
-        var semCampos = await PutOkAsync(alvo);
         Assert.True(semCampos.EhCin);
         Assert.Equal(new DateOnly(2031, 5, 10), semCampos.DataExpiracao);
         UsuariosCinEnderecoTests.AssertEnderecoExemplo(semCampos.Endereco, "04382160", "100", "Casa 2");
-        Assert.Empty(await HistoricoAsync(alvo.Id));
-        Assert.Single(Factory.ViaCep.Consultas);
+        Assert.Empty(historicoSemCampos);
+        Assert.Equal(1, consultasSemCampos);
 
-        // ehCin=false é um valor informado (não omissão): grava false e o histórico guarda o true anterior.
-        var semCin = await PutOkAsync(alvo, c => c["ehCin"] = false);
-        Assert.False(semCin.EhCin);
-        Assert.False((await UsuarioAsync(alvo.Id)).EhCin);
-        var historico = await HistoricoAsync(alvo.Id);
-        Assert.Single(historico);
+        // Documento completo (CPF com CIN): ehCin não muda; omitido, continua true.
+        await AssertDocumentoTravadoAsync(trocaDeCin, "EhCin");
+        Assert.True(salvoAposTrocaDeCin.EhCin);
+        Assert.True(novaValidade.EhCin);
+        Assert.Equal((true, new DateOnly(2019, 1, 31)), (salvoAposValidade.EhCin, salvoAposValidade.DataExpiracao));
+
+        // Mesmo CEP (com máscara): não consulta o ViaCEP; número muda, complemento omitido é mantido.
+        UsuariosCinEnderecoTests.AssertEnderecoExemplo(mesmoCep.Endereco, "04382160", "100A", "Casa 2");
+        Assert.Equal(1, consultasMesmoCep);
+
+        // CEP novo: consulta, substitui todos os dados do CEP; número informado, complemento omitido fica vazio (era do endereço anterior).
+        UsuariosCinEnderecoTests.AssertEnderecoExemplo(outroCep.Endereco, "01310200", "1578", null);
+        Assert.Equal(new[] { "04382160", "01310200" }, Factory.ViaCep.Consultas);
+        Assert.Equal(("01310200", "Rua Fictícia 01310200", "1578", null, "lado ímpar", "São Paulo", "SP", "3550308"),
+            (salvoOutroCep.EnderecoCep, salvoOutroCep.EnderecoLogradouro, salvoOutroCep.EnderecoNumero, salvoOutroCep.EnderecoComplemento,
+                salvoOutroCep.EnderecoComplementoCep, salvoOutroCep.EnderecoLocalidade, salvoOutroCep.EnderecoUf, salvoOutroCep.EnderecoIbge));
+
+        // Só o complemento, sem cep no objeto: mantém o CEP e o número; a listagem traz os mesmos valores do banco.
+        UsuariosCinEnderecoTests.AssertEnderecoExemplo(complemento.Endereco, "01310200", "1578", "Sala 3");
+        Assert.Equal((true, new DateOnly(2019, 1, 31)), (item.EhCin, item.DataExpiracao));
+        UsuariosCinEnderecoTests.AssertEnderecoExemplo(item.Endereco, "01310200", "1578", "Sala 3");
+
+        // endereco null e dataExpiracao null removem.
+        Assert.Null(limpo.Endereco);
+        Assert.Null(limpo.DataExpiracao);
+        Assert.Equal((null, null, null, null, null),
+            (salvoLimpo.EnderecoCep, salvoLimpo.EnderecoLogradouro, salvoLimpo.EnderecoLocalidade, salvoLimpo.EnderecoUf, salvoLimpo.DataExpiracao));
+
+        Assert.Equal(5, historico.Count);
         Assert.Equal((true, new DateOnly(2031, 5, 10), "04382160", "100", "Casa 2"),
             (historico[0].EhCin, historico[0].DataExpiracao, historico[0].EnderecoCep, historico[0].EnderecoNumero, historico[0].EnderecoComplemento));
         Assert.Equal((fx.AdminId, AlmiranteApiFactory.AdminEmail, IpTeste, UsuarioHistorico.OperacaoUpdate),
             (historico[0].UsuarioResponsavelId, historico[0].UsuarioResponsavelLogin, historico[0].IpResponsavel, historico[0].TipoOperacao));
-
-        // Omitir ehCin depois disso preserva o false.
-        Assert.False((await PutOkAsync(alvo, c => c["dataExpiracao"] = "2019-01-31")).EhCin);
-        var salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal((false, new DateOnly(2019, 1, 31)), (salvo.EhCin, salvo.DataExpiracao));
-
-        // Mesmo CEP (com máscara): não consulta o ViaCEP; número muda, complemento omitido é mantido.
-        var mesmoCep = await PutOkAsync(alvo, c => c["endereco"] = Endereco("04382-160", "100A"));
-        UsuariosCinEnderecoTests.AssertEnderecoExemplo(mesmoCep.Endereco, "04382160", "100A", "Casa 2");
-        Assert.Single(Factory.ViaCep.Consultas);
-
-        // CEP novo: consulta, substitui todos os dados do CEP; número informado, complemento omitido fica vazio (era do endereço anterior).
-        var outroCep = await PutOkAsync(alvo, c => c["endereco"] = Endereco("01310-200", "1578"));
-        UsuariosCinEnderecoTests.AssertEnderecoExemplo(outroCep.Endereco, "01310200", "1578", null);
-        Assert.Equal(new[] { "04382160", "01310200" }, Factory.ViaCep.Consultas);
-        salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal(("01310200", "Rua Fictícia 01310200", "1578", null, "lado ímpar", "São Paulo", "SP", "3550308"),
-            (salvo.EnderecoCep, salvo.EnderecoLogradouro, salvo.EnderecoNumero, salvo.EnderecoComplemento, salvo.EnderecoComplementoCep,
-                salvo.EnderecoLocalidade, salvo.EnderecoUf, salvo.EnderecoIbge));
-
-        // Só o complemento, sem cep no objeto: mantém o CEP e o número.
-        var complemento = await PutOkAsync(alvo, c => c["endereco"] = Endereco(complemento: "Sala 3", comCep: false));
-        UsuariosCinEnderecoTests.AssertEnderecoExemplo(complemento.Endereco, "01310200", "1578", "Sala 3");
-
-        // Listagem traz os mesmos valores do banco.
-        var item = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == alvo.Id);
-        Assert.Equal((false, new DateOnly(2019, 1, 31)), (item.EhCin, item.DataExpiracao));
-        UsuariosCinEnderecoTests.AssertEnderecoExemplo(item.Endereco, "01310200", "1578", "Sala 3");
-
-        // endereco null e dataExpiracao null removem.
-        var limpo = await PutOkAsync(alvo, c => { c["endereco"] = null; c["dataExpiracao"] = null; });
-        Assert.Null(limpo.Endereco);
-        Assert.Null(limpo.DataExpiracao);
-        salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal((null, null, null, null, null), (salvo.EnderecoCep, salvo.EnderecoLogradouro, salvo.EnderecoLocalidade, salvo.EnderecoUf, salvo.DataExpiracao));
-
-        historico = await HistoricoAsync(alvo.Id);
-        Assert.Equal(6, historico.Count);
-        Assert.Equal((false, new DateOnly(2031, 5, 10)), (historico[1].EhCin, historico[1].DataExpiracao));
-        Assert.Equal(("04382160", "100", "Casa 2"), (historico[2].EnderecoCep, historico[2].EnderecoNumero, historico[2].EnderecoComplemento));
+        Assert.Equal(("04382160", "100", "Casa 2"), (historico[1].EnderecoCep, historico[1].EnderecoNumero, historico[1].EnderecoComplemento));
         Assert.Equal(("04382160", "Rua Fictícia 04382160", "100A", "Casa 2", "Jardim de Teste", "SP", "11", "7107"),
-            (historico[3].EnderecoCep, historico[3].EnderecoLogradouro, historico[3].EnderecoNumero, historico[3].EnderecoComplemento,
-                historico[3].EnderecoBairro, historico[3].EnderecoUf, historico[3].EnderecoDdd, historico[3].EnderecoSiafi));
-        Assert.Equal(("01310200", "1578", null), (historico[4].EnderecoCep, historico[4].EnderecoNumero, historico[4].EnderecoComplemento));
-        Assert.Equal(("01310200", "Sala 3", new DateOnly(2019, 1, 31)), (historico[5].EnderecoCep, historico[5].EnderecoComplemento, historico[5].DataExpiracao));
+            (historico[2].EnderecoCep, historico[2].EnderecoLogradouro, historico[2].EnderecoNumero, historico[2].EnderecoComplemento,
+                historico[2].EnderecoBairro, historico[2].EnderecoUf, historico[2].EnderecoDdd, historico[2].EnderecoSiafi));
+        Assert.Equal(("01310200", "1578", null), (historico[3].EnderecoCep, historico[3].EnderecoNumero, historico[3].EnderecoComplemento));
+        Assert.Equal(("01310200", "Sala 3", new DateOnly(2019, 1, 31)), (historico[4].EnderecoCep, historico[4].EnderecoComplemento, historico[4].DataExpiracao));
         Assert.All(historico.Skip(1), h => Assert.Equal((fx.AdminId, IpTeste), (h.UsuarioResponsavelId, h.IpResponsavel)));
     }
 
@@ -313,40 +318,85 @@ public sealed class UsuariosCinEnderecoSqlServerTests : IClassFixture<EventosSql
         Assert.Equal(RgObrigatorio, (string)JsonNode.Parse(await response.Content.ReadAsStringAsync())!["errors"]!["Rg"]![0]!);
     }
 
-    [Fact]
-    public async Task Put_SemCin_NaoRemoveORg_ComCinPassaASerOpcional()
+    private static async Task AssertDocumentoTravadoAsync(HttpResponseMessage response, params string[] campos)
     {
-        var alvo = await CriarAsync(c => c["rg"] = "12.345.678-9");
-        Assert.False(alvo.EhCin);
-
-        await AssertRgObrigatorioAsync(await PutAsync(alvo.Id, CorpoPut(alvo, c => c["rg"] = "")));
-        await AssertRgObrigatorioAsync(await PutAsync(alvo.Id, CorpoPut(alvo, c => { c["rg"] = null; c["ehCin"] = false; })));
-        Assert.Equal(("12.345.678-9", false), ((await UsuarioAsync(alvo.Id)).Rg, (await UsuarioAsync(alvo.Id)).EhCin));
-        Assert.Empty(await HistoricoAsync(alvo.Id));
-
-        var comCin = await PutOkAsync(alvo, c => { c["ehCin"] = true; c["rg"] = ""; });
-        Assert.Equal((true, null), (comCin.EhCin, comCin.Rg));
-        var salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal((true, null), (salvo.EhCin, salvo.Rg));
-        var historico = Assert.Single(await HistoricoAsync(alvo.Id));
-        Assert.Equal((false, "12.345.678-9"), (historico.EhCin, historico.Rg));
+        var corpo = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.BadRequest, corpo);
+        var erros = JsonNode.Parse(corpo)!["errors"]!.AsObject();
+        Assert.Equal(campos, erros.Select(e => e.Key));
+        Assert.All(erros, e => Assert.EndsWith("não pode ser alterado: o documento do usuário (CPF com RG ou com CIN) já está cadastrado.", (string)e.Value![0]!));
     }
 
-    [Fact]
-    public async Task Put_SaindoDaCinSemRg_Retorna400_EComRgGrava()
+    [Fact(DisplayName = "Documento completo com RG: o RG não é removido nem trocado pela CIN e nada vai para o histórico")]
+    public async Task Usuarios_Put_DocumentoCompletoComRg_NaoRemoveORgNemPassaParaCin()
     {
+        //Arrange
+        var alvo = await CriarAsync(c => c["rg"] = "12.345.678-9");
+
+        //Act
+        var semRg = await PutAsync(alvo.Id, CorpoPut(alvo, c => c["rg"] = ""));
+        var semRgESemCin = await PutAsync(alvo.Id, CorpoPut(alvo, c => { c["rg"] = null; c["ehCin"] = false; }));
+        var paraCinSemRg = await PutAsync(alvo.Id, CorpoPut(alvo, c => { c["ehCin"] = true; c["rg"] = ""; }));
+        var paraCinMantendoRg = await PutAsync(alvo.Id, CorpoPut(alvo, c => c["ehCin"] = true));
+        var salvo = await UsuarioAsync(alvo.Id);
+        var historico = await HistoricoAsync(alvo.Id);
+
+        //Assert
+        Assert.False(alvo.EhCin);
+        await AssertRgObrigatorioAsync(semRg);
+        await AssertRgObrigatorioAsync(semRgESemCin);
+        await AssertDocumentoTravadoAsync(paraCinSemRg, "Rg", "EhCin");
+        await AssertDocumentoTravadoAsync(paraCinMantendoRg, "EhCin");
+        Assert.Equal(("12.345.678-9", false), (salvo.Rg, salvo.EhCin));
+        Assert.Empty(historico);
+    }
+
+    [Fact(DisplayName = "Documento completo com CIN: sair da CIN sem RG exige RG, com RG é recusado e os demais campos continuam editáveis")]
+    public async Task Usuarios_Put_DocumentoCompletoComCin_NaoSaiDaCinMasEditaOutrosCampos()
+    {
+        //Arrange
         var alvo = await CriarAsync(c => { c["ehCin"] = true; c.Remove("rg"); });
+
+        //Act
+        var semCinSemRg = await PutAsync(alvo.Id, CorpoPut(alvo, c => c["ehCin"] = false));
+        var semCinComRg = await PutAsync(alvo.Id, CorpoPut(alvo, c => { c["ehCin"] = false; c["rg"] = "MG-98.765.432"; }));
+        var comCinInformandoRg = await PutAsync(alvo.Id, CorpoPut(alvo, c => c["rg"] = "MG-98.765.432"));
+        var outroCampo = await PutOkAsync(alvo, c => c["nome"] = "Nome Editado Com CIN");
+        var salvo = await UsuarioAsync(alvo.Id);
+
+        //Assert
         Assert.Null(alvo.Rg);
+        await AssertRgObrigatorioAsync(semCinSemRg);
+        await AssertDocumentoTravadoAsync(semCinComRg, "Rg", "EhCin");
+        await AssertDocumentoTravadoAsync(comCinInformandoRg, "Rg");
+        Assert.Equal("Nome Editado Com CIN", outroCampo.Nome);
+        Assert.Equal((true, (string?)null), (salvo.EhCin, salvo.Rg));
+    }
 
-        await AssertRgObrigatorioAsync(await PutAsync(alvo.Id, CorpoPut(alvo, c => c["ehCin"] = false)));
-        Assert.True((await UsuarioAsync(alvo.Id)).EhCin);
+    [Fact(DisplayName = "Documento completo: nem o Administrador troca o CPF, e reenviar CPF com máscara, RG e ehCin gravados é aceito")]
+    public async Task Usuarios_Put_DocumentoCompleto_RecusaTrocarCpfEAceitaReenviarOsValoresGravados()
+    {
+        //Arrange
+        var alvo = await CriarAsync(c => c["rg"] = "12.345.678-9");
+        var novoCpf = TestHelpers.NovoCpf();
 
-        // Com CIN, mexer em outros campos sem RG continua permitido.
-        Assert.Equal("Nome Editado Com CIN", (await PutOkAsync(alvo, c => c["nome"] = "Nome Editado Com CIN")).Nome);
+        //Act
+        var trocaDeCpf = await PutAsync(alvo.Id, CorpoPut(alvo, c => { c["cpf"] = novoCpf; c["telefone"] = "(11) 3456-7890"; }));
+        var salvoAposRecusa = await UsuarioAsync(alvo.Id);
+        var historicoAposRecusa = await HistoricoAsync(alvo.Id);
+        var mesmosValores = await PutOkAsync(alvo, c =>
+        {
+            c["cpf"] = TestHelpers.MascararCpf(alvo.Cpf!);
+            c["rg"] = "12.345.678-9";
+            c["ehCin"] = false;
+            c["telefone"] = "(11) 3456-7890";
+        });
 
-        var semCin = await PutOkAsync(alvo, c => { c["ehCin"] = false; c["rg"] = "MG-98.765.432"; });
-        Assert.Equal((false, "MG-98.765.432"), (semCin.EhCin, semCin.Rg));
-        Assert.Equal((false, "MG-98.765.432"), ((await UsuarioAsync(alvo.Id)).EhCin, (await UsuarioAsync(alvo.Id)).Rg));
+        //Assert
+        await AssertDocumentoTravadoAsync(trocaDeCpf, "Cpf");
+        Assert.Equal((alvo.Cpf, (string?)null), (salvoAposRecusa.Cpf, salvoAposRecusa.Telefone));
+        Assert.Empty(historicoAposRecusa);
+        Assert.Equal((alvo.Cpf, "12.345.678-9", false, "1134567890"), (mesmosValores.Cpf, mesmosValores.Rg, mesmosValores.EhCin, mesmosValores.Telefone));
     }
 
     [Fact]

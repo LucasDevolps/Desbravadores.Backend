@@ -108,60 +108,69 @@ public sealed class UsuariosRgTipoSanguineoDoencasSqlServerTests(EventosSqlFixtu
         Assert.Null((await UsuarioAsync(alvo.Id)).TipoSanguineo);
     }
 
-    [Fact]
+    [Fact(DisplayName = "Cadastro com CIN e sem RG: consulta, altera e limpa tipo sanguíneo e doenças/alergias, exclui e guarda o histórico completo")]
     public async Task Crud_CriaSemRg_ConsultaAlteraLimpaEExclui_ComHistoricoCompleto()
     {
+        //Arrange
         const string doencas1 = "Alergia fictícia de teste;\nobservação fictícia de saúde.";
-        var alvo = await CriarAsync(null, "o+", doencas1);
-        Assert.Null(alvo.Rg);
-        Assert.Equal("O+", alvo.TipoSanguineo);
-        Assert.Equal(doencas1, alvo.DoencasAlergias);
-        var salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal((null, "O+", doencas1), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
-
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(alvo.Id, CorpoPut(alvo))).StatusCode);
-        salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal((null, "O+", doencas1), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
-        Assert.Empty(await HistoricoAsync(alvo.Id));
-
         const string doencas2 = "Alergia fictícia alterada: dipirona.\r\nDiabetes fictícia tipo 1.";
+        var alvo = await CriarAsync(null, "o+", doencas1);
+        var salvoAposCadastro = await UsuarioAsync(alvo.Id);
+
+        //Act
+        var semMudanca = await PutAsync(alvo.Id, CorpoPut(alvo));
+        var salvoSemMudanca = await UsuarioAsync(alvo.Id);
+        var historicoSemMudanca = await HistoricoAsync(alvo.Id);
         var put = await PutAsync(alvo.Id, CorpoPut(alvo, c =>
         {
             c["nome"] = "Participante Teste CRUD Editado";
             c["cpf"] = TestHelpers.MascararCpf(alvo.Cpf!);
-            c["rg"] = " 12.345.678-9 ";
             c["tipoSanguineo"] = "AB-";
             c["doencasAlergias"] = doencas2;
         }));
-        Assert.True(put.StatusCode == HttpStatusCode.OK, await put.Content.ReadAsStringAsync());
-        var dto = (await put.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
-        Assert.Equal(("Participante Teste CRUD Editado", "12.345.678-9", "AB-", doencas2), (dto.Nome, dto.Rg, dto.TipoSanguineo, dto.DoencasAlergias));
-        salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal(("12.345.678-9", "AB-", doencas2, alvo.Cpf), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias, salvo.Cpf));
-        Assert.Equal(1, await Db(db => db.Usuarios.CountAsync(u => u.Cpf == alvo.Cpf)));
-
-        var lista = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!;
-        var item = lista.Single(u => u.Id == alvo.Id);
-        Assert.Equal(("12.345.678-9", "AB-", doencas2), (item.Rg, item.TipoSanguineo, item.DoencasAlergias));
-
-        Assert.Equal(HttpStatusCode.OK, (await PutAsync(alvo.Id, CorpoPut(item, c => { c["rg"] = ""; c["tipoSanguineo"] = null; c["doencasAlergias"] = ""; }))).StatusCode);
-        salvo = await UsuarioAsync(alvo.Id);
-        Assert.Equal((null, null, null), (salvo.Rg, salvo.TipoSanguineo, salvo.DoencasAlergias));
-
+        var salvoEditado = await UsuarioAsync(alvo.Id);
+        var usuariosComOCpf = await Db(db => db.Usuarios.CountAsync(u => u.Cpf == alvo.Cpf));
+        var item = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!.Single(u => u.Id == alvo.Id);
+        var limpeza = await PutAsync(alvo.Id, CorpoPut(item, c => { c["rg"] = ""; c["tipoSanguineo"] = null; c["doencasAlergias"] = ""; }));
+        var salvoLimpo = await UsuarioAsync(alvo.Id);
         var invalido = await PutAsync(alvo.Id, CorpoPut(item, c => c["tipoSanguineo"] = "Z+"));
-        Assert.Equal(HttpStatusCode.BadRequest, invalido.StatusCode);
-        Assert.Null((await UsuarioAsync(alvo.Id)).TipoSanguineo);
-
+        var tipoAposInvalido = (await UsuarioAsync(alvo.Id)).TipoSanguineo;
         var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Usuarios/{alvo.Id}");
         delete.Headers.Add(AlmiranteApiFactory.TestRemoteIpHeader, IpTeste);
-        Assert.Equal(HttpStatusCode.NoContent, (await Client.SendAsync(delete)).StatusCode);
-        Assert.DoesNotContain((await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!, u => u.Id == alvo.Id);
-        Assert.False((await UsuarioAsync(alvo.Id)).Ativo);
-
+        var exclusao = await Client.SendAsync(delete);
+        var listaAposExclusao = (await Client.GetFromJsonAsync<List<UsuarioListItemDto>>("/api/Usuarios"))!;
+        var salvoExcluido = await UsuarioAsync(alvo.Id);
         var historico = await HistoricoAsync(alvo.Id);
+
+        //Assert
+        Assert.Null(alvo.Rg);
+        Assert.Equal("O+", alvo.TipoSanguineo);
+        Assert.Equal(doencas1, alvo.DoencasAlergias);
+        Assert.Equal((null, "O+", doencas1), (salvoAposCadastro.Rg, salvoAposCadastro.TipoSanguineo, salvoAposCadastro.DoencasAlergias));
+
+        Assert.Equal(HttpStatusCode.OK, semMudanca.StatusCode);
+        Assert.Equal((null, "O+", doencas1), (salvoSemMudanca.Rg, salvoSemMudanca.TipoSanguineo, salvoSemMudanca.DoencasAlergias));
+        Assert.Empty(historicoSemMudanca);
+
+        Assert.True(put.StatusCode == HttpStatusCode.OK, await put.Content.ReadAsStringAsync());
+        var dto = (await put.Content.ReadFromJsonAsync<UsuarioListItemDto>())!;
+        Assert.Equal(("Participante Teste CRUD Editado", (string?)null, "AB-", doencas2), (dto.Nome, dto.Rg, dto.TipoSanguineo, dto.DoencasAlergias));
+        Assert.Equal(((string?)null, "AB-", doencas2, alvo.Cpf), (salvoEditado.Rg, salvoEditado.TipoSanguineo, salvoEditado.DoencasAlergias, salvoEditado.Cpf));
+        Assert.Equal(1, usuariosComOCpf);
+        Assert.Equal(((string?)null, "AB-", doencas2), (item.Rg, item.TipoSanguineo, item.DoencasAlergias));
+
+        Assert.Equal(HttpStatusCode.OK, limpeza.StatusCode);
+        Assert.Equal((null, null, null), (salvoLimpo.Rg, salvoLimpo.TipoSanguineo, salvoLimpo.DoencasAlergias));
+        Assert.Equal(HttpStatusCode.BadRequest, invalido.StatusCode);
+        Assert.Null(tipoAposInvalido);
+
+        Assert.Equal(HttpStatusCode.NoContent, exclusao.StatusCode);
+        Assert.DoesNotContain(listaAposExclusao, u => u.Id == alvo.Id);
+        Assert.False(salvoExcluido.Ativo);
+
         Assert.Equal(3, historico.Count);
         Assert.Equal((null, "O+", doencas1, UsuarioHistorico.OperacaoUpdate), (historico[0].Rg, historico[0].TipoSanguineo, historico[0].DoencasAlergias, historico[0].TipoOperacao));
-        Assert.Equal(("12.345.678-9", "AB-", doencas2), (historico[1].Rg, historico[1].TipoSanguineo, historico[1].DoencasAlergias));
+        Assert.Equal(((string?)null, "AB-", doencas2), (historico[1].Rg, historico[1].TipoSanguineo, historico[1].DoencasAlergias));
         Assert.Equal((null, null, null, UsuarioHistorico.OperacaoDelete), (historico[2].Rg, historico[2].TipoSanguineo, historico[2].DoencasAlergias, historico[2].TipoOperacao));
         Assert.All(historico, h => Assert.Equal(IpTeste, h.IpResponsavel));
     }
