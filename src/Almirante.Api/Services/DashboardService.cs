@@ -33,9 +33,7 @@ public sealed class DashboardService(AlmiranteDbContext db, DataCivil dataCivil)
 
     private async Task<DashboardFinanceiroDto> FinanceiroAsync(DateOnly inicial, DateOnly final, CancellationToken ct)
     {
-        var totais = await db.Lancamentos.AsNoTracking()
-            .Where(l => l.Ativo && l.Status == StatusLancamento.Pago && l.DataPagamento != null && l.ValorPago != null
-                && l.DataPagamento >= inicial && l.DataPagamento <= final)
+        var totais = await PagamentosRegistrados.Entre(db.Lancamentos.AsNoTracking(), inicial, final)
             .GroupBy(l => l.TipoFluxo)
             .Select(g => new { TipoFluxo = g.Key, Total = g.Sum(l => l.ValorPago!.Value) })
             .ToListAsync(ct);

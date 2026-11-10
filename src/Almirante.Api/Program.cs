@@ -107,6 +107,7 @@ builder.Services.AddSingleton(new EventosLockOptions());
 builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
 builder.Services.AddScoped<DashboardService>();
+builder.Services.AddScoped<TesourariaService>();
 builder.Services.AddScoped<NotificacoesService>();
 builder.Services.AddScoped<CatalogoFormacaoService>();
 builder.Services.AddScoped<FormacaoService>();
