@@ -262,4 +262,29 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
             new(2026, 12, 100m, 0m), new(2027, 1, 80m, 33.33m), new(2027, 2, 0m, 0m),
         }, resumo.ReceitasDespesas);
     }
+
+    [Fact(DisplayName = "GET /api/Tesouraria/Resumo no SQL Server soma os pagamentos registrados e o mês atual coincide com o Dashboard")]
+    public async Task TesourariaResumo_GetResumo_SomaPagamentosEMesAtualCoincideComDashboardAsync()
+    {
+        //Arrange
+        var entrada = await CriarAsync(120m);
+        var saida = await CriarAsync(40m, "Saida");
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, entrada.Id, 100m, Ontem)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, saida.Id, 40m, Ontem)).StatusCode);
+        await CriarAsync(999m);
+
+        //Act
+        var resposta = await _client.GetAsync("/api/Tesouraria/Resumo");
+        var resumo = (await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json))!;
+        var dashboard = (await _client.GetFromJsonAsync<DashboardResponse>("/api/Dashboard", Json))!;
+
+        //Assert
+        Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
+        Assert.Equal(TesourariaService.MESES_RECEITAS_DESPESAS, resumo.ReceitasDespesas.Count);
+        var competencia = resumo.ReceitasDespesas.Single(c => (c.Ano, c.Mes) == (Ontem.Year, Ontem.Month));
+        Assert.Equal((100m, 40m), (competencia.Entradas, competencia.Saidas));
+        Assert.Equal((100m, 40m), (resumo.ReceitasDespesas.Sum(c => c.Entradas), resumo.ReceitasDespesas.Sum(c => c.Saidas)));
+        var mesAtual = resumo.ReceitasDespesas[^1];
+        Assert.Equal((dashboard.Financeiro!.Entradas, dashboard.Financeiro.Saidas), (mesAtual.Entradas, mesAtual.Saidas));
+    }
 }
