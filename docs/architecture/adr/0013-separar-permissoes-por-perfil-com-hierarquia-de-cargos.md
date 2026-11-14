@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Implementado na issue #127.
+Superseded by [ADR-0017](0017-gerenciar-cargos-e-permissoes-pelo-banco-com-rbac-dinamico.md) (issue #182). Implementado na issue #127.
 
 ## Contexto
 

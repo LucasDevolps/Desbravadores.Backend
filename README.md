@@ -410,8 +410,8 @@ O antiforgery do ASP.NET Core vincula o CSRF ao usuário autenticado no momento 
 | `POST` | `/api/Auth/recuperacao-senha/confirmar` | conclui a recuperação com a autorização entregue pessoalmente pelo responsável |
 
 Troca de senha de outro usuário e recuperação assistida (`/api/Usuarios/{id}/alterar-senha`, `/api/Usuarios/recuperacao-senha/pendentes`,
-`/api/Usuarios/{id}/recuperacao-senha/autorizacao`) seguem uma matriz explícita (ADM e DIR → SEC, TES e DS; SEC → DS), confirmada com a
-senha do responsável. Política de senha (15 a 128 caracteres), auditoria, concorrência, notificação e limites em
+`/api/Usuarios/{id}/recuperacao-senha/autorizacao`) seguem as regras por alvo do banco (matriz inicial: ADM e DIR → SEC, TES e DS;
+SEC → DS), confirmadas com a senha do responsável. Política de senha (15 a 128 caracteres), auditoria, concorrência, notificação e limites em
 [`docs/senhas.md`](docs/senhas.md). Nenhum e-mail é enviado: não há provedor configurado.
 
 Cadastros, autoatendimento e rotas de apoio (a lista completa de rotas, com código e testes, está em
@@ -434,9 +434,28 @@ Cadastros, autoatendimento e rotas de apoio (a lista completa de rotas, com cód
 | `GET` / `PUT` / `DELETE` | `/api/Me/foto` | a própria foto (qualquer cargo) |
 | `GET` | `/api/Me/Eventos`, `/api/Me/Eventos/{id}` | eventos de que o usuário participa (qualquer cargo) |
 | `GET` | `/api/Cep/{cep}` | consulta o CEP no ViaCEP para preencher o endereço (qualquer cargo; nada é gravado) |
-| `GET` | `/api/Cargos` | lista os cargos (ADM, DIR, DIRA, SEC) |
+| `GET` | `/api/Cargos` | lista os cargos, com `sistemaProtegido` e `versao` (`cargos.consultar`) |
+| `GET` | `/api/Me/Permissoes` | permissões efetivas do próprio usuário e `versaoAutorizacao` (qualquer cargo) |
 | `GET` | `/health` | informa a prontidão da aplicação |
 | `GET` | `/alive` | informa se a aplicação está ativa |
+
+**Cargos e permissões (issue #182).** Os acessos vêm do banco: cada rota exige uma permissão do catálogo (`GET /api/Permissoes`),
+concedida ao cargo em `CargoPermissoes`; as operações sobre outro usuário exigem também uma regra por alvo (`CargoRegrasAlvo`). Os
+cargos entre parênteses nas tabelas deste README são a **matriz inicial** semeada pela migration `AddRbacDinamico` e pelo
+seed. O perfil de sistema protegido (ADM) administra pela API, sem deploy e com efeito na próxima requisição do usuário afetado:
+
+| Método | Rota | Comportamento |
+| --- | --- | --- |
+| `POST` | `/api/Cargos` | cria um cargo (perfil) sem permissões; `role` única, normalizada e imutável |
+| `PUT` | `/api/Cargos/{id}` | altera nome e descrição |
+| `POST` | `/api/Cargos/{id}/Desativar`, `/api/Cargos/{id}/Reativar` | desativa (só sem usuários ativos e nunca o perfil protegido) ou reativa |
+| `GET` / `PUT` | `/api/Cargos/{id}/Permissoes` | consulta / substitui de uma vez as permissões do cargo |
+| `GET` / `PUT` | `/api/Cargos/{id}/RegrasAlvo` | consulta / substitui de uma vez as regras por alvo do cargo |
+
+Toda escrita exige `versao` (`409` se mudou, sem sobrescrever), `motivo`, `senhaAtualSolicitante` e `X-CSRF-TOKEN`, e grava o histórico
+imutável `Autorizacao_historico`. Detalhes, limites contra escalada de privilégio e migração em
+[`docs/authentication-security.md`](docs/authentication-security.md#rbac-dinâmico-182) e na
+[ADR-0017](docs/architecture/adr/0017-gerenciar-cargos-e-permissoes-pelo-banco-com-rbac-dinamico.md).
 
 **Dados pessoais de usuários.** `POST`, `PUT` e `GET /api/Usuarios` trafegam `cpf`, `dataNascimento`
 (`yyyy-MM-dd`, sem horário, não futura) e `telefone`, `null` em cadastros antigos. O **`cpf` é obrigatório no
@@ -553,8 +572,8 @@ Uma faxina diária remove gravações interrompidas e fotos sem referência no b
 
 ## Lançamentos
 
-O agregado financeiro possui um único fluxo de criação, protegido pela policy `GestaoFinanceira`
-(`ADM`, `DIR`, `DIRA` e `TES`; o Secretário não opera lançamentos nem pagamentos). Sem autenticação
+O agregado financeiro possui um único fluxo de criação, protegido pelas permissões `financeiro.lancamentos.*` e
+`financeiro.pagamentos.registrar` (inicialmente `ADM`, `DIR`, `DIRA` e `TES`; o Secretário não opera lançamentos nem pagamentos). Sem autenticação
 válida a resposta é `401`; autenticado com outro cargo, `403`.
 
 | Método | Rota | Finalidade |
@@ -705,10 +724,10 @@ informando a data e o valor reais. `DataAtualizacao` nunca é usada como data de
 
 `/api/Eventos` cadastra **grupos de cobrança** de passeios/eventos. Cada `POST` cria um cadastro
 (uma composição de custos + uma lista de membros) e gera **um lançamento pendente por membro**,
-reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Policy
-`GestaoEventos` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401` sem autenticação, `403` sem permissão):
+reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Permissões
+`eventos.consultar/criar/editar/excluir` (inicialmente `ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401` sem autenticação, `403` sem permissão):
 o Secretário gerencia eventos e o Tesoureiro executa as mesmas operações, mas registrar pagamentos
-continua só em `/api/Lancamentos` (`GestaoFinanceira`). O participante consulta os próprios eventos
+continua só em `/api/Lancamentos` (`financeiro.pagamentos.registrar`). O participante consulta os próprios eventos
 em `/api/Me/Eventos`. Contrato completo, exemplos e códigos no Swagger.
 
 | Método | Rota | Resultado |
@@ -829,9 +848,9 @@ retentativas da mesma tentativa; aplique `dataMinimaCadastro` no seletor de data
 ## Dashboard
 
 `GET /api/Dashboard[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` devolve, numa resposta só, os
-indicadores do clube. Policy `Painel` (`ADM`, `DIR`, `DIRA`, `SEC`, `TES`): sem token `401`, outro
+indicadores do clube. Permissão `dashboard.consultar` (inicialmente `ADM`, `DIR`, `DIRA`, `SEC`, `TES`): sem token `401`, outro
 cargo `403`, filtros inválidos `400`. O bloco `financeiro` só é calculado e enviado para quem também
-tem `GestaoFinanceira` (`ADM`, `DIR`, `DIRA`, `TES`); para o Secretário vem `"financeiro": null`, com
+tem `dashboard.financeiro.consultar` (inicialmente `ADM`, `DIR`, `DIRA`, `TES`); para o Secretário vem `"financeiro": null`, com
 os demais indicadores iguais.
 
 ```json
@@ -875,8 +894,8 @@ Não depende do período.
 
 ## Tesouraria
 
-`GET /api/Tesouraria/Resumo` (issue #190) alimenta a tela da Tesouraria. Policy `GestaoFinanceira`
-(`ADM`, `DIR`, `DIRA`, `TES`): sem token `401`, outro cargo (inclusive o Secretário) `403`. Não recebe parâmetros.
+`GET /api/Tesouraria/Resumo` (issue #190) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
+(inicialmente `ADM`, `DIR`, `DIRA`, `TES`): sem token `401`, outro cargo (inclusive o Secretário) `403`. Não recebe parâmetros.
 
 ```json
 {
@@ -964,7 +983,7 @@ cancelamento, retomada e reabertura auditados. O contrato completo, com regras d
 |---|---|
 | `GET /api/Classes…`, `GET /api/Especialidades…`, `GET /api/RevisoesRequisitos/{id}` | qualquer cargo ativo (rascunhos só para quem gerencia) |
 | `GET /api/Me/Formacao`, `/api/Me/Formacao/Classes/{id}`, `/api/Me/Formacao/Especialidades/{id}` | qualquer cargo ativo, só a própria formação |
-| escrita de especialidades e revisões; `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios/Participantes` | `GestaoFormacao`: ADM, DIR, DIRA, SEC |
+| escrita de especialidades e revisões; `/api/Formacao/Classes…`, `/api/Formacao/Especialidades…`, `/api/Formacao/Membros/{id}`, `/api/Formacao/Relatorios/Participantes` | `formacao.gestao.consultar` (leitura), `formacao.gerenciar` (escrita), `formacao.revisoes.administrar` (revisões): inicialmente ADM, DIR, DIRA, SEC |
 
 Tesoureiro, instrutor e demais cargos só consultam os catálogos e a própria formação. A migration
 `AddFormacaoClassesEspecialidades` cria as tabelas e os triggers de histórico (`formacao_historico`, tabela de auditoria
@@ -987,9 +1006,9 @@ Nada disso gera lançamento financeiro nem altera o dashboard. O contrato comple
 
 | Rotas | Quem |
 |---|---|
-| `GET /api/Almoxarifado/…` (bens, empréstimos, inventários, desejos, históricos, relatórios, CSV, enums, responsáveis) | `ConsultaAlmoxarifado`: qualquer cargo ativo exceto DS, e o responsável designado |
-| escrita em `/api/Almoxarifado/Bens…`, `Emprestimos…`, `Manutencoes…`, `Inventarios…`, `Desejos…` | `GestaoAlmoxarifado`: ADM, DIR, DIRA, SEC, ALM e o responsável designado |
-| `POST /api/Almoxarifado/Responsaveis…` (designar/revogar) | `DesignacaoAlmoxarifado`: ADM, DIR, DIRA, SEC |
+| `GET /api/Almoxarifado/…` (bens, empréstimos, inventários, desejos, históricos, relatórios, CSV, enums, responsáveis) | `almoxarifado.consultar`: inicialmente os cargos semeados exceto DS, e o responsável designado |
+| escrita em `/api/Almoxarifado/Bens…`, `Emprestimos…`, `Manutencoes…`, `Inventarios…`, `Desejos…` | `almoxarifado.gerenciar`: inicialmente ADM, DIR, DIRA, SEC, ALM, e o responsável designado |
+| `POST /api/Almoxarifado/Responsaveis…` (designar/revogar) | `almoxarifado.responsaveis.designar`: inicialmente ADM, DIR, DIRA, SEC |
 
 A migration `AddAlmoxarifadoPatrimonio` cria dez tabelas, os triggers de histórico (`almoxarifado_historico`, tabela de
 auditoria só com `SELECT` para o runtime) e os triggers de imutabilidade do inventário. Ela só altera dados numa

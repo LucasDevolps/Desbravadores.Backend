@@ -43,12 +43,13 @@ dashboard. Também ficam fora do escopo:
 Sem autenticação válida, a resposta é sempre `401`. Sem permissão, é `403`, com o ProblemDetails padrão. A
 decisão é sempre do backend:
 
-- **`GestaoAlmoxarifado`**: cargo ADM, DIR, DIRA, SEC ou ALM (`Roles.Almoxarifado`), **ou** designação vigente do
+- **`almoxarifado.gerenciar`**: concedida inicialmente a ADM, DIR, DIRA, SEC e ALM, **ou** designação vigente do
   usuário como responsável pelo almoxarifado, conferida no banco a cada requisição.
-- **`ConsultaAlmoxarifado`**: qualquer cargo ativo exceto DS (`Roles.SemConsultaAlmoxarifado`), ou designação vigente.
-  Isso vale também para cargos criados depois, pela tela de cargos.
-- **`DesignacaoAlmoxarifado`**: ADM, DIR, DIRA, SEC. São os mesmos cargos que cadastram usuários e podem atribuir o
-  cargo ALM.
+- **`almoxarifado.consultar`**: concedida inicialmente aos 16 cargos semeados exceto DS, ou designação vigente. Desde a
+  issue #182, um cargo criado depois (ou um cargo customizado anterior à migration) **não** consulta por padrão: a
+  permissão precisa ser concedida em `PUT /api/Cargos/{id}/Permissoes`.
+- **`almoxarifado.responsaveis.designar`**: concedida inicialmente a ADM, DIR, DIRA, SEC. A designação nunca concede essa
+  permissão nem as de autorização.
 
 Decisões do responsável pelo produto (2026-10-23):
 

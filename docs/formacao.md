@@ -32,7 +32,9 @@ sistema não escolhe uma versão por conta própria. A revisão de requisitos re
 | Concluir, investidura/entrega, cancelar, retomar, reabrir, migrar revisão | ✓ | ✓ | ✓ | — (`403`) |
 | Consultar a formação de outros membros, histórico e relatórios (`/api/Formacao…`) | ✓ | ✓ | ✓ | — (`403`) |
 
-- Policy `GestaoFormacao` (`Roles.Formacao` = ADM, DIR, DIRA, SEC). O Tesoureiro **não** escreve: ele faz parte da
+- Permissões `formacao.gestao.consultar` (consulta de outros membros e relatórios), `formacao.gerenciar` (escrita do
+  acompanhamento e do catálogo de especialidades) e `formacao.revisoes.administrar` (revisões de requisitos e rascunhos),
+  concedidas inicialmente a ADM, DIR, DIRA e SEC (issue #182). O Tesoureiro **não** escreve: ele faz parte da
   "gestão" de eventos e do painel, mas não deste módulo.
 - Ser instrutor de um vínculo (`instrutorId`) não concede escrita nem leitura dos dados de outros membros.
 - O participante consulta só o que é seu. O membro vem do token. Um id de vínculo de outro membro em
@@ -114,7 +116,7 @@ Rascunho ──Publicar──▶ Publicada ──(outra publicada)──▶ Subs
 - Para levar um vínculo em andamento à revisão vigente, use `POST /api/Formacao/{Classes|Especialidades}/{id}/MigrarRevisao`
   com `{ revisaoId, justificativa, versao }`. A migração é explícita e auditada. Ela preserva o progresso da revisão
   antiga e não copia nenhuma validação: a nova revisão começa pendente. Evidências vinculadas são desativadas.
-- Rascunhos e revisões descartadas aparecem só para `GestaoFormacao`.
+- Rascunhos e revisões descartadas aparecem só para quem tem `formacao.revisoes.administrar`.
 
 Formato dos requisitos (árvore na ordem do cartão; até 4 níveis e 500 itens; código único na revisão):
 
