@@ -6,7 +6,8 @@ seguir. O frontend ainda não foi implementado nem validado.
 
 ## Visão geral
 
-- O banco é a fonte da verdade. A API REST lista as pendências e registra a leitura.
+- O banco é a fonte da verdade. A API REST lista as pendências e o histórico (lidas e não lidas) e
+  registra a leitura.
 - O hub SignalR (`/hubs/notificacoes`) apenas **avisa** que algo mudou, para a tela atualizar sem
   recarregar. Um aviso pode chegar repetido ou não chegar (por exemplo, com o usuário desconectado):
   o cliente sempre se reconcilia com a API.
@@ -101,6 +102,65 @@ Sem pendências: `{ "items": [], "naoLidas": 0, "pageSize": 20, "proximoCursor":
 devolve `404`), com data, local, composição do valor e a própria cobrança. `/api/Eventos` e `/api/Lancamentos`
 continuam restritos às policies de gestão. O resumo também está em `titulo` e `mensagem`.
 
+### Histórico
+
+`GET /api/Notificacoes?filtro=Todas&pageSize=20&cursor=<opaco>` (issue #194)
+
+Caixa inteira do usuário do token, para a tela de histórico. Uma notificação lida continua aqui, agora
+com `lidaEmUtc` preenchida, e sai de `/Pendentes`.
+
+- `filtro`: `Todas` (padrão), `Lidas` ou `NaoLidas`, sem diferenciar maiúsculas. Outro valor: `400`.
+  `NaoLidas` traz o mesmo conjunto de `/Pendentes`.
+- Mesmo objeto de notificação, mesma ordem e mesma paginação de `/Pendentes`: `criadaEmUtc`
+  decrescente, empate desfeito por `id`; `pageSize` de 1 a 50 (padrão 20); `cursor` com o
+  `proximoCursor` da página anterior, `null` na última. Mantenha o mesmo `filtro` entre as páginas. Ao
+  trocar de filtro, comece sem `cursor`.
+- O cursor é a posição da última notificação entregue (data e `id`), e não um deslocamento. Ler
+  notificações entre uma página e outra não faz o cliente pular nem repetir itens. No filtro `Todas`,
+  um item já entregue pode ter mudado de não lido para lido: atualize-o pelo `id`, com o aviso
+  `NotificacaoLida` ou numa nova consulta.
+- `naoLidas` é o total de não lidas da caixa inteira, igual em qualquer página e qualquer filtro (o
+  mesmo número de `/Pendentes`).
+- `filtro` na resposta é o filtro aplicado.
+- Não há parâmetro de usuário: um `usuarioId` na query é ignorado. Consultar o histórico **não** marca
+  nada como lido e não grava nada.
+- O índice `IX_notificacoes_historico` (`DestinatarioId`, `CriadaEmUtc` desc, `Id` desc, incluindo
+  `LidaEmUtc`, migration `AddNotificacoesHistorico`) atende a paginação em qualquer filtro. O índice
+  filtrado `IX_notificacoes_pendentes` continua servindo `/Pendentes` e a contagem de não lidas.
+
+```json
+{
+  "items": [
+    {
+      "id": "6f1c2a9e-3b0d-4f7a-9c1e-2d4b5a6c7e8f",
+      "tipo": "EventoCadastrado",
+      "titulo": "Novo evento: Parque Ibirapuera",
+      "mensagem": "…",
+      "criadaEmUtc": "2026-10-20T14:03:11.5170000Z",
+      "lidaEmUtc": "2026-10-20T14:05:42.0110000Z",
+      "eventoId": "0b7e5d1c-8a2f-4c3e-9d6b-1a2b3c4d5e6f",
+      "lancamentoId": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+    },
+    {
+      "id": "1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+      "tipo": "DebitoCadastrado",
+      "titulo": "Novo débito: Mensalidade",
+      "mensagem": "…",
+      "criadaEmUtc": "2026-10-18T09:00:00.0000000Z",
+      "lidaEmUtc": null,
+      "eventoId": null,
+      "lancamentoId": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+    }
+  ],
+  "filtro": "Todas",
+  "naoLidas": 1,
+  "pageSize": 20,
+  "proximoCursor": null
+}
+```
+
+Histórico vazio: `{ "items": [], "filtro": "Todas", "naoLidas": 0, "pageSize": 20, "proximoCursor": null }`.
+
 ### Marcar como lida
 
 `POST /api/Notificacoes/{id}/Leitura` (sem corpo)
@@ -188,6 +248,8 @@ await recarregarPendencias();
 - Guarde as pendências num mapa por `id`. `NotificacaoCriada` com um `id` já conhecido não altera nada.
   Ignore também `NotificacaoCriada` de um `id` que já saiu da lista por leitura.
 - `NotificacaoLida` remove o `id` da lista, inclusive em outras abas e dispositivos do mesmo usuário.
+  Numa tela de histórico aberta, o mesmo aviso preenche `lidaEmUtc` do item (e o tira da visão
+  `NaoLidas`). O item continua no histórico.
 - Em caso de dúvida (aviso fora de ordem, reconexão, contador divergente), consulte a API: o estado do
   banco prevalece.
 - A entrega é "pelo menos uma vez" enquanto o usuário estiver conectado. Não há garantia de entrega
@@ -201,6 +263,9 @@ await recarregarPendencias();
 4. Se a chamada falhar (rede, `5xx`), manter a notificação como pendente e permitir nova tentativa.
    Repetir é seguro: a data da primeira leitura é preservada.
 5. `404` significa que a notificação não existe para este usuário: remova-a da lista local.
+6. Para consultar de novo uma notificação já lida, use o histórico (`GET /api/Notificacoes`, com
+   `filtro=Lidas` ou `Todas`). Abrir de novo uma notificação lida pode chamar a leitura outra vez sem
+   efeito (mesma `lidaEmUtc`).
 
 ## Confiabilidade
 
