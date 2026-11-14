@@ -97,6 +97,7 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("GET /api/Me/Eventos", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me/Eventos")),
         new("GET /api/Me/Eventos/{id}", Modulo.Autoatendimento, () => new(HttpMethod.Get, $"/api/Me/Eventos/{Guid.NewGuid()}")),
         new("GET /api/Cep/{cep}", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Cep/04382160")),
+        new("GET /api/Notificacoes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes?filtro=Lidas")),
         new("GET /api/Notificacoes/Pendentes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes/Pendentes")),
         new("POST /api/Notificacoes/{id}/Leitura", Modulo.Autoatendimento, () => new(HttpMethod.Post, $"/api/Notificacoes/{Guid.NewGuid()}/Leitura")),
 
