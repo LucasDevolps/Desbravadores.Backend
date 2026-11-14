@@ -55,6 +55,31 @@ public static class NotificacoesTestKit
         return (await response.Content.ReadFromJsonAsync<NotificacoesPendentesResponse>(Json))!;
     }
 
+    public static async Task<HistoricoNotificacoesResponse> HistoricoAsync(HttpClient client, string? filtro = null, int? pageSize = null, string? cursor = null)
+    {
+        var query = new List<string>();
+        if (filtro is not null) query.Add($"filtro={filtro}");
+        if (pageSize is not null) query.Add($"pageSize={pageSize}");
+        if (cursor is not null) query.Add($"cursor={Uri.EscapeDataString(cursor)}");
+        using var response = await client.GetAsync("/api/Notificacoes" + (query.Count > 0 ? "?" + string.Join('&', query) : ""));
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<HistoricoNotificacoesResponse>(Json))!;
+    }
+
+    public static async Task<List<NotificacaoDto>> HistoricoCompletoAsync(HttpClient client, string? filtro = null, int pageSize = 2)
+    {
+        var todas = new List<NotificacaoDto>();
+        string? cursor = null;
+        do
+        {
+            var pagina = await HistoricoAsync(client, filtro, pageSize, cursor);
+            todas.AddRange(pagina.Items);
+            cursor = pagina.ProximoCursor;
+        } while (cursor is not null);
+
+        return todas;
+    }
+
     public static Task<HttpResponseMessage> LerAsync(HttpClient client, Guid notificacaoId) =>
         client.PostAsync($"/api/Notificacoes/{notificacaoId}/Leitura", content: null);
 

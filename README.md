@@ -1025,6 +1025,7 @@ conexão e reconexão, deduplicação) está em [`docs/notificacoes.md`](docs/no
 | Método | Rota | Resultado |
 |---|---|---|
 | `GET` | `/api/Notificacoes/Pendentes?pageSize=20&cursor=...` | `200` `{ items, naoLidas, pageSize, proximoCursor }`, só não lidas, da mais recente para a mais antiga |
+| `GET` | `/api/Notificacoes?filtro=Todas&pageSize=20&cursor=...` | `200` `{ items, filtro, naoLidas, pageSize, proximoCursor }`, histórico com lidas e não lidas (`filtro`: `Todas`, `Lidas` ou `NaoLidas`), mesma ordem e cursor de `/Pendentes` (issue #194) |
 | `POST` | `/api/Notificacoes/{id}/Leitura` | `200` `{ notificacao, naoLidas }`, idempotente (preserva a 1ª data); `404` se não for do usuário |
 
 Gatilhos desta versão, gravados na mesma transação do cadastro:

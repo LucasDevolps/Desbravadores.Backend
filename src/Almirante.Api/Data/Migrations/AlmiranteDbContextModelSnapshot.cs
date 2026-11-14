@@ -2413,9 +2413,13 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_notificacoes_destinatario_origem");
 
-                    b.HasIndex("DestinatarioId", "CriadaEmUtc", "Id")
+                    b.HasIndex(new[] { "DestinatarioId", "CriadaEmUtc", "Id" }, "IX_notificacoes_historico")
+                        .IsDescending(false, true, true);
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex(new[] { "DestinatarioId", "CriadaEmUtc", "Id" }, "IX_notificacoes_historico"), new[] { "LidaEmUtc" });
+
+                    b.HasIndex(new[] { "DestinatarioId", "CriadaEmUtc", "Id" }, "IX_notificacoes_pendentes")
                         .IsDescending(false, true, true)
-                        .HasDatabaseName("IX_notificacoes_pendentes")
                         .HasFilter("[LidaEmUtc] IS NULL");
 
                     b.ToTable("notificacoes", null, t =>
