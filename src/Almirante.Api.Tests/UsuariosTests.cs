@@ -123,7 +123,7 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
 
         var negado = await solicitante.PostAsJsonAsync("/api/Usuarios", corpo);
         Assert.Equal(HttpStatusCode.Forbidden, negado.StatusCode);
-        Assert.Equal("Somente um Administrador pode gerenciar usuários com o cargo Administrador.",
+        Assert.Equal("Seu cargo não tem regra por alvo para usuarios.criar sobre usuários com o cargo ADM.",
             (string)JsonNode.Parse(await negado.Content.ReadAsStringAsync())!["detail"]!);
         Assert.False(await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == corpo.email)));
 
@@ -131,7 +131,10 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
         Assert.Equal(HttpStatusCode.Created, (await admin.PostAsJsonAsync("/api/Usuarios", corpo)).StatusCode);
     }
 
-    /// <summary>Hierarquia: a diretoria atribui qualquer cargo (exceto ADM); o secretário só cargos sem acesso de gestão.</summary>
+    /// <summary>
+    /// Hierarquia da matriz inicial (regras por alvo de usuarios.criar, issue #182): a diretoria atribui qualquer cargo (exceto ADM); o
+    /// secretário só cargos sem acesso de gestão.
+    /// </summary>
     [Theory]
     [InlineData("SEC", "DS", true)] [InlineData("SEC", "CONS", true)] [InlineData("SEC", "TESU", true)] [InlineData("SEC", "ALM", true)]
     [InlineData("SEC", "SEC", false)] [InlineData("SEC", "TES", false)] [InlineData("SEC", "DIR", false)] [InlineData("SEC", "DIRA", false)]
@@ -149,7 +152,7 @@ public sealed class UsuariosTests(AlmiranteApiFactory factory) : IClassFixture<A
         Assert.Equal(permitido, await TestHelpers.WithDbAsync(factory, db => db.Usuarios.AnyAsync(u => u.Email == email)));
         if (!permitido)
         {
-            Assert.StartsWith("Somente a diretoria (Administrador, Diretor ou Diretor Associado)",
+            Assert.Equal($"Seu cargo não tem regra por alvo para usuarios.criar sobre usuários com o cargo {cargoRole}.",
                 (string)JsonNode.Parse(await resposta.Content.ReadAsStringAsync())!["detail"]!);
         }
     }

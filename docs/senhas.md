@@ -16,10 +16,14 @@ precisa entrar de novo com a senha nova.
 
 ## Matriz de autorização
 
-Lista explícita de pares, sem hierarquia inferida (`Security/PermissoesSenha.cs`). A mesma matriz vale para trocar a senha, listar
-pedidos, emitir a autorização e, de novo, no momento em que o titular consome a autorização.
+Desde a issue #182 a matriz são **regras por alvo** no banco (`CargoRegrasAlvo`), sem hierarquia inferida: o cargo do responsável
+precisa da permissão (`usuarios.senha.alterar-terceiros` para trocar a senha; `usuarios.senha.recuperacao-atender` para listar pedidos,
+emitir a autorização e concluir a recuperação) **e** de uma regra ativa para o cargo do alvo. A matriz inicial, semeada pela migration e
+pelo seed, reproduz a da issue #159 e pode ser alterada em `PUT /api/Cargos/{id}/RegrasAlvo`
+([`authentication-security.md`](authentication-security.md#rbac-dinâmico-182)). A regra é relida dentro da transação de cada operação e,
+de novo, no momento em que o titular consome a autorização.
 
-| Responsável logado | Senha de terceiros |
+| Responsável logado (matriz inicial) | Senha de terceiros |
 |---|---|
 | ADM | SEC, TES e DS |
 | DIR | SEC, TES e DS |
@@ -28,8 +32,9 @@ pedidos, emitir a autorização e, de novo, no momento em que o titular consome 
 
 - Qualquer usuário autenticado (conta, cargo e sessão ativos) troca a própria senha com a senha atual.
 - ADM, DIR e DIRA nunca são alvo; ADM não altera outro ADM nem DIR, e DIR não altera ADM nem outro DIR. DIRA não entra por inferência.
-- Ter acesso ao cadastro de usuários (`GestaoCadastros`, que inclui DIRA) não basta. A policy `AlteracaoSenhaTerceiros` (ADM, DIR, SEC)
-  é só um filtro inicial: o par é decidido com o cargo do responsável e do alvo **relidos do banco**, nunca do token ou do corpo.
+- Ter acesso ao cadastro de usuários (`usuarios.*`, que DIRA também tem) não basta. A permissão de senha é só um filtro inicial: o par é
+  decidido pelas regras por alvo, com o cargo do responsável e do alvo **relidos do banco**, nunca do token ou do corpo. Revogar a
+  permissão ou a regra vale na operação seguinte, mesmo para uma autorização de recuperação já emitida.
 - Ordem das respostas, sem enumeração: cargo sem permissão recebe `403` antes de qualquer consulta ao alvo; quem atende alguém recebe
   `404` para alvo inexistente (esses cargos já listam os usuários em `GET /api/Usuarios`), `403` para par fora da matriz e `409` para
   alvo ou cargo inativo.

@@ -19,9 +19,20 @@ namespace Almirante.Api.Controllers;
 [Authorize(Policy = Policies.Autoatendimento)]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-public sealed class MeController(ISender mediator, LimitadorEnvioFotos limitador, IOptions<MediaOptions> media, ILogger<MeController> logger)
+public sealed class MeController(ISender mediator, LimitadorEnvioFotos limitador, IOptions<MediaOptions> media, ILogger<MeController> logger,
+    AutorizacaoAdminService autorizacao)
     : FotoUsuarioControllerBase(mediator, limitador, media, logger)
 {
+    [HttpGet("Permissoes")]
+    [EndpointSummary("Consulta as próprias permissões efetivas (para menus, rotas e botões do frontend).")]
+    [EndpointDescription("Cargo do usuário do token (id, role, nome), permissoes (do cargo e da designação de responsável pelo almoxarifado, " +
+        "em ordem), permissoesPorDesignacao e versaoAutorizacao (revisão global: muda a cada alteração de cargo, concessão ou regra; recarregue " +
+        "quando mudar ou ao receber 403 inesperado). Nunca de terceiros. Regras por alvo dependem do usuário alvo e não aparecem aqui. É " +
+        "conveniência: a API decide e recusa (403) em toda requisição.")]
+    [ProducesResponseType<MinhasPermissoesDto>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<MinhasPermissoesDto>> Permissoes(CancellationToken cancellationToken) =>
+        Ok(await autorizacao.MinhasPermissoesAsync(User.UsuarioId(), cancellationToken));
+
     [HttpGet]
     [EndpointSummary("Consulta os próprios dados cadastrais.")]
     [EndpointDescription("Usuário identificado só pelo token. Mesmos campos pessoais de GET /api/Usuarios (cpf, documento, contato, saúde, " +

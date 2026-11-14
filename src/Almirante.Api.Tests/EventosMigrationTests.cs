@@ -44,7 +44,7 @@ public sealed class EventosMigrationTests
             await migrator.MigrateAsync(MigrationAnterior);
 
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro.", CriadoPor = "Teste", Role = "DS" };
-            db.Cargos.Add(cargo);
+            await TestHelpers.InserirCargosLegadosAsync(db, cargo);
             var usuario = new Usuario { Id = Guid.NewGuid(), Nome = "Legado", Email = "legado-ev@local.dev", EmailNormalizado = "LEGADO-EV@LOCAL.DEV", SenhaHash = "x", CargoId = cargo.Id };
             await db.SaveChangesAsync();
             await TestHelpers.InserirUsuarioLegadoAsync(db, usuario);
@@ -132,7 +132,7 @@ public sealed class EventosMigrationTests
             await migrator.MigrateAsync(Migration);
 
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro.", CriadoPor = "Teste", Role = "DS" };
-            db.Cargos.Add(cargo);
+            await TestHelpers.InserirCargosLegadosAsync(db, cargo);
             var usuario = new Usuario { Id = Guid.NewGuid(), Nome = "Legado", Email = "legado-resp@local.dev", EmailNormalizado = "LEGADO-RESP@LOCAL.DEV", SenhaHash = "x", CargoId = cargo.Id };
             await db.SaveChangesAsync();
             await TestHelpers.InserirUsuarioLegadoAsync(db, usuario);

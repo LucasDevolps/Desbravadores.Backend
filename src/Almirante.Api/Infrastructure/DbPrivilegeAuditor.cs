@@ -14,8 +14,8 @@ public static class DbPrivilegeAuditor
     public const string AlmoxarifadoAuditTable = "almoxarifado_historico";
     public static readonly string[] AuditTables = [AuditTable, EventosAuditTable, UsuariosAuditTable, FormacaoAuditTable, AlmoxarifadoAuditTable];
 
-    /// <summary>Auditoria gravada pela própria aplicação: a role de runtime só lê e insere (UPDATE e DELETE negados).</summary>
-    public static readonly string[] InsertOnlyTables = [Data.AlmiranteDbContext.TabelaAuditoriaHttp];
+    /// <summary>Auditoria gravada pela própria aplicação (HTTP e histórico de autorização): a role de runtime só lê e insere (UPDATE e DELETE negados).</summary>
+    public static readonly string[] InsertOnlyTables = [Data.AlmiranteDbContext.TabelaAuditoriaHttp, Data.AlmiranteDbContext.TabelaAutorizacaoHistorico];
     public const string SessionsTable = "AuthSessions";
 
     private static readonly string[] ServerRoles =

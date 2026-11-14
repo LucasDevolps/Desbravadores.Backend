@@ -231,7 +231,8 @@ public sealed class AlteracaoSenhaSqlServerTests : IAsyncLifetime
                 var alvo = await ContaAsync(_factory, alvoRole);
                 var antes = await EstadoAsync(_factory, alvo.Id);
                 using var resposta = await AlterarDeUsuarioAsync(sessao.Client, alvo.Id, solicitante.Senha, NovaSenha());
-                var esperado = PermissoesSenha.PodeAlterarSenhaDeTerceiro(solicitanteRole, alvoRole) ? HttpStatusCode.NoContent : HttpStatusCode.Forbidden;
+                var esperado = MatrizInicialAutorizacao.RegrasAlvo.Contains((solicitanteRole, Permissoes.UsuariosSenhaAlterarTerceiros, alvoRole))
+                    ? HttpStatusCode.NoContent : HttpStatusCode.Forbidden;
                 if (esperado == HttpStatusCode.NoContent) alvosPermitidos.Add(alvo.Id);
                 if (resposta.StatusCode != esperado)
                 {

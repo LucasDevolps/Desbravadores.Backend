@@ -7,15 +7,15 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Controllers;
 
-/// <summary>Visão administrativa e relatórios da formação (GestaoFormacao: ADM, DIR, DIRA, SEC).</summary>
+/// <summary>Visão administrativa e relatórios da formação (formacao.gestao.consultar).</summary>
 [ApiController]
 [Route("api/Formacao")]
-[Authorize(Policy = Policies.GestaoFormacao)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class FormacaoController(ISender mediator) : ControllerBase
 {
     [HttpGet("Membros/{membroId:guid}")]
+    [RequerPermissao(Permissoes.FormacaoGestaoConsultar)]
     [EndpointSummary("Histórico individual de classes e especialidades de um membro (todas as situações, inclusive canceladas e históricas).")]
     [EndpointDescription("Classes na ordem do catálogo e especialidades por nome, cada uma com situação, datas, investidura/entrega e resumo do " +
         "progresso (requisitos cumpridos e pendentes). O detalhe de cada vínculo está em /api/Formacao/Classes/{id} e /api/Formacao/Especialidades/{id}.")]
@@ -28,6 +28,7 @@ public sealed class FormacaoController(ISender mediator) : ControllerBase
     }
 
     [HttpGet("Relatorios/Participantes")]
+    [RequerPermissao(Permissoes.FormacaoGestaoConsultar)]
     [EndpointSummary("Participantes por classe/especialidade e situação (em andamento, concluídas, aguardando investidura/entrega, canceladas).")]
     [EndpointDescription("tipo = Classe (padrão) ou Especialidade. Classe: todas as classes do filtro (classe, grupo), inclusive com zero. " +
         "Especialidade: as que têm vínculos, filtráveis por especialidadeId e area. A lista nominal de cada grupo sai de GET " +

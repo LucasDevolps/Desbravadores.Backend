@@ -347,6 +347,99 @@ namespace Almirante.Api.Data.Migrations
                     b.ToTable("AuthSessions", (string)null);
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.AutorizacaoEstado", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<long>("Revisao")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AutorizacaoEstado", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_AutorizacaoEstado_Unico", "[Id] = 1");
+                        });
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Revisao = 1L
+                        });
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.AutorizacaoHistorico", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Antes")
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<Guid>("CargoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Depois")
+                        .IsRequired()
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
+
+                    b.Property<string>("IpResponsavel")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<string>("Motivo")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("OcorridoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Operacao")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<long>("RevisaoAutorizacao")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TraceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("UsuarioResponsavelId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CargoId", "OcorridoEmUtc")
+                        .HasDatabaseName("IX_Autorizacao_historico_cargo_data");
+
+                    b.HasIndex("UsuarioResponsavelId", "OcorridoEmUtc")
+                        .HasDatabaseName("IX_Autorizacao_historico_responsavel_data");
+
+                    b.ToTable("Autorizacao_historico", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Autorizacao_historico_Json", "([Antes] IS NULL OR ISJSON([Antes]) = 1) AND ISJSON([Depois]) = 1");
+
+                            t.HasCheckConstraint("CK_Autorizacao_historico_Operacao", "[Operacao] IN ('CargoCriado', 'CargoAlterado', 'CargoDesativado', 'CargoReativado', 'ConcessoesSubstituidas', 'RegrasAlvoSubstituidas')");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.BemPatrimonial", b =>
                 {
                     b.Property<Guid>("Id")
@@ -575,8 +668,19 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(20)");
 
+                    b.Property<bool>("SistemaProtegido")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<DateTime?>("UltimaAtualizacao")
                         .HasColumnType("datetime2");
+
+                    b.Property<long>("Versao")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(1L);
 
                     b.HasKey("Id");
 
@@ -584,6 +688,95 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Cargos", (string)null);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.CargoPermissao", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("CargoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ConcedidaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ConcedidaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PermissaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("RevogadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("RevogadaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConcedidaPorUsuarioId");
+
+                    b.HasIndex("PermissaoId");
+
+                    b.HasIndex("RevogadaPorUsuarioId");
+
+                    b.HasIndex("CargoId", "PermissaoId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CargoPermissoes_Cargo_Permissao");
+
+                    b.ToTable("CargoPermissoes", (string)null);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.CargoRegraAlvo", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("CargoAlvoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CargoSolicitanteId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ConcedidaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ConcedidaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PermissaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("RevogadaEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("RevogadaPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CargoAlvoId");
+
+                    b.HasIndex("ConcedidaPorUsuarioId");
+
+                    b.HasIndex("PermissaoId");
+
+                    b.HasIndex("RevogadaPorUsuarioId");
+
+                    b.HasIndex("CargoSolicitanteId", "PermissaoId", "CargoAlvoId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CargoRegrasAlvo_Solicitante_Permissao_Alvo");
+
+                    b.ToTable("CargoRegrasAlvo", (string)null);
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.DesejoAlmoxarifado", b =>
@@ -2235,6 +2428,394 @@ namespace Almirante.Api.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.Permissao", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Chave")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(150)");
+
+                    b.Property<string>("Descricao")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<bool>("Escrita")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("ExigeRegraAlvo")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Modulo")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(60)");
+
+                    b.Property<bool>("ReservadaSistema")
+                        .HasColumnType("bit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Chave")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Permissoes_Chave");
+
+                    b.ToTable("Permissoes", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000001"),
+                            Ativo = true,
+                            Chave = "usuarios.consultar",
+                            Descricao = "Consultar o cadastro completo de usuários e a foto de outros usuários.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000002"),
+                            Ativo = true,
+                            Chave = "usuarios.criar",
+                            Descricao = "Cadastrar usuários nos cargos permitidos pelas regras por alvo.",
+                            Escrita = true,
+                            ExigeRegraAlvo = true,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000003"),
+                            Ativo = true,
+                            Chave = "usuarios.editar",
+                            Descricao = "Alterar o cadastro e o cargo de usuários nos cargos permitidos pelas regras por alvo.",
+                            Escrita = true,
+                            ExigeRegraAlvo = true,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000004"),
+                            Ativo = true,
+                            Chave = "usuarios.excluir",
+                            Descricao = "Excluir (logicamente) usuários nos cargos permitidos pelas regras por alvo.",
+                            Escrita = true,
+                            ExigeRegraAlvo = true,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000005"),
+                            Ativo = true,
+                            Chave = "usuarios.foto.alterar",
+                            Descricao = "Enviar ou remover a foto de usuários nos cargos permitidos pelas regras por alvo.",
+                            Escrita = true,
+                            ExigeRegraAlvo = true,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000006"),
+                            Ativo = true,
+                            Chave = "usuarios.senha.alterar-terceiros",
+                            Descricao = "Alterar a senha de usuários nos cargos permitidos pelas regras por alvo.",
+                            Escrita = true,
+                            ExigeRegraAlvo = true,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000007"),
+                            Ativo = true,
+                            Chave = "usuarios.senha.recuperacao-atender",
+                            Descricao = "Listar e atender pedidos de recuperação de senha nos cargos permitidos pelas regras por alvo.",
+                            Escrita = true,
+                            ExigeRegraAlvo = true,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000008"),
+                            Ativo = true,
+                            Chave = "cargos.consultar",
+                            Descricao = "Consultar os cargos para o cadastro de usuários.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Usuários",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000009"),
+                            Ativo = true,
+                            Chave = "financeiro.lancamentos.consultar",
+                            Descricao = "Consultar lançamentos.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Financeiro",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000010"),
+                            Ativo = true,
+                            Chave = "financeiro.lancamentos.criar",
+                            Descricao = "Registrar lançamentos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Financeiro",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000011"),
+                            Ativo = true,
+                            Chave = "financeiro.lancamentos.editar",
+                            Descricao = "Corrigir lançamentos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Financeiro",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000012"),
+                            Ativo = true,
+                            Chave = "financeiro.lancamentos.excluir",
+                            Descricao = "Excluir lançamentos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Financeiro",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000013"),
+                            Ativo = true,
+                            Chave = "financeiro.pagamentos.registrar",
+                            Descricao = "Registrar e corrigir pagamentos de lançamentos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Financeiro",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000014"),
+                            Ativo = true,
+                            Chave = "financeiro.tesouraria.consultar",
+                            Descricao = "Consultar o resumo da tesouraria.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Financeiro",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000015"),
+                            Ativo = true,
+                            Chave = "eventos.consultar",
+                            Descricao = "Consultar eventos.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Eventos",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000016"),
+                            Ativo = true,
+                            Chave = "eventos.criar",
+                            Descricao = "Cadastrar eventos (e as cobranças que eles geram).",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Eventos",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000017"),
+                            Ativo = true,
+                            Chave = "eventos.editar",
+                            Descricao = "Alterar eventos (e sincronizar as cobranças).",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Eventos",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000018"),
+                            Ativo = true,
+                            Chave = "eventos.excluir",
+                            Descricao = "Excluir eventos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Eventos",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000019"),
+                            Ativo = true,
+                            Chave = "membros.consultar",
+                            Descricao = "Consultar a lista mínima de membros (id, nome e cargo) para seleção.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Membros",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000020"),
+                            Ativo = true,
+                            Chave = "dashboard.consultar",
+                            Descricao = "Consultar o painel.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Dashboard",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000021"),
+                            Ativo = true,
+                            Chave = "dashboard.financeiro.consultar",
+                            Descricao = "Ver o bloco financeiro do painel.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Dashboard",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000022"),
+                            Ativo = true,
+                            Chave = "formacao.gestao.consultar",
+                            Descricao = "Consultar a formação de qualquer membro e os relatórios de formação.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Formação",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000023"),
+                            Ativo = true,
+                            Chave = "formacao.gerenciar",
+                            Descricao = "Registrar a formação dos membros e manter o catálogo de especialidades.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Formação",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000024"),
+                            Ativo = true,
+                            Chave = "formacao.revisoes.administrar",
+                            Descricao = "Criar, publicar e descartar revisões de requisitos e ver rascunhos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Formação",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000025"),
+                            Ativo = true,
+                            Chave = "almoxarifado.consultar",
+                            Descricao = "Consultar bens, empréstimos, inventários, desejos e relatórios do almoxarifado.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Almoxarifado",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000026"),
+                            Ativo = true,
+                            Chave = "almoxarifado.gerenciar",
+                            Descricao = "Cadastrar e movimentar bens, inventários e a lista de desejos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Almoxarifado",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000027"),
+                            Ativo = true,
+                            Chave = "almoxarifado.responsaveis.designar",
+                            Descricao = "Designar e revogar o responsável pelo almoxarifado.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Almoxarifado",
+                            ReservadaSistema = false
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000028"),
+                            Ativo = true,
+                            Chave = "autorizacao.consultar",
+                            Descricao = "Consultar o catálogo de permissões, as concessões e as regras por alvo dos cargos.",
+                            Escrita = false,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Autorização",
+                            ReservadaSistema = true
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000029"),
+                            Ativo = true,
+                            Chave = "autorizacao.cargos.gerenciar",
+                            Descricao = "Criar, alterar, desativar e reativar cargos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Autorização",
+                            ReservadaSistema = true
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000030"),
+                            Ativo = true,
+                            Chave = "autorizacao.concessoes.gerenciar",
+                            Descricao = "Conceder e revogar permissões de cargos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Autorização",
+                            ReservadaSistema = true
+                        },
+                        new
+                        {
+                            Id = new Guid("18200000-0000-4000-8000-000000000031"),
+                            Ativo = true,
+                            Chave = "autorizacao.regras-alvo.gerenciar",
+                            Descricao = "Alterar as regras por alvo dos cargos.",
+                            Escrita = true,
+                            ExigeRegraAlvo = false,
+                            Modulo = "Autorização",
+                            ReservadaSistema = true
+                        });
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.ProgressoRequisito", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3251,6 +3832,21 @@ namespace Almirante.Api.Data.Migrations
                     b.Navigation("Usuario");
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.AutorizacaoHistorico", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Cargo", null)
+                        .WithMany()
+                        .HasForeignKey("CargoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("UsuarioResponsavelId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.BemPatrimonial", b =>
                 {
                     b.HasOne("Almirante.Api.Entities.Usuario", null)
@@ -3278,6 +3874,72 @@ namespace Almirante.Api.Data.Migrations
                         .WithMany()
                         .HasForeignKey("ResponsavelGuardaId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.CargoPermissao", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Cargo", "Cargo")
+                        .WithMany()
+                        .HasForeignKey("CargoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ConcedidaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Permissao", "Permissao")
+                        .WithMany()
+                        .HasForeignKey("PermissaoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("RevogadaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Cargo");
+
+                    b.Navigation("Permissao");
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.CargoRegraAlvo", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Cargo", "CargoAlvo")
+                        .WithMany()
+                        .HasForeignKey("CargoAlvoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Cargo", "CargoSolicitante")
+                        .WithMany()
+                        .HasForeignKey("CargoSolicitanteId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("ConcedidaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Permissao", "Permissao")
+                        .WithMany()
+                        .HasForeignKey("PermissaoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("RevogadaPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CargoAlvo");
+
+                    b.Navigation("CargoSolicitante");
+
+                    b.Navigation("Permissao");
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.DesejoAlmoxarifado", b =>

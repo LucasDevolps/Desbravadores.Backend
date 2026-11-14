@@ -47,7 +47,7 @@ public sealed class VarcharColunasMigrationTests
     {
         await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
         var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Jovem membro do clube.", CriadoPor = "Teste", Role = "DS" };
-        db.Cargos.Add(cargo);
+        await TestHelpers.InserirCargosLegadosAsync(db, cargo);
         await db.SaveChangesAsync();
 
         var (acentuado, comEmoji, lancamento) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());

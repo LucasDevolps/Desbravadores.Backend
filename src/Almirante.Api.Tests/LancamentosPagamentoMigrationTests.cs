@@ -52,7 +52,7 @@ public sealed class LancamentosPagamentoMigrationTests
         {
             await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Tesoureiro", Descricao = "Finanças.", CriadoPor = "Teste", Role = "TES" };
-            db.Cargos.Add(cargo);
+            await TestHelpers.InserirCargosLegadosAsync(db, cargo);
             await db.SaveChangesAsync();
             membro = Guid.NewGuid();
             await EscalarAsync(cs, """

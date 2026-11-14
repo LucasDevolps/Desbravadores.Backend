@@ -106,6 +106,8 @@ builder.Services.AddScoped<LancamentoExclusaoService>();
 builder.Services.AddSingleton(new EventosLockOptions());
 builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();
+builder.Services.AddScoped<AutorizacaoAdminService>();
+builder.Services.AddScoped<PermissoesService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<TesourariaService>();
 builder.Services.AddScoped<NotificacoesService>();
@@ -310,7 +312,8 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     });
 
 builder.Services.AddAuthorization(Policies.Registrar);
-builder.Services.AddScoped<IAuthorizationHandler, AcessoAlmoxarifadoHandler>();
+builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissaoPolicyProvider>();
+builder.Services.AddScoped<IAuthorizationHandler, PermissaoAuthorizationHandler>();
 
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AcessoNegadoAuthorizationMiddlewareResultHandler>();
 

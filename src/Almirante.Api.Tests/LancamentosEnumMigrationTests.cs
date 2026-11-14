@@ -32,7 +32,7 @@ public sealed class LancamentosEnumMigrationTests
             Id = Guid.NewGuid(), Nome = "Legado enums", Email = "enums@local.dev", EmailNormalizado = "ENUMS@LOCAL.DEV",
             SenhaHash = "nao-utilizado", CargoId = cargo.Id,
         };
-        db.Cargos.Add(cargo);
+        await TestHelpers.InserirCargosLegadosAsync(db, cargo);
         await db.SaveChangesAsync();
         await TestHelpers.InserirUsuarioLegadoAsync(db, membro);
 

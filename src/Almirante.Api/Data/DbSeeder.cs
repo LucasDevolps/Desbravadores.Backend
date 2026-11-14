@@ -145,7 +145,41 @@ public static class DbSeeder
             new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Jovem de 10 a 15 anos, membro do clube, que pode ocupar qualquer um dos cargos de unidade.", CriadoPor = criadoPor, Role = Roles.Desbravador },
         };
 
+        foreach (var cargo in cargos)
+        {
+            cargo.SistemaProtegido = MatrizInicialAutorizacao.Protegidos.Contains(cargo.Role);
+        }
+
         db.Cargos.AddRange(cargos);
+        SemearAutorizacao(db, cargos, DateTime.UtcNow);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Concessões e regras por alvo iniciais (issue #182), só junto com a criação dos cargos num banco vazio: reiniciar a API nunca
+    /// restaura o que foi revogado. Num banco existente, a migration AddRbacDinamico faz a mesma conversão pelas roles.
+    /// </summary>
+    public static void SemearAutorizacao(AlmiranteDbContext db, IReadOnlyCollection<Cargo> cargos, DateTime agoraUtc)
+    {
+        var porRole = cargos.ToDictionary(c => c.Role, StringComparer.Ordinal);
+        var permissaoId = CatalogoPermissoes.PorChave.ToDictionary(p => p.Key, p => p.Value.Id, StringComparer.Ordinal);
+        foreach (var (role, chaves) in MatrizInicialAutorizacao.Concessoes)
+        {
+            if (!porRole.TryGetValue(role, out var cargo)) continue;
+            db.CargoPermissoes.AddRange(chaves.Select(chave => new CargoPermissao
+            {
+                Id = Guid.NewGuid(), CargoId = cargo.Id, PermissaoId = permissaoId[chave], Ativo = true, ConcedidaEmUtc = agoraUtc,
+            }));
+        }
+
+        foreach (var (solicitante, chave, alvo) in MatrizInicialAutorizacao.RegrasAlvo)
+        {
+            if (!porRole.TryGetValue(solicitante, out var cargoSolicitante) || !porRole.TryGetValue(alvo, out var cargoAlvo)) continue;
+            db.CargoRegrasAlvo.Add(new CargoRegraAlvo
+            {
+                Id = Guid.NewGuid(), CargoSolicitanteId = cargoSolicitante.Id, PermissaoId = permissaoId[chave], CargoAlvoId = cargoAlvo.Id,
+                Ativo = true, ConcedidaEmUtc = agoraUtc,
+            });
+        }
     }
 }

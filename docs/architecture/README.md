@@ -79,6 +79,7 @@ SQL Server 2022 ── dados, triggers de auditoria, rowversion, índices de ide
 | [0014](adr/0014-acompanhar-formacao-com-catalogo-fixo-e-revisoes-imutaveis.md) | Formação com catálogo fixo de classes e revisões imutáveis |
 | [0015](adr/0015-gerir-patrimonio-e-lista-de-desejos-com-auditoria-por-trigger.md) | Patrimônio e lista de desejos com auditoria por trigger |
 | [0016](adr/0016-auditar-chamadas-http-com-diario-em-disco-e-politica-de-campos-revisados.md) | Auditoria HTTP com diário em disco e campos revisados |
+| [0017](adr/0017-gerenciar-cargos-e-permissoes-pelo-banco-com-rbac-dinamico.md) | Cargos e permissões no banco (RBAC dinâmico) e regras por alvo |
 
 ## Documentação atual e decisão histórica
 

@@ -13,7 +13,7 @@ seguir. O frontend ainda não foi implementado nem validado.
 - Cada notificação pertence a um único destinatário. A identidade vem sempre do token validado; nenhum
   endpoint aceita `usuarioId` do cliente.
 - Qualquer usuário autenticado com sessão válida usa o próprio módulo, inclusive desbravadores (`DS`).
-  Os endpoints de gestão de eventos e lançamentos seguem as policies `GestaoEventos` e `GestaoFinanceira`
+  Os endpoints de gestão de eventos e lançamentos seguem as permissões `eventos.*` e `financeiro.*`
   (matriz em [`authentication-security.md`](authentication-security.md#perfis-e-matriz-de-acesso-31-127)).
 
 ## Quando uma notificação é criada

@@ -14,7 +14,7 @@ namespace Almirante.Api.Services;
 /// falha desfaz tudo. Nenhum token é emitido: o titular precisa entrar de novo.
 /// </summary>
 public sealed class AlteracaoSenhaService(AlmiranteDbContext db, ContasSenha contas, TimeProvider clock, SinalAvisosNotificacoes sinal,
-    ILogger<AlteracaoSenhaService> logger)
+    ILogger<AlteracaoSenhaService> logger, PermissoesService permissoes)
 {
     public const string MotivoRevogacao = "alteracao-senha";
     public const string EncerramentoTokenConsumido = "token-consumido";
@@ -44,14 +44,16 @@ public sealed class AlteracaoSenhaService(AlmiranteDbContext db, ContasSenha con
         contas.ExigirSqlServer();
         var contexto = request.Contexto;
         var agora = clock.GetUtcNow().UtcDateTime;
-        var (responsavel, alvo) = await contas.AutorizarTerceiroAsync(contexto, request.UsuarioAfetadoId, agora, ct);
+        var (responsavel, alvo) = await contas.AutorizarTerceiroAsync(contexto, request.UsuarioAfetadoId,
+            Permissoes.UsuariosSenhaAlterarTerceiros, agora, ct);
         contas.ConfirmarSenhaSolicitante(responsavel, request.SenhaAtualSolicitante!);
         var novoHash = contas.ValidarECalcularNovoHash(alvo, request.NovaSenha!);
+        var regra = new ContasSenha.RegraTerceiro(responsavel, alvo, Permissoes.UsuariosSenhaAlterarTerceiros);
 
         var alteracao = NovaAlteracao(responsavel.Id, alvo.Id, TipoAlteracaoSenha.Administrativa, contexto.Ip, contexto.TraceId, agora);
         await GravarAsync(alteracao, alvo, novoHash, async () =>
         {
-            await contas.TravarERevalidarAsync([responsavel, alvo], contexto, agora, ContasSenha.Conflito, ct);
+            await contas.TravarERevalidarAsync([responsavel, alvo], contexto, agora, ContasSenha.Conflito, ct, regra);
             return null;
         }, request.MetodoVerificacao, ct);
     }
@@ -82,7 +84,8 @@ public sealed class AlteracaoSenhaService(AlmiranteDbContext db, ContasSenha con
         }
 
         var autorizador = await contas.CarregarAsync(recuperacao.UsuarioAutorizadorId!.Value, ct);
-        if (autorizador is not { Utilizavel: true } || !PermissoesSenha.PodeAlterarSenhaDeTerceiro(autorizador.Role, alvo.Role))
+        if (autorizador is not { Utilizavel: true }
+            || !await permissoes.PodeSobreAlvoAsync(autorizador.Role, Permissoes.UsuariosSenhaRecuperacaoAtender, alvo.Role, ct))
         {
             await db.RecuperacoesSenha
                 .Where(r => r.Id == recuperacao.Id && r.Status == StatusRecuperacaoSenha.Autorizada)
@@ -99,7 +102,8 @@ public sealed class AlteracaoSenhaService(AlmiranteDbContext db, ContasSenha con
         alteracao.SolicitacaoRecuperacaoId = recuperacao.Id;
         await GravarAsync(alteracao, alvo, novoHash, async () =>
         {
-            await contas.TravarERevalidarAsync([autorizador, alvo], contexto: null, agora, TokenInvalido, ct);
+            await contas.TravarERevalidarAsync([autorizador, alvo], contexto: null, agora, TokenInvalido, ct,
+                new ContasSenha.RegraTerceiro(autorizador, alvo, Permissoes.UsuariosSenhaRecuperacaoAtender));
             var travada = await db.RecuperacoesSenha
                 .FromSqlInterpolated($"SELECT * FROM [dbo].[Usuarios_recuperacoes_senha] WITH (UPDLOCK, ROWLOCK) WHERE [Id] = {recuperacao.Id}")
                 .SingleOrDefaultAsync(ct);

@@ -74,7 +74,9 @@ public class DbCredentialManagerUnitTests
         Assert.Contains("GRANT DELETE ON OBJECT::dbo.AuthSessions TO [almirante_app_role]", sql);
         Assert.Contains("GRANT SELECT, INSERT ON OBJECT::dbo.auditoria_http TO [almirante_app_role]", sql);
         Assert.Contains("DENY UPDATE, DELETE ON OBJECT::dbo.auditoria_http TO [almirante_app_role]", sql);
-        Assert.Contains("NOT IN (N'lancamentos_deletados', N'historico_eventos', N'_usuarios_hist', N'formacao_historico', N'almoxarifado_historico', N'auditoria_http', N'__EFMigrationsHistory')", sql);
+        Assert.Contains("NOT IN (N'lancamentos_deletados', N'historico_eventos', N'_usuarios_hist', N'formacao_historico', N'almoxarifado_historico', N'auditoria_http', N'Autorizacao_historico', N'__EFMigrationsHistory')", sql);
+        Assert.Contains("GRANT SELECT, INSERT ON OBJECT::dbo.Autorizacao_historico TO [almirante_app_role]", sql);
+        Assert.Contains("DENY UPDATE, DELETE ON OBJECT::dbo.Autorizacao_historico TO [almirante_app_role]", sql);
         Assert.DoesNotContain("db_owner", sql);
         Assert.DoesNotContain("db_datawriter", sql);
     }

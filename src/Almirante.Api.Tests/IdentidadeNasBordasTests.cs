@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using Almirante.Api.Controllers;
 using Almirante.Api.Dtos;
 using Almirante.Api.Hubs;
+using Almirante.Api.Security;
 using MediatR;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Connections;
@@ -184,7 +185,7 @@ public sealed class IdentidadeNasBordasTests
     [Fact]
     public async Task Classes_QuandoOServicoNaoAchaAClasse_Responde404()
     {
-        var controller = new ClassesController(new SenderFixo(null!))
+        var controller = new ClassesController(new SenderFixo(null!), new PermissoesService(null!))
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = Usuario(new Claim("role", "DS")) } },
         };

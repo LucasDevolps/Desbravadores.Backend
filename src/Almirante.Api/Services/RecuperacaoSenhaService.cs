@@ -17,7 +17,7 @@ namespace Almirante.Api.Services;
 /// titular escolher a senha. A recuperação automática por e-mail está desabilitada: não há provedor nem canal comprovado.
 /// </summary>
 public sealed class RecuperacaoSenhaService(AlmiranteDbContext db, ContasSenha contas, TimeProvider clock, IOptions<SenhasOptions> options,
-    ILogger<RecuperacaoSenhaService> logger)
+    ILogger<RecuperacaoSenhaService> logger, PermissoesService permissoes)
 {
     public const string EncerramentoExpirada = "expirada";
     public const int SolicitacoesMaximas = 1_000;
@@ -37,7 +37,7 @@ public sealed class RecuperacaoSenhaService(AlmiranteDbContext db, ContasSenha c
         var conta = await db.Usuarios.AsNoTracking().Where(u => u.EmailNormalizado == email)
             .Select(u => new { u.Id, u.Ativo, CargoAtivo = u.Cargo!.Ativo, u.Cargo.Role })
             .SingleOrDefaultAsync(ct);
-        if (conta is null || !conta.Ativo || !conta.CargoAtivo || !PermissoesSenha.PodeSerAlvo(conta.Role))
+        if (conta is null || !conta.Ativo || !conta.CargoAtivo || !await permissoes.AlguemPodeSobreAsync(conta.Role, Permissoes.UsuariosSenhaRecuperacaoAtender, ct))
         {
             return;
         }
@@ -90,7 +90,9 @@ public sealed class RecuperacaoSenhaService(AlmiranteDbContext db, ContasSenha c
     {
         var agora = clock.GetUtcNow().UtcDateTime;
         var solicitante = await contas.CarregarAsync(query.SolicitanteId, ct);
-        var alvos = solicitante is { Utilizavel: true } ? PermissoesSenha.AlvosPermitidos(solicitante.Role) : [];
+        var alvos = solicitante is { Utilizavel: true }
+            ? await permissoes.AlvosPermitidosAsync(solicitante.Role, Permissoes.UsuariosSenhaRecuperacaoAtender, ct)
+            : [];
         if (alvos.Count == 0)
         {
             throw ContasSenha.AcessoNegado();
@@ -150,7 +152,8 @@ public sealed class RecuperacaoSenhaService(AlmiranteDbContext db, ContasSenha c
         contas.ExigirSqlServer();
         var contexto = request.Contexto;
         var agora = clock.GetUtcNow().UtcDateTime;
-        var (responsavel, alvo) = await contas.AutorizarTerceiroAsync(contexto, request.UsuarioAfetadoId, agora, ct);
+        var (responsavel, alvo) = await contas.AutorizarTerceiroAsync(contexto, request.UsuarioAfetadoId,
+            Permissoes.UsuariosSenhaRecuperacaoAtender, agora, ct);
         contas.ConfirmarSenhaSolicitante(responsavel, request.SenhaAtualSolicitante!);
 
         var token = TokensRecuperacaoSenha.Gerar(out var hash);
@@ -158,7 +161,8 @@ public sealed class RecuperacaoSenhaService(AlmiranteDbContext db, ContasSenha c
         var novaId = Guid.NewGuid();
         var recuperacaoId = await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async _ =>
         {
-            await contas.TravarERevalidarAsync([responsavel, alvo], contexto, agora, ContasSenha.Conflito, ct);
+            await contas.TravarERevalidarAsync([responsavel, alvo], contexto, agora, ContasSenha.Conflito, ct,
+                new ContasSenha.RegraTerceiro(responsavel, alvo, Permissoes.UsuariosSenhaRecuperacaoAtender));
             var aberta = await db.RecuperacoesSenha
                 .FromSqlInterpolated($"SELECT * FROM [dbo].[Usuarios_recuperacoes_senha] WITH (UPDLOCK, ROWLOCK, HOLDLOCK) WHERE [UsuarioId] = {alvo.Id} AND [Status] IN (1, 2)")
                 .SingleOrDefaultAsync(ct);

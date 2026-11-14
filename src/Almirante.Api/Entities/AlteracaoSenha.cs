@@ -5,7 +5,7 @@ public enum TipoAlteracaoSenha
     /// <summary>O titular, autenticado, trocou a própria senha confirmando a senha atual.</summary>
     Propria = 1,
 
-    /// <summary>Um responsável autenticado (matriz de <see cref="Security.PermissoesSenha"/>) trocou a senha do titular com a própria senha.</summary>
+    /// <summary>Um responsável autenticado (permissão usuarios.senha.alterar-terceiros e regra por alvo) trocou a senha do titular com a própria senha.</summary>
     Administrativa = 2,
 
     /// <summary>O titular, sem sessão, concluiu com uma autorização de recuperação emitida por um responsável após verificação humana.</summary>

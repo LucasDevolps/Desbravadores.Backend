@@ -680,75 +680,57 @@ public sealed class AlmoxarifadoUnitTests
     }
 
     [Fact]
-    public void Roles_GestaoEConsultaDoAlmoxarifado()
+    public void MatrizInicial_GestaoEConsultaDoAlmoxarifado()
     {
-        Assert.Equal(["ADM", "DIR", "DIRA", "SEC", "ALM"], Roles.Almoxarifado);
-        Assert.Equal(["DS"], Roles.SemConsultaAlmoxarifado);
-        Assert.DoesNotContain("ALM", Roles.CargosDeGestao);
+        static bool Tem(string role, string chave) => MatrizInicialAutorizacao.Concessoes.TryGetValue(role, out var c) && c.Contains(chave);
         foreach (var role in new[] { "ADM", "DIR", "DIRA", "SEC", "ALM" })
         {
-            Assert.True(AcessoAlmoxarifadoRequirement.Gestao.PermitidoPeloCargo(role));
-            Assert.True(AcessoAlmoxarifadoRequirement.Consulta.PermitidoPeloCargo(role));
+            Assert.True(Tem(role, Permissoes.AlmoxarifadoGerenciar), role);
+            Assert.True(Tem(role, Permissoes.AlmoxarifadoConsultar), role);
         }
 
-        foreach (var role in new[] { "TES", "CAP", "CONS", "CONSA", "INST", "CPT", "SECU", "TESU", "PAD", "COREC", "CAPU", "NOVO" })
+        foreach (var role in new[] { "TES", "CAP", "CONS", "CONSA", "INST", "CPT", "SECU", "TESU", "PAD", "COREC", "CAPU" })
         {
-            Assert.False(AcessoAlmoxarifadoRequirement.Gestao.PermitidoPeloCargo(role));
-            Assert.True(AcessoAlmoxarifadoRequirement.Consulta.PermitidoPeloCargo(role));
+            Assert.False(Tem(role, Permissoes.AlmoxarifadoGerenciar), role);
+            Assert.True(Tem(role, Permissoes.AlmoxarifadoConsultar), role);
         }
 
-        Assert.False(AcessoAlmoxarifadoRequirement.Gestao.PermitidoPeloCargo("DS"));
-        Assert.False(AcessoAlmoxarifadoRequirement.Consulta.PermitidoPeloCargo("DS"));
-        Assert.False(AcessoAlmoxarifadoRequirement.Consulta.PermitidoPeloCargo(string.Empty));
-        Assert.True(AcessoAlmoxarifadoRequirement.Gestao.SomenteGestao);
-        Assert.False(AcessoAlmoxarifadoRequirement.Consulta.SomenteGestao);
+        Assert.False(Tem("DS", Permissoes.AlmoxarifadoConsultar));
+        Assert.False(Tem("ALM", Permissoes.AlmoxarifadoResponsaveisDesignar));
+        Assert.DoesNotContain(MatrizInicialAutorizacao.RegrasAlvo, r => r.Solicitante == "ALM");
     }
 
-    private static ClaimsPrincipal Usuario(string role, Guid? id = null) => new(new ClaimsIdentity(
-        [new Claim("role", role), .. id is { } valor ? new[] { new Claim(ClaimTypes.NameIdentifier, valor.ToString()) } : []], "Bearer", "sub", "role"));
-
     [Fact]
-    public async Task Policies_PorCargoEPorDesignacaoVigente()
+    public async Task Permissoes_PorCargoEPorDesignacaoVigente()
     {
-        var banco = Guid.NewGuid().ToString();
-        var services = new ServiceCollection().AddLogging().AddAuthorization(Policies.Registrar)
-            .AddDbContext<AlmiranteDbContext>(o => o.UseInMemoryDatabase(banco))
-            .AddScoped<IAuthorizationHandler, AcessoAlmoxarifadoHandler>().BuildServiceProvider();
-        var (designado, revogado, semDesignacao) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
-        using (var scope = services.CreateScope())
+        using var kit = new AutorizacaoTestKit();
+        string[] chaves = [Permissoes.AlmoxarifadoGerenciar, Permissoes.AlmoxarifadoConsultar, Permissoes.AlmoxarifadoResponsaveisDesignar];
+        string[] gestao = [Permissoes.AlmoxarifadoGerenciar, Permissoes.AlmoxarifadoConsultar];
+        var designado = kit.Usuario("DS");
+        var consDesignado = kit.Usuario("CONS");
+        var revogado = kit.Usuario("CONS");
+        kit.Executar(db =>
         {
-            var db = scope.ServiceProvider.GetRequiredService<AlmiranteDbContext>();
             db.ResponsaveisAlmoxarifado.AddRange(
-                new ResponsavelAlmoxarifado { Id = Guid.NewGuid(), MembroId = designado, DataInicio = Hoje },
-                new ResponsavelAlmoxarifado { Id = Guid.NewGuid(), MembroId = revogado, DataInicio = Hoje, RevogadoEmUtc = DateTime.UtcNow, MotivoRevogacao = "fim" });
-            await db.SaveChangesAsync();
-        }
+                new ResponsavelAlmoxarifado { Id = Guid.NewGuid(), MembroId = designado.UsuarioId(), DataInicio = Hoje },
+                new ResponsavelAlmoxarifado { Id = Guid.NewGuid(), MembroId = consDesignado.UsuarioId(), DataInicio = Hoje },
+                new ResponsavelAlmoxarifado { Id = Guid.NewGuid(), MembroId = revogado.UsuarioId(), DataInicio = Hoje, RevogadoEmUtc = DateTime.UtcNow, MotivoRevogacao = "fim" });
+            db.SaveChanges();
+        });
 
-        async Task<string[]> Concedidas(ClaimsPrincipal usuario)
-        {
-            using var scope = services.CreateScope();
-            var autorizacao = scope.ServiceProvider.GetRequiredService<IAuthorizationService>();
-            var lista = new List<string>();
-            foreach (var policy in new[] { Policies.GestaoAlmoxarifado, Policies.ConsultaAlmoxarifado, Policies.DesignacaoAlmoxarifado })
-            {
-                if ((await autorizacao.AuthorizeAsync(usuario, policy)).Succeeded) lista.Add(policy);
-            }
+        Assert.Equal(chaves, await kit.ConcedidasAsync(kit.Usuario("ADM"), chaves));
+        Assert.Equal(chaves, await kit.ConcedidasAsync(kit.Usuario("SEC"), chaves));
+        Assert.Equal(gestao, await kit.ConcedidasAsync(kit.Usuario("ALM"), chaves));
+        Assert.Equal([Permissoes.AlmoxarifadoConsultar], await kit.ConcedidasAsync(kit.Usuario("TES"), chaves));
+        Assert.Equal([Permissoes.AlmoxarifadoConsultar], await kit.ConcedidasAsync(revogado, chaves));
+        Assert.Empty(await kit.ConcedidasAsync(kit.Usuario("DS"), chaves));
+        Assert.Equal(gestao, await kit.ConcedidasAsync(designado, chaves));
+        Assert.Equal(gestao, await kit.ConcedidasAsync(consDesignado, chaves));
+        Assert.Empty(await kit.ConcedidasAsync(new ClaimsPrincipal(new ClaimsIdentity()), chaves));
 
-            return [.. lista];
-        }
-
-        string[] todas = [Policies.GestaoAlmoxarifado, Policies.ConsultaAlmoxarifado, Policies.DesignacaoAlmoxarifado];
-        string[] gestao = [Policies.GestaoAlmoxarifado, Policies.ConsultaAlmoxarifado];
-        Assert.Equal(todas, await Concedidas(Usuario("ADM")));
-        Assert.Equal(todas, await Concedidas(Usuario("SEC")));
-        Assert.Equal(gestao, await Concedidas(Usuario("ALM", Guid.NewGuid())));
-        Assert.Equal([Policies.ConsultaAlmoxarifado], await Concedidas(Usuario("TES", semDesignacao)));
-        Assert.Equal([Policies.ConsultaAlmoxarifado], await Concedidas(Usuario("CONS", revogado)));
-        Assert.Empty(await Concedidas(Usuario("DS", semDesignacao)));
-        Assert.Empty(await Concedidas(Usuario("DS")));
-        Assert.Equal(gestao, await Concedidas(Usuario("DS", designado)));
-        Assert.Equal(gestao, await Concedidas(Usuario("CONS", designado)));
-        Assert.Empty(await Concedidas(new ClaimsPrincipal(new ClaimsIdentity())));
+        // A designação não depende do cargo: com o cargo inativo (sessão inválida de qualquer forma), nada é concedido.
+        kit.Executar(db => { db.Cargos.Single(c => c.Role == "DS").Ativo = false; return db.SaveChanges(); });
+        Assert.Empty(await kit.ConcedidasAsync(designado, chaves));
     }
 
     [Fact]

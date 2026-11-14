@@ -15,22 +15,29 @@ Este documento cobre as issues #29 (login/perfil/JWT), #31 e #127 (RBAC por perf
 
 ## Perfis e matriz de acesso (#31, #127)
 
-Fonte única: `Security/Roles.cs` (conjuntos de cargos, `Roles.PodeGerenciar` e `Policies.Registrar`, chamado em `Program.cs`). Toda decisão é do backend: o token só carrega `sub`, `role` e `sid`, e a cada requisição `OnTokenValidated` confere no banco a sessão, o usuário ativo, o cargo ativo e que a `role` do token ainda é a do cargo atual. Tesoureiro (`TES`) e Tesoureiro de Unidade (`TESU`) são cargos diferentes: `TESU` não tem acesso financeiro.
+Desde a issue #182 ([ADR-0017](architecture/adr/0017-gerenciar-cargos-e-permissoes-pelo-banco-com-rbac-dinamico.md)) a fonte de verdade é
+o banco: cada action exige uma permissão do catálogo (`[RequerPermissao(...)]`), e o cargo do usuário recebe ou não essa permissão em
+`CargoPermissoes`. A tabela abaixo é a **matriz inicial** semeada pela migration `AddRbacDinamico` e pelo `DbSeeder`
+([`MatrizInicialAutorizacao`](../src/Almirante.Api/Security/MatrizInicialAutorizacao.cs)), equivalente às policies estáticas anteriores.
+Ela pode ser alterada pela API (ver [RBAC dinâmico](#rbac-dinâmico-182)). Toda decisão é do backend: o token só carrega `sub`, `role` e
+`sid`, e a cada requisição `OnTokenValidated` confere no banco a sessão, o usuário ativo, o cargo ativo e que a `role` do token ainda é a
+do cargo atual. Tesoureiro (`TES`) e Tesoureiro de Unidade (`TESU`) são cargos diferentes: `TESU` não tem acesso financeiro.
 
-| Policy | Cargos | O que libera |
+| Permissões | Cargos (matriz inicial) | O que libera |
 | --- | --- | --- |
-| `GestaoCadastros` | ADM, DIR, DIRA, SEC | `/api/Usuarios` (listar, cadastrar, editar, excluir), fotos de outros usuários e `GET /api/Cargos` |
-| `GestaoFinanceira` | ADM, DIR, DIRA, TES | `/api/Lancamentos` (inclusive pagamentos), `GET /api/Tesouraria/Resumo` e o bloco `financeiro` do dashboard |
-| `GestaoEventos` | ADM, DIR, DIRA, SEC, TES | `/api/Eventos` (consultar, criar, editar, excluir; as cobranças do evento são geradas na mesma operação) |
-| `ConsultaMembros` | ADM, DIR, DIRA, SEC, TES | `GET /api/Membros` (id, nome e cargo dos ativos, para seletores) |
-| `Painel` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
-| `GestaoFormacao` | ADM, DIR, DIRA, SEC | escrita de especialidades, revisões de requisitos e acompanhamento de classes/especialidades, e consulta da formação de outros membros (`/api/Formacao…`) — [`docs/formacao.md`](formacao.md) |
-| `GestaoAlmoxarifado` | ADM, DIR, DIRA, SEC, ALM + responsável designado | escrita do almoxarifado: bens, empréstimos, manutenção, baixa, inventários e lista de desejos (`/api/Almoxarifado…`). A designação vigente (`almoxarifado_responsaveis`) é conferida no banco a cada requisição — [`docs/almoxarifado.md`](almoxarifado.md) |
-| `ConsultaAlmoxarifado` | qualquer cargo ativo exceto DS + responsável designado | consultas, históricos, relatórios e CSV do almoxarifado (`GET /api/Almoxarifado…`) |
-| `DesignacaoAlmoxarifado` | ADM, DIR, DIRA, SEC | designar e revogar o responsável pelo almoxarifado (`POST /api/Almoxarifado/Responsaveis…`) |
-| `Autoatendimento` | qualquer cargo ativo | `/api/Me` (dados, foto, eventos e formação do próprio usuário), `GET /api/Cep/{cep}` e a consulta dos catálogos `GET /api/Classes…`, `GET /api/Especialidades…` e `GET /api/RevisoesRequisitos/{id}` (só revisões publicadas/substituídas) |
-| `AlteracaoSenhaTerceiros` | ADM, DIR, SEC | filtro inicial da troca de senha de outro usuário e da recuperação assistida (`/api/Usuarios/{id}/alterar-senha`, `/api/Usuarios/recuperacao-senha/pendentes`, `/api/Usuarios/{id}/recuperacao-senha/autorizacao`); o par responsável/alvo é decidido pela matriz de [`senhas.md`](senhas.md#matriz-de-autorização) com os cargos relidos do banco |
-| `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `POST /api/Auth/alterar-senha` (policy `Autoatendimento`), `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
+| `usuarios.consultar`, `usuarios.criar/editar/excluir`, `usuarios.foto.alterar`, `cargos.consultar` | ADM, DIR, DIRA, SEC | `/api/Usuarios` (listar, cadastrar, editar, excluir), fotos de outros usuários e `GET /api/Cargos`; escrita só sobre os cargos das regras por alvo |
+| `financeiro.lancamentos.consultar/criar/editar/excluir`, `financeiro.pagamentos.registrar`, `financeiro.tesouraria.consultar`, `dashboard.financeiro.consultar` | ADM, DIR, DIRA, TES | `/api/Lancamentos` (inclusive pagamentos), `GET /api/Tesouraria/Resumo` e o bloco `financeiro` do dashboard |
+| `eventos.consultar/criar/editar/excluir` | ADM, DIR, DIRA, SEC, TES | `/api/Eventos` (as cobranças do evento são geradas na mesma operação) |
+| `membros.consultar` | ADM, DIR, DIRA, SEC, TES | `GET /api/Membros` (id, nome e cargo dos ativos, para seletores) |
+| `dashboard.consultar` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
+| `formacao.gestao.consultar`, `formacao.gerenciar`, `formacao.revisoes.administrar` | ADM, DIR, DIRA, SEC | consulta da formação de outros membros e relatórios; escrita de especialidades e do acompanhamento; revisões de requisitos e rascunhos — [`docs/formacao.md`](formacao.md) |
+| `almoxarifado.gerenciar` | ADM, DIR, DIRA, SEC, ALM + responsável designado | escrita do almoxarifado: bens, empréstimos, manutenção, baixa, inventários e lista de desejos. A designação vigente (`almoxarifado_responsaveis`) é conferida no banco a cada requisição — [`docs/almoxarifado.md`](almoxarifado.md) |
+| `almoxarifado.consultar` | os 16 cargos semeados exceto DS + responsável designado | consultas, históricos, relatórios e CSV do almoxarifado (`GET /api/Almoxarifado…`) |
+| `almoxarifado.responsaveis.designar` | ADM, DIR, DIRA, SEC | designar e revogar o responsável pelo almoxarifado (`POST /api/Almoxarifado/Responsaveis…`) |
+| `usuarios.senha.alterar-terceiros`, `usuarios.senha.recuperacao-atender` | ADM, DIR, SEC | troca de senha de outro usuário e recuperação assistida; o par responsável/alvo é decidido pelas regras por alvo ([`senhas.md`](senhas.md#matriz-de-autorização)) |
+| `autorizacao.consultar`, `autorizacao.cargos.gerenciar`, `autorizacao.concessoes.gerenciar`, `autorizacao.regras-alvo.gerenciar` | ADM (reservadas ao perfil de sistema protegido) | `GET /api/Permissoes` e `/api/Cargos` (exceto o `GET` da lista): criar, editar, desativar e reativar cargos, concessões e regras por alvo |
+| autoatendimento (policy `Autoatendimento`, sem permissão) | qualquer cargo ativo | `/api/Me` (dados, foto, eventos, formação e `GET /api/Me/Permissoes`), `GET /api/Cep/{cep}`, `GET /api/Classes…`, `GET /api/Especialidades…` e `GET /api/RevisoesRequisitos/{id}` (sem rascunhos) |
+| `[Authorize]` | qualquer cargo ativo | `GET /api/Auth/Me`, `POST /api/Auth/alterar-senha`, `/api/Notificacoes` e o hub `/hubs/notificacoes` (sempre só do próprio usuário) |
 
 Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com token inválido ou expirado, sessão revogada, usuário inativo ou cargo inativo, **todos** respondem `401`.
 
@@ -58,22 +65,36 @@ Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com 
 | `GET /api/Auth/Me`, `/api/Notificacoes…`, hub | ✓ | ✓ | ✓ | ✓ | ✓ (só as próprias) |
 | `POST /api/Auth/alterar-senha` (própria, com a senha atual) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `POST /api/Usuarios/{id}/alterar-senha`, `GET …/recuperacao-senha/pendentes`, `POST …/{id}/recuperacao-senha/autorizacao` | ✓ (alvo SEC, TES, DS) | DIR ✓ (alvo SEC, TES, DS); DIRA — | ✓ (alvo DS) | — | — |
+| `GET /api/Permissoes`, `POST/PUT /api/Cargos…`, `GET/PUT /api/Cargos/{id}/Permissoes`, `GET/PUT /api/Cargos/{id}/RegrasAlvo` | ✓ | — | — | — | — |
+| `GET /api/Me/Permissoes` | ✓ | ✓ | ✓ | ✓ | ✓ (só as próprias) |
 
 `POST /api/Auth/recuperacao-senha/solicitar` e `…/confirmar` são anônimos por desenho (como login, refresh, logout e csrf), com CSRF,
 resposta genérica e limite por IP ([`senhas.md`](senhas.md)).
 
 - `401` vem do challenge do JwtBearer (`WWW-Authenticate: Bearer`); `403` é Problem Details `{"title":"ACESSO NEGADO!"}`. O frontend deve tratar `403` como "sem permissão" **sem** encerrar a sessão.
-- A matriz é verificada endpoint por endpoint e perfil por perfil em `AuthorizationTests` (que também falha se uma action nova ficar fora da tabela) e policy por policy em `PermissoesUnitTests`.
+- A matriz é verificada endpoint por endpoint e perfil por perfil em `AuthorizationTests` (que também falha se uma action nova ficar fora da tabela) e permissão por permissão em `PermissoesUnitTests` (catálogo, matriz inicial e uma permissão por action); o fluxo administrativo em `RbacDinamicoTests` e `AutorizacaoSqlServerTests`.
 
-### Exceção ao acesso completo da diretoria e hierarquia de cargos
+### Exceção ao acesso completo da diretoria e regras por alvo
 
 DIR e DIRA têm acesso completo aos módulos de negócio, com uma exceção técnica preservada: **somente ADM cria, altera, exclui ou troca a foto de um usuário ADM** (ou promove alguém a ADM). ADM é o administrador técnico da plataforma, não um cargo do clube; a exceção impede que a diretoria do clube tome ou desative a conta de quem administra o sistema.
 
-Com cadastros e financeiro separados, o Secretário poderia conceder a si mesmo (ou a outra conta) um cargo com acesso financeiro ou de diretoria. Por isso `Roles.PodeGerenciar` aplica a mesma regra aos **cargos de gestão** (DIR, DIRA, SEC, TES): só a diretoria (ADM, DIR, DIRA) atribui esses cargos ou cria, altera, exclui e troca a foto de usuários que os possuem. O Secretário gerencia os demais cargos (Desbravador, Conselheiro, cargos de unidade etc.). A regra vale para o cargo atual e para o novo cargo do `PUT`, no `DELETE` e nas fotos de terceiros (`403` com o motivo em `detail`). A própria foto (`/api/Me/foto`) não depende do cargo.
+Com cadastros e financeiro separados, o Secretário poderia conceder a si mesmo (ou a outra conta) um cargo com acesso financeiro ou de diretoria. Por isso, além da permissão, as operações sobre outro usuário (`usuarios.criar`, `usuarios.editar`, `usuarios.excluir`, `usuarios.foto.alterar` e as de senha) exigem uma **regra por alvo** (`CargoRegrasAlvo`) do cargo de quem pede para o cargo do usuário. A matriz inicial reproduz a hierarquia anterior: só a diretoria (ADM, DIR, DIRA) atribui ou gerencia os **cargos de gestão** (DIR, DIRA, SEC, TES); o Secretário gerencia os demais cargos semeados (Desbravador, Conselheiro, cargos de unidade etc.). A regra vale para o cargo atual e para o novo cargo do `PUT`, no `DELETE` e nas fotos de terceiros (`403` com o motivo em `detail`), e é relida dentro da transação. Um cargo criado depois **não** entra na categoria "demais": só é gerenciado por quem receber uma regra explícita. A própria foto (`/api/Me/foto`) não depende do cargo. O último usuário ativo do perfil de sistema protegido não pode ser excluído nem reclassificado (`409`).
+
+### RBAC dinâmico (#182)
+
+- **Catálogo** (`GET /api/Permissoes`): chaves técnicas mantidas por migration ([`CatalogoPermissoes`](../src/Almirante.Api/Security/CatalogoPermissoes.cs)), com módulo, descrição, leitura/escrita, reserva e uso de regra por alvo. Cadastrar uma chave no banco não cria comportamento.
+- **Cargos** (`POST /api/Cargos`, `PUT /api/Cargos/{id}`, `POST …/Desativar`, `POST …/Reativar`): o cargo nasce ativo e **sem permissões**; a `role` é normalizada, única e imutável; desativar exige que nenhum usuário ativo tenha o cargo (`409` com `usuariosAtivos`) e nunca vale para o perfil de sistema protegido.
+- **Concessões** (`GET/PUT /api/Cargos/{id}/Permissoes`) e **regras por alvo** (`GET/PUT /api/Cargos/{id}/RegrasAlvo`): o `PUT` substitui o conjunto inteiro numa transação; os ausentes são revogados logicamente, com histórico.
+- **Toda escrita** exige `versao` (a do último `GET`; `409` com `versaoAtual` se mudou, sem sobrescrever), `motivo` e `senhaAtualSolicitante` (a senha de quem está logado, nunca registrada), além de `X-CSRF-TOKEN`. As rotas são `[ConteudoSensivel]` (`no-store`, auditoria HTTP sem corpo). Cada alteração grava `Autorizacao_historico` (antes/depois em JSON, executor, motivo, IP, trace e revisão), que só aceita inserção.
+- **Sem escalada**: as permissões `autorizacao.*` são reservadas ao perfil de sistema protegido, que não pode perdê-las (`409`) nem ser desativado. Nenhum cargo concede o que não tem (`403`). Regra por alvo só para permissão que o executor tem e, sobre o perfil protegido, só a que ele próprio tem. Gerir usuários não dá acesso à matriz.
+- **Efeito imediato**: as permissões são lidas do banco a cada requisição (memorizadas só durante ela), então uma revogação vale na próxima requisição do usuário afetado, **com o mesmo token**, sem novo login. Permissão, concessão, regra ou cargo inativos nunca concedem; chave desconhecida nunca vira "somente autenticado".
+- **Concorrência**: toda alteração administrativa incrementa a revisão global (`AutorizacaoEstado`) com trava exclusiva antes de escrever; senhas, cadastro, exclusão e foto de terceiros leem essa revisão com trava compartilhada antes de travar usuários e cargos e relêem a regra na transação.
+- **`GET /api/Me/Permissoes`**: cargo, permissões efetivas (cargo + designação do almoxarifado, com `permissoesPorDesignacao`) e `versaoAutorizacao`, só do próprio usuário. O frontend usa para menus, rotas e botões e recarrega quando a versão muda ou ao receber `403` inesperado; o backend continua decidindo.
+- **Migração**: os 17 cargos conhecidos recebem a matriz acima pela migration (Ids preservados); cargos customizados preexistentes não recebem nada por aproximação, nem a consulta ao almoxarifado (antes valia para qualquer cargo fora de DS). Reiniciar a API não restaura concessões revogadas. Para voltar o binário anterior depois de alterar perfis, congele a administração e reconcilie a matriz: as listas estáticas antigas voltariam a decidir.
 
 ### Eventos: cadastro e cobrança na mesma operação
 
-Criar, editar ou excluir um evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes **na mesma transação** (idempotência por `Idempotency-Key`, `rowversion`, lock do passeio e auditoria por trigger). Separar o cadastro das cobranças quebraria essas garantias, então os dois perfis operacionais usam a mesma policy `GestaoEventos`:
+Criar, editar ou excluir um evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes **na mesma transação** (idempotência por `Idempotency-Key`, `rowversion`, lock do passeio e auditoria por trigger). Separar o cadastro das cobranças quebraria essas garantias, então os dois perfis operacionais recebem as mesmas permissões `eventos.*`:
 
 - o Secretário gerencia eventos, mas não registra nem corrige pagamentos, não lista lançamentos e não vê o financeiro consolidado (`403` em `/api/Lancamentos`, `financeiro: null` no dashboard). As regras do evento continuam valendo para ele: com um lançamento já pago, mudar custos ou participantes devolve `409`;
 - o Tesoureiro executa as mesmas operações de evento necessárias ao financeiro e registra os pagamentos em `/api/Lancamentos`, mas não ganha acesso a cadastros nem a cargos;
