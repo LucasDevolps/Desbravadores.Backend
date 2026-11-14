@@ -16,6 +16,29 @@ namespace Almirante.Api.Controllers;
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 public sealed class NotificacoesController(ISender mediator) : ControllerBase
 {
+    [HttpGet]
+    [EndpointSummary("Lista o histórico de notificações do usuário autenticado, lidas e não lidas.")]
+    [EndpointDescription("Somente do usuário do token (não há parâmetro de usuário). filtro: Todas (padrão), Lidas ou NaoLidas; " +
+        "lidaEmUtc é nula enquanto a notificação não foi lida. Mesma notificação, ordem e cursor de /Pendentes: criadaEmUtc decrescente, " +
+        "depois id decrescente; pageSize de 1 a 50 (padrão 20); envie o proximoCursor da resposta anterior em cursor, com o mesmo filtro; " +
+        "nulo indica a última página. naoLidas é o total de não lidas da caixa inteira, independente da página e do filtro. " +
+        "Sem notificações: items: [] e naoLidas: 0. A consulta não marca nada como lido.")]
+    [ProducesResponseType<HistoricoNotificacoesResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ListarHistorico(
+        [FromQuery] FiltroLeituraNotificacoes filtro = FiltroLeituraNotificacoes.Todas,
+        [FromQuery] int pageSize = NotificacoesService.PageSizePadrao,
+        [FromQuery] string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!User.TentarObterUsuarioId(out var usuarioId))
+        {
+            return IdentidadeInvalida();
+        }
+
+        return Ok(await mediator.Send(new ListarHistoricoNotificacoesQuery(usuarioId, filtro, pageSize, cursor), cancellationToken));
+    }
+
     [HttpGet("Pendentes")]
     [EndpointSummary("Lista as notificações não lidas do usuário autenticado.")]
     [EndpointDescription("Somente do usuário do token (não há parâmetro de usuário). Ordem: criadaEmUtc decrescente, depois id decrescente. " +

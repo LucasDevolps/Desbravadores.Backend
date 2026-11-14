@@ -32,33 +32,63 @@ public sealed class NotificacoesService(AlmiranteDbContext db, TimeProvider cloc
     {
         var pendentes = db.Notificacoes.AsNoTracking().Where(n => n.DestinatarioId == query.UsuarioId && n.LidaEmUtc == null);
         var naoLidas = await pendentes.CountAsync(ct);
-
-        var pagina = pendentes;
-        if (CursorNotificacoes.TentarLer(query.Cursor, out var criadaEm, out var id))
-        {
-            pagina = pagina.Where(n => n.CriadaEmUtc < criadaEm || (n.CriadaEmUtc == criadaEm && n.Id.CompareTo(id) < 0));
-        }
-
-        var itens = await pagina
-            .OrderByDescending(n => n.CriadaEmUtc)
-            .ThenByDescending(n => n.Id)
-            .Take(query.PageSize + 1)
-            .Select(Projection)
-            .ToListAsync(ct);
-
-        var temMais = itens.Count > query.PageSize;
-        if (temMais)
-        {
-            itens.RemoveAt(itens.Count - 1);
-        }
+        var (itens, proximoCursor) = await PaginarAsync(pendentes, query.PageSize, query.Cursor, ct);
 
         return new NotificacoesPendentesResponse
         {
             Items = itens,
             NaoLidas = naoLidas,
             PageSize = query.PageSize,
-            ProximoCursor = temMais ? CursorNotificacoes.Criar(itens[^1].CriadaEmUtc, itens[^1].Id) : null,
+            ProximoCursor = proximoCursor,
         };
+    }
+
+    // Histórico da caixa inteira: mesma ordem, cursor e DTO das pendências. naoLidas conta a caixa toda, qualquer que seja o filtro.
+    public async Task<HistoricoNotificacoesResponse> ListarHistoricoAsync(ListarHistoricoNotificacoesQuery query, CancellationToken ct)
+    {
+        var caixa = db.Notificacoes.AsNoTracking().Where(n => n.DestinatarioId == query.UsuarioId);
+        var naoLidas = await caixa.CountAsync(n => n.LidaEmUtc == null, ct);
+
+        var filtradas = query.Filtro switch
+        {
+            FiltroLeituraNotificacoes.Lidas => caixa.Where(n => n.LidaEmUtc != null),
+            FiltroLeituraNotificacoes.NaoLidas => caixa.Where(n => n.LidaEmUtc == null),
+            _ => caixa,
+        };
+        var (itens, proximoCursor) = await PaginarAsync(filtradas, query.PageSize, query.Cursor, ct);
+
+        return new HistoricoNotificacoesResponse
+        {
+            Items = itens,
+            Filtro = query.Filtro,
+            NaoLidas = naoLidas,
+            PageSize = query.PageSize,
+            ProximoCursor = proximoCursor,
+        };
+    }
+
+    private static async Task<(List<NotificacaoDto> Itens, string? ProximoCursor)> PaginarAsync(
+        IQueryable<Notificacao> notificacoes, int pageSize, string? cursor, CancellationToken ct)
+    {
+        if (CursorNotificacoes.TentarLer(cursor, out var criadaEm, out var id))
+        {
+            notificacoes = notificacoes.Where(n => n.CriadaEmUtc < criadaEm || (n.CriadaEmUtc == criadaEm && n.Id.CompareTo(id) < 0));
+        }
+
+        var itens = await notificacoes
+            .OrderByDescending(n => n.CriadaEmUtc)
+            .ThenByDescending(n => n.Id)
+            .Take(pageSize + 1)
+            .Select(Projection)
+            .ToListAsync(ct);
+
+        if (itens.Count <= pageSize)
+        {
+            return (itens, null);
+        }
+
+        itens.RemoveAt(itens.Count - 1);
+        return (itens, CursorNotificacoes.Criar(itens[^1].CriadaEmUtc, itens[^1].Id));
     }
 
     /// <summary>

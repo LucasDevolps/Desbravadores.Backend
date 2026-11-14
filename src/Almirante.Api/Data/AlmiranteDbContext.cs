@@ -405,10 +405,12 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.HasIndex(n => new { n.DestinatarioId, n.ChaveOrigem })
                 .IsUnique()
                 .HasDatabaseName("UX_notificacoes_destinatario_origem");
-            entity.HasIndex(n => new { n.DestinatarioId, n.CriadaEmUtc, n.Id })
+            entity.HasIndex(n => new { n.DestinatarioId, n.CriadaEmUtc, n.Id }, "IX_notificacoes_pendentes")
                 .IsDescending(false, true, true)
-                .HasDatabaseName("IX_notificacoes_pendentes")
                 .HasFilter("[LidaEmUtc] IS NULL");
+            entity.HasIndex(n => new { n.DestinatarioId, n.CriadaEmUtc, n.Id }, "IX_notificacoes_historico")
+                .IsDescending(false, true, true)
+                .IncludeProperties(n => n.LidaEmUtc);
             entity.HasIndex(n => n.AvisoProximaTentativaEmUtc)
                 .HasDatabaseName("IX_notificacoes_aviso_pendente")
                 .HasFilter("[AvisoPendente] IS NOT NULL")
