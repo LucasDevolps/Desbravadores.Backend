@@ -27,6 +27,7 @@ O backend está em fase de **MVP funcional** e possui:
 - criação, listagem, atualização e exclusão de lançamentos financeiros;
 - registro e correção do pagamento efetivo (data e valor liquidados) de cada lançamento;
 - dashboard administrativo com saldo realizado, entradas, saídas, desbravadores ativos e próximos eventos;
+- resumo da Tesouraria com a série mensal de receitas e despesas realizadas dos últimos seis meses;
 - notificações de débito e de evento por destinatário, com leitura individual e avisos em tempo real por SignalR;
 - lançamento geral idempotente para todos os usuários, com autorização por cargo, filtros de
   período, resumo financeiro (provisório) e exclusão lógica auditada por trigger;
@@ -871,6 +872,32 @@ data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoRefe
 uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
 participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
 Não depende do período.
+
+## Tesouraria
+
+`GET /api/Tesouraria/Resumo` (issue #190) alimenta a tela da Tesouraria. Policy `GestaoFinanceira`
+(`ADM`, `DIR`, `DIRA`, `TES`): sem token `401`, outro cargo (inclusive o Secretário) `403`. Não recebe parâmetros.
+
+```json
+{
+  "receitasDespesas": [
+    { "ano": 2026, "mes": 6, "entradas": 0.00, "saidas": 0.00 },
+    { "ano": 2026, "mes": 7, "entradas": 390.00, "saidas": 220.00 },
+    { "ano": 2026, "mes": 8, "entradas": 280.00, "saidas": 90.00 },
+    { "ano": 2026, "mes": 9, "entradas": 220.00, "saidas": 120.00 },
+    { "ano": 2026, "mes": 10, "entradas": 290.00, "saidas": 100.00 },
+    { "ano": 2026, "mes": 11, "entradas": 210.00, "saidas": 280.00 }
+  ]
+}
+```
+
+**Receitas × Despesas.** `receitasDespesas` traz sempre seis competências (`ano`, `mes` de 1 a 12) em ordem
+cronológica: os cinco meses anteriores e o mês atual no fuso do clube (`Clube:FusoHorario`), atravessando a virada
+do ano quando for o caso. Mês sem movimento vem com `entradas` e `saidas` zero. Cada competência soma o `valorPago`
+dos lançamentos ativos com status `Pago` e `dataPagamento` no mês, separado por `tipoFluxo`, com a mesma regra do
+financeiro do [Dashboard](#dashboard) (`PagamentosRegistrados`): pendentes, atrasados, excluídos e "Pago" históricos
+sem data ou valor de pagamento não entram. Por isso o mês atual coincide com `entradas` e `saidas` de
+`GET /api/Dashboard` sem parâmetros.
 
 ## Perfis e autoatendimento (issue #127)
 

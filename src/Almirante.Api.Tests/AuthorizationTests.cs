@@ -63,6 +63,7 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("POST /api/Lancamentos/{id}/Pagamento", Modulo.Financeiro, () => Json(HttpMethod.Post, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento", new { dataPagamento = "2026-10-01", valorPago = 10m })),
         new("PUT /api/Lancamentos/{id}/Pagamento", Modulo.Financeiro, () => Json(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento", new { dataPagamento = "2026-10-01", valorPago = 10m })),
         new("DELETE /api/Lancamentos/{id}", Modulo.Financeiro, () => Json(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}", new { motivo = "rbac" })),
+        new("GET /api/Tesouraria/Resumo", Modulo.Financeiro, () => new(HttpMethod.Get, "/api/Tesouraria/Resumo")),
 
         new("GET /api/Eventos", Modulo.Eventos, () => new(HttpMethod.Get, "/api/Eventos")),
         new("GET /api/Eventos/{id}", Modulo.Eventos, () => new(HttpMethod.Get, $"/api/Eventos/{Guid.NewGuid()}")),

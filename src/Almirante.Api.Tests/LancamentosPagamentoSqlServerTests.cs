@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
+using Almirante.Api.Options;
+using Almirante.Api.Services;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
@@ -226,5 +228,63 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
         var passeio = Assert.Single(dashboard.ProximosEventos);
         Assert.Equal((raiz.EventoGrupoId, data, "Campori", 3), (passeio.EventoGrupoId, passeio.Data, passeio.Local, passeio.QuantidadeParticipantes));
         Assert.Equal(new[] { raiz.Id, grupo.Id }.Order(), passeio.EventoIds);
+    }
+
+    [Fact(DisplayName = "Resumo da Tesouraria agrupa no SQL Server por mês de dataPagamento e tipoFluxo, atravessando a virada do ano")]
+    public async Task TesourariaResumo_ObterResumo_AgrupaNoBancoPorMesNaViradaDoAnoAsync()
+    {
+        //Arrange
+        async Task PagoEmAsync(decimal valor, string tipoFluxo, DateOnly dataPagamento)
+        {
+            var lancamento = await CriarAsync(valor, tipoFluxo);
+            Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, lancamento.Id, valor, Ontem)).StatusCode);
+            Assert.Equal(1, await ExecAsync("UPDATE dbo.Lancamentos SET DataPagamento = @d WHERE Id = @id",
+                ("@d", dataPagamento.ToDateTime(TimeOnly.MinValue)), ("@id", lancamento.Id)));
+        }
+
+        await PagoEmAsync(500m, "Entrada", new DateOnly(2026, 8, 31));
+        await PagoEmAsync(100m, "Entrada", new DateOnly(2026, 12, 31));
+        await PagoEmAsync(79.99m, "Entrada", new DateOnly(2027, 1, 1));
+        await PagoEmAsync(0.01m, "Entrada", new DateOnly(2027, 1, 31));
+        await PagoEmAsync(33.33m, "Saida", new DateOnly(2027, 1, 15));
+        await CriarAsync(999m);
+        var dataCivil = new DataCivil(new RelogioManualDeTeste(new DateTimeOffset(2027, 2, 10, 12, 0, 0, TimeSpan.Zero)),
+            Microsoft.Extensions.Options.Options.Create(new ClubeOptions()));
+
+        //Act
+        var resumo = await TestHelpers.WithDbAsync(_factory,
+            db => new TesourariaService(db, dataCivil).ObterResumoAsync(CancellationToken.None));
+
+        //Assert
+        Assert.Equal(new TesourariaCompetenciaDto[]
+        {
+            new(2026, 9, 0m, 0m), new(2026, 10, 0m, 0m), new(2026, 11, 0m, 0m),
+            new(2026, 12, 100m, 0m), new(2027, 1, 80m, 33.33m), new(2027, 2, 0m, 0m),
+        }, resumo.ReceitasDespesas);
+    }
+
+    [Fact(DisplayName = "GET /api/Tesouraria/Resumo no SQL Server soma os pagamentos registrados e o mês atual coincide com o Dashboard")]
+    public async Task TesourariaResumo_GetResumo_SomaPagamentosEMesAtualCoincideComDashboardAsync()
+    {
+        //Arrange
+        var entrada = await CriarAsync(120m);
+        var saida = await CriarAsync(40m, "Saida");
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, entrada.Id, 100m, Ontem)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, saida.Id, 40m, Ontem)).StatusCode);
+        await CriarAsync(999m);
+
+        //Act
+        var resposta = await _client.GetAsync("/api/Tesouraria/Resumo");
+        var resumo = (await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json))!;
+        var dashboard = (await _client.GetFromJsonAsync<DashboardResponse>("/api/Dashboard", Json))!;
+
+        //Assert
+        Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
+        Assert.Equal(TesourariaService.MESES_RECEITAS_DESPESAS, resumo.ReceitasDespesas.Count);
+        var competencia = resumo.ReceitasDespesas.Single(c => (c.Ano, c.Mes) == (Ontem.Year, Ontem.Month));
+        Assert.Equal((100m, 40m), (competencia.Entradas, competencia.Saidas));
+        Assert.Equal((100m, 40m), (resumo.ReceitasDespesas.Sum(c => c.Entradas), resumo.ReceitasDespesas.Sum(c => c.Saidas)));
+        var mesAtual = resumo.ReceitasDespesas[^1];
+        Assert.Equal((dashboard.Financeiro!.Entradas, dashboard.Financeiro.Saidas), (mesAtual.Entradas, mesAtual.Saidas));
     }
 }

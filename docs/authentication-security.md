@@ -20,7 +20,7 @@ Fonte única: `Security/Roles.cs` (conjuntos de cargos, `Roles.PodeGerenciar` e 
 | Policy | Cargos | O que libera |
 | --- | --- | --- |
 | `GestaoCadastros` | ADM, DIR, DIRA, SEC | `/api/Usuarios` (listar, cadastrar, editar, excluir), fotos de outros usuários e `GET /api/Cargos` |
-| `GestaoFinanceira` | ADM, DIR, DIRA, TES | `/api/Lancamentos` (inclusive pagamentos) e o bloco `financeiro` do dashboard |
+| `GestaoFinanceira` | ADM, DIR, DIRA, TES | `/api/Lancamentos` (inclusive pagamentos), `GET /api/Tesouraria/Resumo` e o bloco `financeiro` do dashboard |
 | `GestaoEventos` | ADM, DIR, DIRA, SEC, TES | `/api/Eventos` (consultar, criar, editar, excluir; as cobranças do evento são geradas na mesma operação) |
 | `ConsultaMembros` | ADM, DIR, DIRA, SEC, TES | `GET /api/Membros` (id, nome e cargo dos ativos, para seletores) |
 | `Painel` | ADM, DIR, DIRA, SEC, TES | `GET /api/Dashboard` |
@@ -44,6 +44,7 @@ Matriz por endpoint (✓ permitido; — `403`). Sem autenticação válida, com 
 | `GET/POST/PUT/DELETE /api/Lancamentos…`, `POST/PUT …/Pagamento` | ✓ | ✓ | — | ✓ | — |
 | `GET/POST/PUT/DELETE /api/Eventos…` | ✓ | ✓ | ✓ | ✓ | — |
 | `GET /api/Dashboard` | ✓ completo | ✓ completo | ✓ sem `financeiro` (`null`) | ✓ completo | — |
+| `GET /api/Tesouraria/Resumo` | ✓ | ✓ | — | ✓ | — |
 | `GET/PUT /api/Me`, `GET/PUT/DELETE /api/Me/foto` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `GET /api/Me/Eventos`, `GET /api/Me/Eventos/{id}` | ✓ | ✓ | ✓ | ✓ | ✓ (só eventos de que participa) |
 | `GET /api/Cep/{cep}` | ✓ | ✓ | ✓ | ✓ | ✓ |
