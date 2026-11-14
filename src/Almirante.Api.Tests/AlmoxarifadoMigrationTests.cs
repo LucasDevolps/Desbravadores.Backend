@@ -40,7 +40,7 @@ public sealed class AlmoxarifadoMigrationTests
         await using (var db = Contexto(cs))
         {
             await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
-            db.Cargos.AddRange(Cargo("ADM"), Cargo("DS"));
+            await TestHelpers.InserirCargosLegadosAsync(db, Cargo("ADM"), Cargo("DS"));
             await db.SaveChangesAsync();
             await db.GetService<IMigrator>().MigrateAsync();
             Assert.Contains(MigrationEmTeste, await db.Database.GetAppliedMigrationsAsync());
@@ -95,7 +95,7 @@ public sealed class AlmoxarifadoMigrationTests
         {
             await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
             var inativo = Cargo("ALM", ativo: false);
-            db.Cargos.AddRange(Cargo("ADM"), inativo);
+            await TestHelpers.InserirCargosLegadosAsync(db, Cargo("ADM"), inativo);
             await db.SaveChangesAsync();
             await db.GetService<IMigrator>().MigrateAsync();
             var alm = await db.Cargos.AsNoTracking().SingleAsync(c => c.Role == "ALM");

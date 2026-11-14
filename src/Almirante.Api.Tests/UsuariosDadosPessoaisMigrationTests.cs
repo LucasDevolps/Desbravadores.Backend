@@ -22,7 +22,7 @@ public sealed class UsuariosDadosPessoaisMigrationTests
     private static async Task<Cargo> SemearCargosAsync(AlmiranteDbContext db)
     {
         var ds = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro do clube.", CriadoPor = "Teste", Role = "DS" };
-        db.Cargos.AddRange(ds,
+        await TestHelpers.InserirCargosLegadosAsync(db, ds,
             new Cargo { Id = Guid.NewGuid(), Nome = "Diretor", Descricao = "Diretoria do clube.", CriadoPor = "Teste", Role = "DIR" },
             new Cargo { Id = Guid.NewGuid(), Nome = "Administrador", Descricao = "Acesso administrativo.", CriadoPor = "Teste", Role = "ADM" });
         await db.SaveChangesAsync();

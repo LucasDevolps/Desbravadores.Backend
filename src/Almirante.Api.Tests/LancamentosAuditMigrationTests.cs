@@ -31,7 +31,7 @@ public sealed class LancamentosAuditMigrationTests
             var cargoDs = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro do clube.", CriadoPor = "Teste", Role = "DS" };
             var cargoDir = new Cargo { Id = Guid.NewGuid(), Nome = "Diretor", Descricao = "Diretoria do clube.", CriadoPor = "Teste", Role = "DIR" };
             var cargoAdm = new Cargo { Id = Guid.NewGuid(), Nome = "Administrador", Descricao = "Acesso administrativo.", CriadoPor = "Teste", Role = "ADM" };
-            db.Cargos.AddRange(cargoDs, cargoDir, cargoAdm);
+            await TestHelpers.InserirCargosLegadosAsync(db, cargoDs, cargoDir, cargoAdm);
 
             var membroLegado = new Usuario
             {

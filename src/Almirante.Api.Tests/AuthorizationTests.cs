@@ -7,13 +7,14 @@ using Microsoft.EntityFrameworkCore;
 namespace Almirante.Api.Tests;
 
 /// <summary>
-/// Matriz de permissões da issue #127, endpoint por endpoint e perfil por perfil. "Permitido" = a autorização deixou passar (nunca 401/403;
+/// Matriz de permissões da issue #127 (desde a #182, a matriz inicial de concessões e regras por alvo semeada no banco), endpoint por endpoint
+/// e perfil por perfil. "Permitido" = a autorização deixou passar (nunca 401/403;
 /// o corpo propositalmente inválido ou o id inexistente produzem 400/404); "negado" = 403 com o ProblemDetails padrão.
 /// </summary>
 public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento, SenhasTerceiros, ConsultaAlmoxarifado,
-        GestaoAlmoxarifado }
+        GestaoAlmoxarifado, Autorizacao }
 
     private static readonly Modulo[] Todos = Enum.GetValues<Modulo>();
 
@@ -21,9 +22,10 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
     private static readonly Dictionary<string, Modulo[]> Matriz = new()
     {
         ["ADM"] = Todos,
-        ["DIR"] = Todos,
+        // Issue #182: a administração de cargos, permissões e regras por alvo é só do perfil de sistema protegido (ADM).
+        ["DIR"] = [.. Todos.Except([Modulo.Autorizacao])],
         // Issue #159: DIRA tem todos os módulos, menos a senha de terceiros e a recuperação assistida.
-        ["DIRA"] = [.. Todos.Except([Modulo.SenhasTerceiros])],
+        ["DIRA"] = [.. Todos.Except([Modulo.SenhasTerceiros, Modulo.Autorizacao])],
         ["SEC"] = [Modulo.Cadastros, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Formacao, Modulo.Autoatendimento, Modulo.SenhasTerceiros,
             Modulo.ConsultaAlmoxarifado, Modulo.GestaoAlmoxarifado],
         ["TES"] = [Modulo.Financeiro, Modulo.Eventos, Modulo.Membros, Modulo.Painel, Modulo.Autoatendimento, Modulo.ConsultaAlmoxarifado],
@@ -56,6 +58,17 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("DELETE /api/Usuarios/{id}/foto", Modulo.Cadastros, () => new(HttpMethod.Delete, $"/api/Usuarios/{Guid.NewGuid()}/foto")),
         new("GET /api/Cargos", Modulo.Cadastros, () => new(HttpMethod.Get, "/api/Cargos")),
 
+        // Issue #182: administração de autorização. Corpo vazio = 400 e id inexistente = 404 para quem passa na autorização.
+        new("POST /api/Cargos", Modulo.Autorizacao, () => Json(HttpMethod.Post, "/api/Cargos", new { })),
+        new("PUT /api/Cargos/{id}", Modulo.Autorizacao, () => Json(HttpMethod.Put, $"/api/Cargos/{Guid.NewGuid()}", new { })),
+        new("POST /api/Cargos/{id}/Desativar", Modulo.Autorizacao, () => Json(HttpMethod.Post, $"/api/Cargos/{Guid.NewGuid()}/Desativar", new { })),
+        new("POST /api/Cargos/{id}/Reativar", Modulo.Autorizacao, () => Json(HttpMethod.Post, $"/api/Cargos/{Guid.NewGuid()}/Reativar", new { })),
+        new("GET /api/Cargos/{id}/Permissoes", Modulo.Autorizacao, () => new(HttpMethod.Get, $"/api/Cargos/{Guid.NewGuid()}/Permissoes")),
+        new("PUT /api/Cargos/{id}/Permissoes", Modulo.Autorizacao, () => Json(HttpMethod.Put, $"/api/Cargos/{Guid.NewGuid()}/Permissoes", new { })),
+        new("GET /api/Cargos/{id}/RegrasAlvo", Modulo.Autorizacao, () => new(HttpMethod.Get, $"/api/Cargos/{Guid.NewGuid()}/RegrasAlvo")),
+        new("PUT /api/Cargos/{id}/RegrasAlvo", Modulo.Autorizacao, () => Json(HttpMethod.Put, $"/api/Cargos/{Guid.NewGuid()}/RegrasAlvo", new { })),
+        new("GET /api/Permissoes", Modulo.Autorizacao, () => new(HttpMethod.Get, "/api/Permissoes")),
+
         new("GET /api/Lancamentos", Modulo.Financeiro, () => new(HttpMethod.Get, "/api/Lancamentos")),
         new("GET /api/Lancamentos/{id}", Modulo.Financeiro, () => new(HttpMethod.Get, $"/api/Lancamentos/{Guid.NewGuid()}")),
         new("POST /api/Lancamentos/Registrar", Modulo.Financeiro, () => Json(HttpMethod.Post, "/api/Lancamentos/Registrar", NovoLancamento(Guid.NewGuid()))),
@@ -76,6 +89,7 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
 
         new("GET /api/Auth/Me", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Auth/Me")),
         new("GET /api/Me", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me")),
+        new("GET /api/Me/Permissoes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me/Permissoes")),
         new("PUT /api/Me", Modulo.Autoatendimento, () => Json(HttpMethod.Put, "/api/Me", new { cpf = "123" })),
         new("GET /api/Me/foto", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Me/foto")),
         new("PUT /api/Me/foto", Modulo.Autoatendimento, () => new(HttpMethod.Put, "/api/Me/foto")),

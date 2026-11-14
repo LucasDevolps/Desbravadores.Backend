@@ -68,7 +68,7 @@ public sealed class UsuariosCinExpiracaoEnderecoMigrationTests
         {
             await db.GetService<IMigrator>().MigrateAsync(MigrationAnterior);
             var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro do clube.", CriadoPor = "Teste", Role = "DS" };
-            db.Cargos.Add(cargo);
+            await TestHelpers.InserirCargosLegadosAsync(db, cargo);
             await db.SaveChangesAsync();
             legado = Guid.NewGuid();
             responsavel = Guid.NewGuid();

@@ -120,6 +120,21 @@ public static class TestHelpers
             VALUES ({u.Id}, {u.Nome}, {u.Email}, {u.EmailNormalizado}, {u.SenhaHash}, {u.CargoId}, {u.DataCriacao}, {u.SecurityVersion}, {u.FalhasLoginConsecutivas})
             """);
 
+    /// <summary>
+    /// Cargos num banco ainda em migration anterior à AddRbacDinamico (issue #182): só as colunas originais, sem SistemaProtegido e Versao,
+    /// que o EF incluiria no INSERT.
+    /// </summary>
+    public static async Task InserirCargosLegadosAsync(AlmiranteDbContext db, params Cargo[] cargos)
+    {
+        foreach (var c in cargos)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Cargos (Id, Nome, Descricao, Ativo, CriadoPor, CriadoEm, Role)
+                VALUES ({c.Id}, {c.Nome}, {c.Descricao}, {c.Ativo}, {c.CriadoPor}, {c.CriadoEm}, {c.Role})
+                """);
+        }
+    }
+
     public static async Task<T> WithDbAsync<T>(WebApplicationFactory<Program> factory, Func<AlmiranteDbContext, Task<T>> action)
     {
         using var scope = factory.Services.CreateScope();

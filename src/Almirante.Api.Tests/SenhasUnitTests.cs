@@ -84,13 +84,20 @@ public sealed class SenhasUnitTests
                 ("SEC", "DS") => true,
                 _ => false,
             };
-            Assert.True(esperado == PermissoesSenha.PodeAlterarSenhaDeTerceiro(solicitante, alvo), $"{solicitante} → {alvo}: esperado {esperado}");
+            // Issue #182: a matriz da issue #159 virou regras por alvo iniciais, iguais para a troca e para a recuperação assistida.
+            foreach (var permissao in new[] { Permissoes.UsuariosSenhaAlterarTerceiros, Permissoes.UsuariosSenhaRecuperacaoAtender })
+            {
+                Assert.True(esperado == MatrizInicialAutorizacao.RegrasAlvo.Contains((solicitante, permissao, alvo)),
+                    $"{permissao} {solicitante} → {alvo}: esperado {esperado}");
+            }
         }
 
-        Assert.Equal(["ADM", "DIR", "SEC"], PermissoesSenha.Solicitantes);
-        Assert.Empty(PermissoesSenha.AlvosPermitidos("DIRA"));
-        Assert.Equal(["SEC", "TES", "DS"], TodosOsCargos.Where(PermissoesSenha.PodeSerAlvo));
-        Assert.DoesNotContain("DIRA", Roles.Diretoria.Where(r => PermissoesSenha.AlvosPermitidos(r).Count > 0));
+        string[] ComSenha(string permissao) =>
+            [.. MatrizInicialAutorizacao.Concessoes.Where(c => c.Value.Contains(permissao)).Select(c => c.Key).Order(StringComparer.Ordinal)];
+        Assert.Equal(["ADM", "DIR", "SEC"], ComSenha(Permissoes.UsuariosSenhaAlterarTerceiros));
+        Assert.Equal(["ADM", "DIR", "SEC"], ComSenha(Permissoes.UsuariosSenhaRecuperacaoAtender));
+        Assert.Equal(["SEC", "TES", "DS"], TodosOsCargos.Where(alvo => MatrizInicialAutorizacao.RegrasAlvo
+            .Any(r => r.Permissao == Permissoes.UsuariosSenhaRecuperacaoAtender && r.Alvo == alvo)));
     }
 
     [Fact]
