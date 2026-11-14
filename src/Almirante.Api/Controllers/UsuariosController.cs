@@ -13,19 +13,18 @@ namespace Almirante.Api.Controllers;
 
 [ApiController]
 [Route("api/Usuarios")]
-[Authorize(Policy = Policies.GestaoCadastros)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public class UsuariosController(UsuariosService usuariosService, ISender mediator, LimitadorEnvioFotos limitador,
     IOptions<MediaOptions> media, ILogger<UsuariosController> logger, LimitadorTentativasSenha limitadorSenha)
     : FotoUsuarioControllerBase(mediator, limitador, media, logger)
 {
-    private const string DescricaoMatriz = "Matriz explícita (cargos relidos do banco): Administrador e Diretor → Secretário, Tesoureiro e " +
-        "Desbravador; Secretário → Desbravador; nenhum outro par (Diretor Associado, Tesoureiro e Desbravador não atendem terceiros; " +
-        "Administrador, Diretor e Diretor Associado nunca são alvo). Ter acesso ao cadastro de usuários não basta.";
+    private const string DescricaoMatriz = "Além da permissão, o par cargo de quem pede → cargo do usuário precisa de uma regra por alvo " +
+        "(CargoRegrasAlvo, relida do banco na transação). Matriz inicial: Administrador e Diretor → Secretário, Tesoureiro e Desbravador; " +
+        "Secretário → Desbravador; nenhum outro par. Ausência de regra nega; ter acesso ao cadastro de usuários não basta.";
 
     [HttpPost("{usuarioId:guid}/alterar-senha")]
-    [Authorize(Policy = Policies.AlteracaoSenhaTerceiros)]
+    [RequerPermissao(Permissoes.UsuariosSenhaAlterarTerceiros)]
     [ValidateAntiForgeryToken]
     [ConteudoSensivel, HttpLogging(ConteudoSensivelAttribute.CamposRegistraveis)]
     [EndpointSummary("Altera a senha de outro usuário, confirmando a senha do responsável logado (a senha antiga do afetado nunca é pedida).")]
@@ -56,7 +55,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpGet("recuperacao-senha/pendentes")]
-    [Authorize(Policy = Policies.AlteracaoSenhaTerceiros)]
+    [RequerPermissao(Permissoes.UsuariosSenhaRecuperacaoAtender)]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [EndpointSummary("Lista os pedidos de recuperação de senha abertos que o usuário logado pode atender.")]
     [EndpointDescription(DescricaoMatriz + " Somente pedidos não expirados de usuários ativos com cargo que o solicitante atende: id, usuarioId, " +
@@ -73,7 +72,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         Ok(await Mediator.Send(new ListarRecuperacoesSenhaPendentesQuery(User.UsuarioId(), pageSize, cursor), cancellationToken));
 
     [HttpPost("{usuarioId:guid}/recuperacao-senha/autorizacao")]
-    [Authorize(Policy = Policies.AlteracaoSenhaTerceiros)]
+    [RequerPermissao(Permissoes.UsuariosSenhaRecuperacaoAtender)]
     [ValidateAntiForgeryToken]
     [ConteudoSensivel, HttpLogging(ConteudoSensivelAttribute.CamposRegistraveis)]
     [EndpointSummary("Emite uma autorização de recuperação de uso único para o titular escolher a nova senha sem login.")]
@@ -115,6 +114,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpGet]
+    [RequerPermissao(Permissoes.UsuariosConsultar)]
     [EndpointSummary("Lista os usuários; por padrão, somente os ativos.")]
     [EndpointDescription("includeInactive=true inclui os usuários excluídos logicamente. funcao traz o nome do cargo (ex.: \"Diretor\"). " +
         "cpf (normalizado), dataNascimento (yyyy-MM-dd), telefone, rg, tipoSanguineo, doencasAlergias, dataExpiracao e os dados do responsável vêm null quando não cadastrados; " +
@@ -132,6 +132,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpPost]
+    [RequerPermissao(Permissoes.UsuariosCriar)]
     [EndpointSummary("Cadastra um usuário.")]
     [EndpointDescription("E-mail único sem diferenciar maiúsculas/minúsculas (409 se já existir, inclusive entre inativos). " +
         "cpf é obrigatório: um CPF válido (11 dígitos, com ou sem pontos e hífen), único entre todos os usuários (409 se já existir). " +
@@ -145,8 +146,8 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         "pode ser passada) são opcionais. endereco é opcional: { cep (8 dígitos, com ou sem hífen, obrigatório no objeto), numero " +
         "(até 20), complemento (até 100) }; a API consulta o ViaCEP e grava os dados oficiais do CEP (400 CEP mal formado ou inexistente, " +
         "503 ViaCEP indisponível, lento ou com resposta inválida — nada é gravado). " +
-        "cargoId deve ser um cargo ativo. Hierarquia (403): somente um Administrador cadastra outro Administrador; Diretor, Diretor Associado, " +
-        "Secretário e Tesoureiro só são atribuídos pela diretoria (ADM, DIR, DIRA). Política GestaoCadastros: ADM, DIR, DIRA, SEC.")]
+        "cargoId deve ser um cargo ativo (403 sem regra por alvo para ele). " +
+        "Exige usuarios.criar e uma regra por alvo (CargoRegrasAlvo) do cargo de quem pede para o cargo atribuído.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
@@ -159,6 +160,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpPut("{id:guid}")]
+    [RequerPermissao(Permissoes.UsuariosEditar)]
     [EndpointSummary("Altera nome, e-mail, cargo, dados pessoais, documento, endereço e responsável de um usuário ativo (estado anterior completo auditado em _usuarios_hist).")]
     [EndpointDescription("nome, email e cargoId são obrigatórios e substituídos. cpf, dataNascimento, telefone, rg, tipoSanguineo, doencasAlergias, " +
         "ehCin, dataExpiracao, endereco e os campos do responsável omitidos mantêm o valor atual; null (ou \"\" nos textos) remove, exceto o cpf já " +
@@ -173,7 +175,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
         "A obrigatoriedade do responsável usa a data de nascimento informada ou, se omitida, " +
         "a já gravada (400 se o menor de 18 anos ficar sem nome ou e-mail do responsável). " +
         "409 se o e-mail ou o CPF pertencer a outro usuário ou se o usuário estiver inativo; 404 se inexistente. " +
-        "Hierarquia (403) vale para o cargo atual e para o novo: Usuário com cargo Administrador só por um Administrador; Diretor, Diretor Associado, Secretário ou Tesoureiro só pela diretoria (ADM, DIR, DIRA) (403). O próprio usuário altera os dados pessoais em PUT /api/Me.")]
+        "Exige usuarios.editar e regra por alvo (CargoRegrasAlvo) para o cargo atual e para o novo (403); o último usuário ativo do perfil de sistema protegido não pode ser reclassificado (409). O próprio usuário altera os dados pessoais em PUT /api/Me.")]
     [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -194,10 +196,11 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpDelete("{id:guid}")]
+    [RequerPermissao(Permissoes.UsuariosExcluir)]
     [EndpointSummary("Exclui logicamente (inativa) um usuário (estado anterior auditado em _usuarios_hist).")]
     [EndpointDescription("409 se o usuário estiver vinculado a eventos de hoje em diante (extensão eventos lista todos), se já estiver inativo " +
         "ou se for o próprio solicitante; 404 se inexistente. Eventos passados não impedem a exclusão. A foto, se houver, é mantida. " +
-        "Usuário com cargo Administrador só por um Administrador; Diretor, Diretor Associado, Secretário ou Tesoureiro só pela diretoria (ADM, DIR, DIRA) (403).")]
+        "Exige usuarios.excluir e regra por alvo para o cargo do usuário (403); o último usuário ativo do perfil de sistema protegido não pode ser excluído (409).")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
@@ -213,6 +216,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpPut("{id:guid}/foto")]
+    [RequerPermissao(Permissoes.UsuariosFotoAlterar)]
     [DisableFormValueModelBinding]
     [Consumes("multipart/form-data")]
     [EndpointSummary("Envia ou substitui a foto de perfil de um usuário ativo (troca auditada em _usuarios_hist).")]
@@ -241,6 +245,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     }
 
     [HttpGet("{id:guid}/foto")]
+    [RequerPermissao(Permissoes.UsuariosConsultar)]
     [EndpointSummary("Baixa a foto de perfil de um usuário (WebP gerado pela API).")]
     [EndpointDescription("Exige o token (Bearer): no navegador, busque com HttpClient (responseType blob) e use URL.createObjectURL; uma <img src> " +
         "comum não envia o token. ETag muda a cada troca de foto (If-None-Match -> 304); Cache-Control private, no-cache. 404 sem usuário ou sem foto.")]
@@ -250,6 +255,7 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     public Task<IActionResult> ObterFoto(Guid id, CancellationToken cancellationToken) => ObterFotoAsync(id, cancellationToken);
 
     [HttpDelete("{id:guid}/foto")]
+    [RequerPermissao(Permissoes.UsuariosFotoAlterar)]
     [EndpointSummary("Remove a foto de perfil de um usuário (remoção auditada em _usuarios_hist; o arquivo é apagado).")]
     [EndpointDescription("Também para usuário inativo. 404 se o usuário não existir ou não tiver foto; foto de outro usuário segue a hierarquia dos cargos (403).")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

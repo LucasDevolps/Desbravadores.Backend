@@ -15,7 +15,7 @@ namespace Almirante.Api.Controllers;
 [Route("api/Classes")]
 [Authorize(Policy = Policies.Autoatendimento)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-public sealed class ClassesController(ISender mediator) : ControllerBase
+public sealed class ClassesController(ISender mediator, PermissoesService permissoes) : ControllerBase
 {
     [HttpGet]
     [EndpointSummary("Lista as 15 classes (regulares, avançadas e de liderança) com grupo, ordem, idades, pré-requisitos e revisão vigente.")]
@@ -40,13 +40,13 @@ public sealed class ClassesController(ISender mediator) : ControllerBase
 
     [HttpGet("{classe}/Revisoes")]
     [EndpointSummary("Lista as revisões dos requisitos da classe (mais recente primeiro).")]
-    [EndpointDescription("Publicada e substituídas para qualquer cargo; rascunhos e descartadas só para GestaoFormacao (ADM, DIR, DIRA, SEC). " +
+    [EndpointDescription("Publicada e substituídas para qualquer cargo; rascunhos e descartadas só para quem tem formacao.revisoes.administrar. " +
         "Os requisitos de cada revisão estão em GET /api/RevisoesRequisitos/{id}.")]
     [ProducesResponseType<IReadOnlyList<RevisaoResumoDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<IReadOnlyList<RevisaoResumoDto>>> ListarRevisoes(ClasseDesbravador classe, CancellationToken cancellationToken)
     {
-        var revisoes = await mediator.Send(new ListarRevisoesQuery(classe, null, Roles.Formacao.Contains(User.Role())), cancellationToken);
+        var revisoes = await mediator.Send(new ListarRevisoesQuery(classe, null, await permissoes.TemAsync(User, Permissoes.FormacaoRevisoesAdministrar, cancellationToken)), cancellationToken);
         return revisoes is null ? NotFound(new ProblemDetails { Title = "Classe não encontrada.", Status = StatusCodes.Status404NotFound }) : Ok(revisoes);
     }
 }

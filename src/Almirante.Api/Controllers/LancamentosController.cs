@@ -8,12 +8,12 @@ namespace Almirante.Api.Controllers;
 
 [ApiController]
 [Route("api/Lancamentos")]
-[Authorize(Policy = Policies.GestaoFinanceira)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class LancamentosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
+    [RequerPermissao(Permissoes.LancamentosConsultar)]
     [EndpointSummary("Lista os lançamentos, paginados, com filtros por busca, status, finalidade e vencimento.")]
     [EndpointDescription("Sem filtros ativos (search, status, finalidade e vencimento ausentes; status/finalidade \"Todos\" contam como ausentes), " +
         "a ordem é por prioridade de status: Atrasado, depois Pendente, depois Pago; dentro do mesmo status, vencimento mais recente primeiro e Id como desempate. " +
@@ -38,6 +38,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [RequerPermissao(Permissoes.LancamentosConsultar)]
     [EndpointSummary("Consulta um lançamento ativo.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -48,6 +49,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpPost("Registrar")]
+    [RequerPermissao(Permissoes.LancamentosCriar)]
     [EndpointSummary("Registra um lançamento para um membro ou, atomicamente, para todos.")]
     [EndpointDescription("Modo geral (aplicarATodosOsMembros: true): Idempotency-Key obrigatório; 200 com a operação (criada ou reenviada). " +
         "Modo individual: 201 com o lançamento. Idempotency-Key é opcional no modo individual: sem ele, cada POST cria uma nova cobrança " +
@@ -96,6 +98,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [RequerPermissao(Permissoes.LancamentosEditar)]
     [EndpointSummary("Atualiza um lançamento.")]
     [EndpointDescription("Campos omitidos não mudam. status Pago só pelo endpoint de pagamento (409). Trocar o status para Pendente com vencimento " +
         "anterior a hoje no fuso do clube retorna 400: o lançamento vencido e não pago fica Atrasado (a rotina de vencimento o marcaria de novo).")]
@@ -117,6 +120,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpPost("{id:guid}/Pagamento")]
+    [RequerPermissao(Permissoes.PagamentosRegistrar)]
     [EndpointSummary("Registra o pagamento efetivo de um lançamento.")]
     [EndpointDescription("Corpo: dataPagamento (yyyy-MM-dd, até hoje no fuso do clube) e valorPago (> 0, 2 casas, no máximo o valor do lançamento). " +
         "Marca o lançamento como Pago e grava quem registrou. Aceita lançamentos Pendente, Atrasado ou \"Pago\" histórico sem dados de pagamento (regularização). " +
@@ -129,6 +133,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
         EnviarPagamentoAsync(id, request, cancellationToken);
 
     [HttpPut("{id:guid}/Pagamento")]
+    [RequerPermissao(Permissoes.PagamentosRegistrar)]
     [EndpointSummary("Corrige data e/ou valor de um pagamento já registrado.")]
     [EndpointDescription("Mesmas regras do POST. 409 se o lançamento ainda não tem pagamento registrado ou mudou durante a requisição.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
@@ -154,6 +159,7 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [RequerPermissao(Permissoes.LancamentosExcluir)]
     [EndpointSummary("Exclui logicamente um lançamento; a exclusão é auditada.")]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

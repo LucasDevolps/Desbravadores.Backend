@@ -9,12 +9,11 @@ using Microsoft.AspNetCore.Mvc;
 namespace Almirante.Api.Controllers;
 
 /// <summary>
-/// Operações comuns aos vínculos membro–classe e membro–especialidade (issue #125), só para GestaoFormacao (ADM, DIR, DIRA, SEC).
+/// Operações comuns aos vínculos membro–classe e membro–especialidade (issue #125), consulta com formacao.gestao.consultar e escrita com formacao.gerenciar.
 /// O membro consulta a própria formação em /api/Me/Formacao; tesoureiro, instrutor e demais cargos não acessam os dados de outros membros.
 /// Toda alteração exige o vínculo existente, é transacional e grava o estado anterior em formacao_historico.
 /// </summary>
 [ApiController]
-[Authorize(Policy = Policies.GestaoFormacao)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public abstract class FormacaoVinculosControllerBase(ISender mediator) : ControllerBase
@@ -24,6 +23,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
     protected abstract TipoVinculo Tipo { get; }
 
     [HttpGet("{id:guid}")]
+    [RequerPermissao(Permissoes.FormacaoGestaoConsultar)]
     [EndpointSummary("Consulta um vínculo com requisitos, progresso, pré-requisitos, validação final e investidura/entrega.")]
     [EndpointDescription("requisitos traz a árvore da revisão usada pelo vínculo, com situação, datas, validador, evidências e satisfeito " +
         "(resultado das regras). progressoDetalhado: unidades obrigatórias, percentual (critério em criterio), pendências, pré-requisitos, " +
@@ -37,6 +37,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
     }
 
     [HttpGet("{id:guid}/Historico")]
+    [RequerPermissao(Permissoes.FormacaoGestaoConsultar)]
     [EndpointSummary("Histórico de alterações do vínculo, dos requisitos, evidências e validações (estado anterior e novo, responsável, ação, justificativa).")]
     [ProducesResponseType<IReadOnlyList<HistoricoFormacaoDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -47,6 +48,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
     }
 
     [HttpPost("Historicos")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Registra uma conquista anterior à implantação (registro histórico, já concluído).")]
     [EndpointDescription("Sem revisão nem validação individual de requisitos (nada é fabricado). origemHistorica obrigatória; o usuário autenticado " +
         "fica como responsável pelo lançamento. dataInicio, dataConclusao e dataInvestiduraOuEntrega opcionais (null = desconhecida), não futuras " +
@@ -64,6 +66,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
     }
 
     [HttpPut("{id:guid}")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Atualiza instrutor/responsável e observações do vínculo.")]
     [EndpointDescription("Substitui instrutorId (usuário ativo; null remove) e observacoes. Exige versao. Ser instrutor não concede permissão de escrita.")]
     [ProducesResponseType<VinculoDto>(StatusCodes.Status200OK)]
@@ -74,6 +77,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
         EnviarAsync(request, id, cancellationToken);
 
     [HttpPut("{id:guid}/Requisitos/{requisitoId:guid}")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Atualiza a situação de um requisito do participante (Pendente, EmAndamento ou Validado).")]
     [EndpointDescription("Só em vínculo em andamento e em item da revisão do vínculo (grupos são calculados pelos subitens: 409). Validado registra " +
         "o usuário e a data/hora da validação; item que exige especialidades só é validado com evidências válidas suficientes (409). " +
@@ -90,6 +94,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
     }
 
     [HttpPost("{id:guid}/Concluir")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Registra a conclusão (validação final) pelo fluxo normal.")]
     [EndpointDescription("Corpo: dataConclusao e versao. 409 enquanto houver requisito obrigatório pendente (requisitosPendentes) ou pré-requisito " +
         "não atendido (preRequisitos). dataConclusao entre o início e hoje e não anterior ao cumprimento de um requisito validado. Concluir não " +
@@ -102,6 +107,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
         EnviarAsync(request, id, cancellationToken);
 
     [HttpPost("{id:guid}/Cancelar")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Cancela o vínculo (justificativa obrigatória; progresso e histórico preservados).")]
     [EndpointDescription("Fluxo normal: só em andamento (concluído: reabra antes). Registro histórico: cancela mesmo concluído, desde que nenhuma " +
         "outra conclusão dependa dele. Corpo: justificativa e versao.")]
@@ -113,6 +119,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
         Operacao(id, request, OperacaoVinculo.Cancelar, cancellationToken);
 
     [HttpPost("{id:guid}/Retomar")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Retoma um vínculo cancelado do fluxo normal, com o progresso preservado.")]
     [EndpointDescription("409 se já houver outro vínculo não cancelado da mesma classe/especialidade (nunca duplica conquistas).")]
     [ProducesResponseType<VinculoDto>(StatusCodes.Status200OK)]
@@ -123,6 +130,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
         Operacao(id, request, OperacaoVinculo.Retomar, cancellationToken);
 
     [HttpPost("{id:guid}/Reabrir")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Reabre um vínculo concluído para correção (volta a em andamento).")]
     [EndpointDescription("Justificativa obrigatória. Conclusão e investidura/entrega saem do vínculo e ficam preservadas no histórico (estado anterior) " +
         "para análise. 409 se outra conclusão depender desta (classe pré-requisito, especialidade usada como evidência ou pré-requisito): " +
@@ -135,6 +143,7 @@ public abstract class FormacaoVinculosControllerBase(ISender mediator) : Control
         Operacao(id, request, OperacaoVinculo.Reabrir, cancellationToken);
 
     [HttpPost("{id:guid}/MigrarRevisao")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Migra um vínculo em andamento para a revisão vigente dos requisitos (explícito, justificado e auditado).")]
     [EndpointDescription("Corpo: revisaoId (a publicada da mesma classe/especialidade), justificativa e versao. O progresso da revisão anterior é " +
         "preservado e nenhuma validação é copiada: os requisitos da nova revisão começam pendentes. Evidências vinculadas são desativadas.")]
@@ -186,6 +195,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
     protected override TipoVinculo Tipo => TipoVinculo.Classe;
 
     [HttpGet]
+    [RequerPermissao(Permissoes.FormacaoGestaoConsultar)]
     [EndpointSummary("Lista os vínculos membro–classe, paginados, com o resumo do progresso (relatórios por participante e por situação).")]
     [EndpointDescription("Filtros: membroId, classe, grupo (Regular, Avancada, Lideranca), situacao (EmAndamento, Concluida, Cancelada), historico, " +
         "aguardandoInvestiduraOuEntrega (concluídos sem investidura) e período: periodo = Inicio | Conclusao | InvestiduraOuEntrega define qual " +
@@ -215,6 +225,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
         }, cancellationToken);
 
     [HttpPost]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Associa uma classe a um membro existente (inclusive diretoria e adultos, e classes de liderança).")]
     [EndpointDescription("membroId (usuário ativo), classe, dataInicio (não futura) obrigatórios; modalidade Padrao (padrão) ou Agrupada " +
         "(classes agrupadas, só regulares/avançadas: cada classe mantém o próprio vínculo); instrutorId e observacoes opcionais. Usa a revisão " +
@@ -228,6 +239,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
         AssociarAsync(request, cancellationToken);
 
     [HttpPost("{id:guid}/Investidura")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Registra a investidura de uma classe concluída (ato separado da conclusão).")]
     [EndpointDescription("Corpo: data (entre a conclusão e hoje) e versao. Liderança: exige as validações externas confirmadas (inclusive " +
         "APROVACAO_OFICIAL) e, em Líder, 18 anos completos na data. 409 se não concluída, já investida ou com pendências (preRequisitos).")]
@@ -239,6 +251,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
         EnviarAsync(request, id, cancellationToken);
 
     [HttpDelete("{id:guid}/Investidura")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Desfaz a investidura registrada (correção com justificativa; o registro anterior fica no histórico).")]
     [ProducesResponseType<VinculoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -248,6 +261,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
         Operacao(id, request, OperacaoVinculo.DesfazerReconhecimento, cancellationToken);
 
     [HttpPost("{id:guid}/Requisitos/{requisitoId:guid}/Evidencias")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Vincula uma especialidade concluída do membro como evidência de um requisito da classe.")]
     [EndpointDescription("Corpo: membroEspecialidadeId. O requisito precisa exigir especialidades; a conquista precisa ser do mesmo membro, estar " +
         "concluída e atender área/especialidade exigidas e, com naoRealizadaAnteriormente, ter sido concluída a partir do início da classe e não " +
@@ -264,6 +278,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
     }
 
     [HttpDelete("{id:guid}/Requisitos/{requisitoId:guid}/Evidencias/{membroEspecialidadeId:guid}")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Remove (logicamente) uma evidência de especialidade, com justificativa.")]
     [EndpointDescription("409 se a remoção deixaria um requisito validado sem evidências suficientes: retire a validação antes.")]
     [ProducesResponseType<VinculoDto>(StatusCodes.Status200OK)]
@@ -279,6 +294,7 @@ public sealed class FormacaoClassesController(ISender mediator) : FormacaoVincul
     }
 
     [HttpPut("{id:guid}/ValidacoesExternas/{codigo}")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Registra uma validação externa exigida pela referência oficial (classes de liderança).")]
     [EndpointDescription("codigo: um dos requisitosExternos da classe (ex.: RECOMENDACAO_COMISSAO_IGREJA, CADASTRO_SGC, APROVACAO_OFICIAL). " +
         "Corpo: confirmada, data (obrigatória ao confirmar), referencia (documento/protocolo), observacao. Desfazer uma confirmação exige " +
@@ -302,6 +318,7 @@ public sealed class FormacaoEspecialidadesController(ISender mediator) : Formaca
     protected override TipoVinculo Tipo => TipoVinculo.Especialidade;
 
     [HttpGet]
+    [RequerPermissao(Permissoes.FormacaoGestaoConsultar)]
     [EndpointSummary("Lista os vínculos membro–especialidade, paginados, com o resumo do progresso.")]
     [EndpointDescription("Filtros: membroId, especialidadeId, area, situacao, historico, aguardandoInvestiduraOuEntrega (concluídas sem entrega do " +
         "distintivo) e periodo = Inicio | Conclusao | InvestiduraOuEntrega (entrega) com de/ate. ordenarPor como em /api/Formacao/Classes, com " +
@@ -330,6 +347,7 @@ public sealed class FormacaoEspecialidadesController(ISender mediator) : Formaca
         }, cancellationToken);
 
     [HttpPost]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Associa uma especialidade ativa a um membro existente.")]
     [EndpointDescription("membroId (usuário ativo), especialidadeId (ativa; inativa: 409) e dataInicio obrigatórios. Usa a revisão publicada dos " +
         "requisitos (409 sem revisão). 409 se já houver vínculo não cancelado da mesma especialidade. Pré-requisitos (outras especialidades) " +
@@ -342,6 +360,7 @@ public sealed class FormacaoEspecialidadesController(ISender mediator) : Formaca
         AssociarAsync(request, cancellationToken);
 
     [HttpPost("{id:guid}/Entrega")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Registra a entrega do distintivo de uma especialidade concluída (ato separado da conclusão).")]
     [EndpointDescription("Corpo: data (entre a conclusão e hoje) e versao. 409 se não concluída ou já entregue.")]
     [ProducesResponseType<VinculoDto>(StatusCodes.Status200OK)]
@@ -352,6 +371,7 @@ public sealed class FormacaoEspecialidadesController(ISender mediator) : Formaca
         EnviarAsync(request, id, cancellationToken);
 
     [HttpDelete("{id:guid}/Entrega")]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Desfaz a entrega registrada (correção com justificativa; o registro anterior fica no histórico).")]
     [ProducesResponseType<VinculoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

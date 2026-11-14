@@ -11,13 +11,13 @@ namespace Almirante.Api.Controllers;
 
 /// <summary>
 /// Catálogo administrável de especialidades (issue #125). Consulta para qualquer cargo ativo; cadastro, edição, inativação e reativação
-/// só para GestaoFormacao (ADM, DIR, DIRA, SEC). Nada é excluído fisicamente.
+/// só para quem tem formacao.revisoes.administrar. Nada é excluído fisicamente.
 /// </summary>
 [ApiController]
 [Route("api/Especialidades")]
 [Authorize(Policy = Policies.Autoatendimento)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-public sealed class EspecialidadesController(ISender mediator) : ControllerBase
+public sealed class EspecialidadesController(ISender mediator, PermissoesService permissoes) : ControllerBase
 {
     [HttpGet]
     [EndpointSummary("Lista as especialidades, paginadas (por padrão só as ativas).")]
@@ -47,17 +47,17 @@ public sealed class EspecialidadesController(ISender mediator) : ControllerBase
 
     [HttpGet("{id:guid}/Revisoes")]
     [EndpointSummary("Lista as revisões dos requisitos da especialidade (mais recente primeiro).")]
-    [EndpointDescription("Publicada e substituídas para qualquer cargo; rascunhos e descartadas só para GestaoFormacao.")]
+    [EndpointDescription("Publicada e substituídas para qualquer cargo; rascunhos e descartadas só para quem tem formacao.revisoes.administrar.")]
     [ProducesResponseType<IReadOnlyList<RevisaoResumoDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<IReadOnlyList<RevisaoResumoDto>>> ListarRevisoes(Guid id, CancellationToken cancellationToken)
     {
-        var revisoes = await mediator.Send(new ListarRevisoesQuery(null, id, Roles.Formacao.Contains(User.Role())), cancellationToken);
+        var revisoes = await mediator.Send(new ListarRevisoesQuery(null, id, await permissoes.TemAsync(User, Permissoes.FormacaoRevisoesAdministrar, cancellationToken)), cancellationToken);
         return revisoes is null ? NaoEncontrada() : Ok(revisoes);
     }
 
     [HttpPost]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Cadastra uma especialidade.")]
     [EndpointDescription("nome (até 150), area (até 100) e fonteOficial (até 300) obrigatórios. codigoOficial (até 20) é único no catálogo, inclusive " +
         "entre inativas (409); nome é único entre as ativas da mesma área e modalidade (409), sem bloquear nomes apenas semelhantes. " +
@@ -76,7 +76,7 @@ public sealed class EspecialidadesController(ISender mediator) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Atualiza uma especialidade (estado anterior auditado em formacao_historico).")]
     [EndpointDescription("Mesmas regras do cadastro; substitui todos os campos (opcional omitido fica vazio) e a lista de pré-requisitos " +
         "(removidos são desativados, não apagados). Exige versao. Vínculos e progresso existentes não mudam.")]
@@ -94,7 +94,7 @@ public sealed class EspecialidadesController(ISender mediator) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Inativa uma especialidade (exclusão lógica, auditada).")]
     [EndpointDescription("Corpo: motivo (1–255) e versao. Impede novas associações e revisões; consulta, progresso, conquistas e histórico " +
         "existentes continuam. 409 se já inativa ou versão desatualizada.")]
@@ -107,7 +107,7 @@ public sealed class EspecialidadesController(ISender mediator) : ControllerBase
         AlterarSituacao(id, request, ativar: false, cancellationToken);
 
     [HttpPost("{id:guid}/Reativar")]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoGerenciar)]
     [EndpointSummary("Reativa uma especialidade inativa.")]
     [EndpointDescription("Corpo: versao. 409 se já ativa ou se houver outra ativa com o mesmo nome, área e modalidade.")]
     [ProducesResponseType<EspecialidadeDto>(StatusCodes.Status200OK)]

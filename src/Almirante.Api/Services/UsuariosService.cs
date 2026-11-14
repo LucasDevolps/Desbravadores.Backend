@@ -14,7 +14,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Almirante.Api.Services;
 
 public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> passwordHasher, TimeProvider clock, DataCivil dataCivil,
-    IConsultaCep consultaCep, ILogger<UsuariosService> logger)
+    IConsultaCep consultaCep, ILogger<UsuariosService> logger, PermissoesService permissoes)
 {
     public const int NomeMaximo = 200;
     public const int EmailMaximo = 100;
@@ -173,7 +173,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         var email = request.Email!.Trim();
         var emailNormalizado = NormalizarEmail(email);
         var cargo = await ObterCargoAtivoAsync(request.CargoId!.Value, ct);
-        ExigirPermissaoSobreCargo(cargo.Role, request.SolicitanteRole);
+        await ExigirRegraSobreCargoAsync(request.SolicitanteRole, Permissoes.UsuariosCriar, cargo.Role, ct);
 
         if (await db.Usuarios.AnyAsync(u => u.EmailNormalizado == emailNormalizado, ct))
         {
@@ -272,7 +272,7 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         return await db.Usuarios.AsNoTracking().Where(u => u.Id == request.UsuarioId).Select(ParaMeusDados).SingleAsync(ct);
     }
 
-    /// <summary>Nome, e-mail e cargo do PUT administrativo, com o cargo de quem pede (hierarquia de <see cref="Roles.PodeGerenciar"/>).</summary>
+    /// <summary>Nome, e-mail e cargo do PUT administrativo, com o cargo de quem pede (regras por alvo de usuarios.editar).</summary>
     private sealed record CadastroAdministrativo(string Nome, string Email, Guid CargoId, string SolicitanteRole);
 
     private async Task AlterarAsync(Guid id, DadosPessoaisRequest request, CadastroAdministrativo? cadastro, Guid responsavelId,
@@ -283,6 +283,11 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
         await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
+            if (cadastro is not null)
+            {
+                await permissoes.TravarRevisaoParaLeituraAsync(ct);
+            }
+
             var atual = await TravarUsuarioAsync(id, ct);
             if (!atual.Ativo)
             {
@@ -292,9 +297,13 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             var (nome, email, emailNormalizado, cargoId) = (atual.Nome, atual.Email, atual.EmailNormalizado, atual.CargoId);
             if (cadastro is not null)
             {
-                ExigirPermissaoSobreCargo(atual.Role, cadastro.SolicitanteRole);
+                await ExigirRegraSobreCargoAsync(cadastro.SolicitanteRole, Permissoes.UsuariosEditar, atual.Role, ct);
                 var cargo = await ObterCargoAtivoAsync(cadastro.CargoId, ct);
-                ExigirPermissaoSobreCargo(cargo.Role, cadastro.SolicitanteRole);
+                await ExigirRegraSobreCargoAsync(cadastro.SolicitanteRole, Permissoes.UsuariosEditar, cargo.Role, ct);
+                if (cargo.Id != atual.CargoId)
+                {
+                    await ExigirOutroUsuarioNoPerfilProtegidoAsync(id, atual.CargoId, "reclassificado", ct);
+                }
                 (nome, email, emailNormalizado, cargoId) = (cadastro.Nome, cadastro.Email, NormalizarEmail(cadastro.Email), cargo.Id);
 
                 if (await db.Usuarios.AnyAsync(u => u.Id != id && u.EmailNormalizado == emailNormalizado, ct))
@@ -401,13 +410,15 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
 
         await SessaoAuditoria.ExecutarEmTransacaoAsync(db, logger, async sessao =>
         {
+            await permissoes.TravarRevisaoParaLeituraAsync(ct);
             var atual = await TravarUsuarioAsync(request.Id, ct);
             if (!atual.Ativo)
             {
                 throw ApiProblemException.Conflict("Usuário já está inativo.", "O usuário já foi excluído. Nenhum registro foi alterado.");
             }
 
-            ExigirPermissaoSobreCargo(atual.Role, request.SolicitanteRole);
+            await ExigirRegraSobreCargoAsync(request.SolicitanteRole, Permissoes.UsuariosExcluir, atual.Role, ct);
+            await ExigirOutroUsuarioNoPerfilProtegidoAsync(request.Id, atual.CargoId, "excluído", ct);
 
             var hoje = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
             var bloqueadores = (await db.EventosMembros.AsNoTracking()
@@ -530,14 +541,39 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.Invalid("CargoId", "cargoId inexistente ou inativo.");
 
-    internal static void ExigirPermissaoSobreCargo(string role, string solicitanteRole)
+    /// <summary>
+    /// Permissão da operação e regra por alvo (CargoRegrasAlvo) do cargo de quem pede para o cargo do usuário, relidas do banco. Ausência de
+    /// regra nega: não há hierarquia implícita, e um cargo novo só é gerenciado por quem recebeu uma regra explícita para ele.
+    /// </summary>
+    internal async Task ExigirRegraSobreCargoAsync(string solicitanteRole, string permissao, string alvoRole, CancellationToken ct)
     {
-        if (!Roles.PodeGerenciar(solicitanteRole, role))
+        if (!await permissoes.PodeSobreAlvoAsync(solicitanteRole, permissao, alvoRole, ct))
         {
-            throw new ApiProblemException(StatusCodes.Status403Forbidden, "ACESSO NEGADO!", role == Roles.Admin
-                ? "Somente um Administrador pode gerenciar usuários com o cargo Administrador."
-                : "Somente a diretoria (Administrador, Diretor ou Diretor Associado) pode gerenciar usuários com os cargos Diretor, " +
-                  "Diretor Associado, Secretário ou Tesoureiro.");
+            throw new ApiProblemException(StatusCodes.Status403Forbidden, "ACESSO NEGADO!",
+                $"Seu cargo não tem regra por alvo para {permissao} sobre usuários com o cargo {alvoRole}.");
+        }
+    }
+
+    /// <summary>
+    /// O último usuário ativo de um perfil de sistema protegido (o administrador) não é excluído nem reclassificado. Trava as linhas ativas do
+    /// perfil até o commit (UPDLOCK, HOLDLOCK): duas requisições paralelas não esvaziam o perfil uma pela outra.
+    /// </summary>
+    private async Task ExigirOutroUsuarioNoPerfilProtegidoAsync(Guid usuarioId, Guid cargoId, string acao, CancellationToken ct)
+    {
+        var protegido = await db.Cargos.AsNoTracking().Where(c => c.Id == cargoId).Select(c => c.SistemaProtegido).SingleAsync(ct);
+        if (!protegido)
+        {
+            return;
+        }
+
+        var outros = await db.Database.SqlQuery<int>($"""
+            SELECT COUNT(*) AS [Value] FROM [dbo].[Usuarios] WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+            WHERE [CargoId] = {cargoId} AND [Ativo] = 1 AND [Id] <> {usuarioId}
+            """).SingleAsync(ct);
+        if (outros == 0)
+        {
+            throw ApiProblemException.Conflict("Último administrador.",
+                $"Este é o último usuário ativo do perfil de sistema protegido e não pode ser {acao}. Nenhum registro foi alterado.");
         }
     }
 

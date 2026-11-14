@@ -8,19 +8,19 @@ using Microsoft.AspNetCore.Mvc;
 namespace Almirante.Api.Controllers;
 
 /// <summary>
-/// Gestão de eventos (GestaoEventos: ADM, DIR, DIRA, SEC, TES). Cadastro e cobranças são uma operação só: criar, editar ou excluir um
+/// Gestão de eventos (eventos.consultar/criar/editar/excluir). Cadastro e cobranças são uma operação só: criar, editar ou excluir um
 /// evento gera, sincroniza ou desativa os lançamentos pendentes dos participantes na mesma transação (idempotência, rowversion e
-/// auditoria preservadas). Registrar ou corrigir pagamentos continua em /api/Lancamentos (GestaoFinanceira). Participantes consultam
+/// auditoria preservadas). Registrar ou corrigir pagamentos continua em /api/Lancamentos (financeiro.pagamentos.registrar). Participantes consultam
 /// os próprios eventos em /api/Me/Eventos.
 /// </summary>
 [ApiController]
 [Route("api/Eventos")]
-[Authorize(Policy = Policies.GestaoEventos)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class EventosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
+    [RequerPermissao(Permissoes.EventosConsultar)]
     [EndpointSummary("Lista os cadastros de eventos ativos no período.")]
     [EndpointDescription("Sem parâmetros: do primeiro dia do mês atual menos 30 dias até o último dia do mês atual mais 30 dias (UTC). " +
         "Com filtro, dataInicial e dataFinal (yyyy-MM-dd, inclusivas) são obrigatórias juntas e podem cobrir períodos históricos, com no máximo 366 dias. " +
@@ -34,6 +34,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
         Ok(await mediator.Send(new ListEventosQuery(dataInicial, dataFinal), cancellationToken));
 
     [HttpGet("{id:guid}", Name = nameof(GetById))]
+    [RequerPermissao(Permissoes.EventosConsultar)]
     [EndpointSummary("Consulta um cadastro de evento ativo.")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -46,6 +47,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     }
 
     [HttpPost]
+    [RequerPermissao(Permissoes.EventosCriar)]
     [EndpointSummary("Cadastra um grupo de cobrança de evento e gera um lançamento pendente por membro.")]
     [EndpointDescription("Exige o header Idempotency-Key (UUID). O campo membros aceita um GUID OU um array de GUIDs (mesma operação). " +
         "A data mínima é o primeiro dia do mês atual (referência UTC do servidor, não a data de hoje). " +
@@ -80,6 +82,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [RequerPermissao(Permissoes.EventosEditar)]
     [EndpointSummary("Atualiza um cadastro de evento e sincroniza participantes e lançamentos.")]
     [EndpointDescription("Exige versao (rowversion). Sem lançamento Pago, atualiza mantidos, cria novos e desativa removidos " +
         "(motivo obrigatório na remoção); um lançamento Atrasado acompanha o novo valor e a nova data e volta a Pendente se a data ainda não passou. " +
@@ -103,6 +106,7 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [RequerPermissao(Permissoes.EventosExcluir)]
     [EndpointSummary("Exclui logicamente um cadastro de evento (auditado por trigger).")]
     [EndpointDescription("Corpo: motivo (1–255) e versao. Desativa o cadastro, seus participantes e lançamentos (Pendente ou Atrasado) na mesma transação; " +
         "outros grupos do passeio permanecem. 409 se houver lançamento Pago ou versão desatualizada; 404 se inexistente ou já excluído.")]

@@ -4,7 +4,7 @@ namespace Almirante.Api.Dtos;
 
 /// <summary>
 /// GET /api/Dashboard. Datas em yyyy-MM-dd, informadas juntas; sem elas, o mês atual no fuso do clube. IncluirFinanceiro vem da
-/// policy GestaoFinanceira do solicitante, nunca do cliente: sem ela o financeiro nem é consultado.
+/// permissão dashboard.financeiro.consultar do solicitante, nunca do cliente: sem ela o financeiro nem é consultado.
 /// </summary>
 public sealed record GetDashboardQuery(string? DataInicial, string? DataFinal, bool IncluirFinanceiro) : IRequest<DashboardResponse>;
 

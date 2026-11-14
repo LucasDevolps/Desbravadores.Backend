@@ -10,11 +10,10 @@ using Microsoft.AspNetCore.Mvc;
 namespace Almirante.Api.Controllers;
 
 /// <summary>
-/// Almoxarifado do clube (issue #126). Consulta: qualquer cargo ativo exceto DS (ConsultaAlmoxarifado). Escrita: ADM, DIR, DIRA, SEC, ALM e o
-/// responsável designado (GestaoAlmoxarifado). Sem autenticação válida: 401; sem permissão: 403. Nada aqui gera lançamento financeiro.
+/// Almoxarifado do clube (issue #126). Consulta: almoxarifado.consultar. Escrita: almoxarifado.gerenciar (ou o
+/// responsável designado, que recebe as duas). Sem autenticação válida: 401; sem permissão: 403. Nada aqui gera lançamento financeiro.
 /// </summary>
 [ApiController]
-[Authorize(Policy = Policies.ConsultaAlmoxarifado)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public abstract class AlmoxarifadoControllerBase(ISender mediator) : ControllerBase
@@ -40,6 +39,7 @@ public abstract class AlmoxarifadoControllerBase(ISender mediator) : ControllerB
 public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoControllerBase(mediator)
 {
     [HttpGet]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Lista os bens patrimoniais, paginados (por padrão sem os excluídos logicamente).")]
     [EndpointDescription("busca: parte do nome ou do tombo. categoria: exata (sem diferenciar maiúsculas). conservacao (Novo, Bom, Regular, Ruim, " +
         "Inservivel), situacao (Disponivel, Emprestado, EmManutencao, Baixado), localizacao (parte do texto), possuiValorComercial, " +
@@ -65,6 +65,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
         }, cancellationToken));
 
     [HttpGet("{id:guid}", Name = nameof(ObterBem))]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Consulta um bem (inclusive baixado ou excluído), com empréstimo e manutenção abertos e a origem na lista de desejos.")]
     [ProducesResponseType<BemDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -72,7 +73,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
         await Mediator.Send(new ObterBemQuery(id), cancellationToken) is { } dto ? Ok(dto) : NaoEncontrado("Bem não encontrado.");
 
     [HttpPost]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Cadastra um bem físico identificável (o tombo é gerado pelo sistema).")]
     [EndpointDescription("nome, descricao, estadoConservacao, possuiValorComercial, origem e localizacao obrigatórios. Com possuiValorComercial = true, " +
         "valorEstimado é obrigatório e >= 0; com false (troféu, livro de atas, álbum), valorEstimado deve ser null. dataAquisicao obrigatória e não " +
@@ -88,7 +89,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Atualiza o cadastro de um bem (estado anterior auditado).")]
     [EndpointDescription("Mesmas regras do cadastro; substitui todos os campos (opcional omitido fica vazio). Exige versao. A situação muda só pelas " +
         "movimentações. 409: versão desatualizada, bem baixado ou excluído.")]
@@ -100,7 +101,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
         Ok(await Mediator.Send(Preencher(request, id), cancellationToken));
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Exclui logicamente um cadastro indevido (justificativa obrigatória).")]
     [EndpointDescription("Corpo: justificativa (1–255) e versao. 409 se o bem tem empréstimo aberto, já teve movimentações (empréstimo, manutenção, " +
         "baixa: use a baixa), foi recebido num atendimento (estorne o atendimento) ou já está excluído. O registro e o histórico ficam.")]
@@ -112,6 +113,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
         Ok(await Mediator.Send(Preencher(request, id), cancellationToken));
 
     [HttpGet("{id:guid}/Historico")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Histórico de alterações e movimentações do bem (estado anterior e novo, responsável, operação, justificativa).")]
     [EndpointDescription("Filtros: de/ate (yyyy-MM-dd, inclusivas, data UTC da operação) e tipo (TipoMovimentacaoAlmoxarifado, ex.: Emprestimo, " +
         "Devolucao, Baixa). Ordem cronológica. Inclui empréstimos, manutenções, inventários e atendimentos que envolveram o bem.")]
@@ -124,7 +126,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
             ? Ok(historico) : NaoEncontrado("Bem não encontrado.");
 
     [HttpPost("{id:guid}/Emprestimos")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Empresta um bem disponível e utilizável a um membro.")]
     [EndpointDescription("membroId (membro ativo), dataRetirada (não futura, não anterior à aquisição nem à última movimentação), previsaoDevolucao " +
         "(>= dataRetirada) e conservacaoSaida (passa a ser o estado do bem; Inservivel é recusado) obrigatórios; observacoes opcional. 409 se o bem " +
@@ -141,6 +143,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
     }
 
     [HttpGet("{id:guid}/Manutencoes")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Manutenções do bem (abertas e encerradas), da mais recente para a mais antiga.")]
     [ProducesResponseType<IReadOnlyList<ManutencaoDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -148,7 +151,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
         await Mediator.Send(new ListarManutencoesQuery(id), cancellationToken) is { } lista ? Ok(lista) : NaoEncontrado("Bem não encontrado.");
 
     [HttpPost("{id:guid}/Manutencoes")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Registra a entrada do bem em manutenção (situação EmManutencao).")]
     [EndpointDescription("dataEntrada (não futura) e motivo (1–255) obrigatórios; observacoes opcional. 409 se emprestado (devolva antes; a devolução " +
         "também pode encaminhar para manutenção), já em manutenção, baixado ou excluído.")]
@@ -163,7 +166,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
     }
 
     [HttpPost("{id:guid}/Baixa")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Baixa o bem do patrimônio (data e motivo obrigatórios), preservando cadastro e histórico.")]
     [EndpointDescription("dataBaixa (não futura, não anterior à aquisição nem à última movimentação), motivo (Perda, Furto, Descarte, Doacao, Outro) e " +
         "justificativa obrigatórios. Empréstimo aberto: 409 (encerre como devolução ou como perda/furto, que já baixa o bem). Em manutenção: a " +
@@ -181,6 +184,7 @@ public sealed class AlmoxarifadoBensController(ISender mediator) : AlmoxarifadoC
 public sealed class AlmoxarifadoEmprestimosController(ISender mediator) : AlmoxarifadoControllerBase(mediator)
 {
     [HttpGet("Emprestimos")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Lista os empréstimos, paginados (mais recentes primeiro).")]
     [EndpointDescription("Filtros: bemId, membroId, abertos (true: só abertos; false: só encerrados) e atrasados (true: abertos com previsão anterior " +
         "a hoje no fuso do clube; false: os demais). atrasado e diasAtraso são calculados na consulta, sem atualização manual.")]
@@ -195,6 +199,7 @@ public sealed class AlmoxarifadoEmprestimosController(ISender mediator) : Almoxa
         }, cancellationToken));
 
     [HttpGet("Emprestimos/{id:guid}", Name = nameof(ObterEmprestimo))]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Consulta um empréstimo.")]
     [ProducesResponseType<EmprestimoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -202,7 +207,7 @@ public sealed class AlmoxarifadoEmprestimosController(ISender mediator) : Almoxa
         await Mediator.Send(new ObterEmprestimoQuery(id), cancellationToken) is { } dto ? Ok(dto) : NaoEncontrado("Empréstimo não encontrado.");
 
     [HttpPost("Emprestimos/{id:guid}/Devolucao")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Registra a devolução: data efetiva, conservação no retorno e observações.")]
     [EndpointDescription("dataDevolucao (entre a retirada e hoje) e conservacaoRetorno obrigatórios. O bem volta a Disponivel ou, com " +
         "encaminharParaManutencao = true e motivoManutencao, segue para EmManutencao na mesma operação. 409 se o empréstimo já foi encerrado " +
@@ -215,7 +220,7 @@ public sealed class AlmoxarifadoEmprestimosController(ISender mediator) : Almoxa
         Ok(await Mediator.Send(Preencher(request, id), cancellationToken));
 
     [HttpPost("Emprestimos/{id:guid}/PerdaFurto")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Encerra um empréstimo aberto por perda ou furto e baixa o bem com o mesmo motivo.")]
     [EndpointDescription("data (entre a retirada e hoje), motivo (Perda ou Furto) e justificativa obrigatórios. 409 se o empréstimo já foi encerrado.")]
     [ProducesResponseType<EmprestimoDto>(StatusCodes.Status200OK)]
@@ -226,7 +231,7 @@ public sealed class AlmoxarifadoEmprestimosController(ISender mediator) : Almoxa
         Ok(await Mediator.Send(Preencher(request, id), cancellationToken));
 
     [HttpPost("Manutencoes/{id:guid}/Saida")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Registra a saída da manutenção: o bem volta a Disponivel com a conservação informada.")]
     [EndpointDescription("dataSaida (entre a entrada e hoje) e conservacaoSaida obrigatórios. 409 se a manutenção já foi encerrada.")]
     [ProducesResponseType<ManutencaoDto>(StatusCodes.Status200OK)]
@@ -242,6 +247,7 @@ public sealed class AlmoxarifadoEmprestimosController(ISender mediator) : Almoxa
 public sealed class AlmoxarifadoInventariosController(ISender mediator) : AlmoxarifadoControllerBase(mediator)
 {
     [HttpGet]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Lista os inventários fechados (mais recentes primeiro), sem os itens.")]
     [ProducesResponseType<PaginaDto<InventarioResumoDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -250,6 +256,7 @@ public sealed class AlmoxarifadoInventariosController(ISender mediator) : Almoxa
         Ok(await Mediator.Send(new ListarInventariosQuery(page, pageSize), cancellationToken));
 
     [HttpGet("{id:guid}", Name = nameof(ObterInventario))]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Consulta um inventário com a fotografia dos bens e valores daquela conferência.")]
     [ProducesResponseType<InventarioDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -257,7 +264,7 @@ public sealed class AlmoxarifadoInventariosController(ISender mediator) : Almoxa
         await Mediator.Send(new ObterInventarioQuery(id), cancellationToken) is { } dto ? Ok(dto) : NaoEncontrado("Inventário não encontrado.");
 
     [HttpPost]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Fecha um inventário: copia os bens não excluídos e não baixados, com totais e valor estimado patrimonial.")]
     [EndpointDescription("dataInventario (não futura) e responsavelId (membro ativo) obrigatórios; observacoes opcional. Os itens são imutáveis: " +
         "alterações posteriores nos bens não mudam o inventário. Começa sem votação (votado = false). Não há limite monetário nem aprovação " +
@@ -271,7 +278,7 @@ public sealed class AlmoxarifadoInventariosController(ISender mediator) : Almoxa
     }
 
     [HttpPost("{id:guid}/Votacao")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Registra a data da votação e a referência da ata da Comissão da Igreja (uma única vez).")]
     [EndpointDescription("dataVotacao (entre a data do inventário e hoje), referenciaAta (1–100) e versao obrigatórios. O inventário só aparece como " +
         "votado depois deste registro; o sistema registra o ato, não substitui a votação. 409 se já registrada ou versão desatualizada.")]
@@ -289,6 +296,7 @@ public sealed class AlmoxarifadoInventariosController(ISender mediator) : Almoxa
 public sealed class AlmoxarifadoDesejosController(ISender mediator) : AlmoxarifadoControllerBase(mediator)
 {
     [HttpGet]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Lista as necessidades, paginadas: abertas primeiro, maior urgência e, no empate, a criação mais antiga.")]
     [EndpointDescription("Filtros: busca (parte do nome), urgencia (PoucoUrgenteMasNecessario, Urgente, MuitoUrgente), situacao (Pendente, " +
         "ParcialmenteAtendida, Atendida, Cancelada), categoria (exata), tipoItem (Patrimonial, Consumivel), somenteAbertas, incluirExcluidos. " +
@@ -313,6 +321,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
         }, cancellationToken));
 
     [HttpGet("{id:guid}", Name = nameof(ObterDesejo))]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Consulta uma necessidade com os atendimentos (inclusive estornados) e os bens recebidos.")]
     [ProducesResponseType<DesejoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -320,6 +329,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
         await Mediator.Send(new ObterDesejoQuery(id), cancellationToken) is { } dto ? Ok(dto) : NaoEncontrado("Necessidade não encontrada.");
 
     [HttpGet("{id:guid}/Historico")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Histórico da necessidade, dos atendimentos e dos vínculos de bens (filtros de, ate e tipo como no histórico de bens).")]
     [ProducesResponseType<IReadOnlyList<HistoricoAlmoxarifadoDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -330,7 +340,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
             ? Ok(historico) : NaoEncontrado("Necessidade não encontrada.");
 
     [HttpPost]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Cadastra uma necessidade de aquisição (não cria patrimônio, despesa, pagamento nem reserva de dinheiro).")]
     [EndpointDescription("nome, descricao, justificativa (uso previsto), tipoItem (Patrimonial ou Consumivel), quantidadeDesejada (1–10000) e urgencia " +
         "obrigatórios. categoria, custoUnitarioEstimado (>= 0; ausência não é custo zero), dataNecessidade (independente da urgência, que nunca muda " +
@@ -344,7 +354,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Atualiza uma necessidade (estado anterior auditado).")]
     [EndpointDescription("Mesmas regras do cadastro, com versao. quantidadeDesejada pode aumentar, mas não ficar abaixo da atendida (409); tipoItem não " +
         "muda depois de atendimentos (409). A situação é recalculada pelas quantidades. 409: cancelada, excluída ou versão desatualizada.")]
@@ -356,7 +366,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
         Ok(await Mediator.Send(Preencher(request, id), cancellationToken));
 
     [HttpPost("{id:guid}/Cancelar")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Cancela a necessidade (motivo obrigatório), preservando os atendimentos anteriores.")]
     [EndpointDescription("Corpo: justificativa (motivo) e versao. Impede novos atendimentos. 409 se já atendida, cancelada ou excluída.")]
     [ProducesResponseType<DesejoDto>(StatusCodes.Status200OK)]
@@ -370,7 +380,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Exclui logicamente uma necessidade (justificativa obrigatória), sem perder atendimentos nem histórico.")]
     [ProducesResponseType<DesejoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -383,7 +393,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
     }
 
     [HttpPost("{id:guid}/Atendimentos")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Registra um atendimento (recebimento por compra ou doação), parcial ou total.")]
     [EndpointDescription("Exige o header Idempotency-Key (UUID). quantidade (até a pendente), data (não futura), responsavelId (membro ativo) e origem " +
         "(Compra ou Doacao) obrigatórios. Item patrimonial: bensNovos (criados no recebimento, com origem e data de aquisição do atendimento) e/ou " +
@@ -405,7 +415,7 @@ public sealed class AlmoxarifadoDesejosController(ISender mediator) : Almoxarifa
     }
 
     [HttpPost("{id:guid}/Atendimentos/{atendimentoId:guid}/Estorno")]
-    [Authorize(Policy = Policies.GestaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoGerenciar)]
     [EndpointSummary("Estorna um atendimento indevido (justificativa obrigatória; operação auditada).")]
     [EndpointDescription("Desfaz os vínculos, exclui logicamente os bens que o atendimento criou e recalcula a quantidade atendida. 409 se já estornado " +
         "ou se algum bem criado por ele já teve empréstimo, manutenção ou baixa. Bens existentes vinculados apenas ficam livres.")]
@@ -432,6 +442,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
         RegrasAlmoxarifado.Itens<TipoMovimentacaoAlmoxarifado>());
 
     [HttpGet("Enums")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Valores, códigos e descrições dos enums do almoxarifado (para seletores do frontend).")]
     [EndpointDescription("valor é o número estável gravado no banco; codigo é o nome aceito nos corpos e filtros (o número também é aceito); descricao " +
         "é o rótulo de exibição. Valores fora do enum são recusados com 400.")]
@@ -439,6 +450,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
     public ActionResult<EnumsAlmoxarifadoDto> ObterEnums() => Ok(Enums);
 
     [HttpGet("Relatorios/Patrimonio")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Totais por situação e valor estimado patrimonial (soma das estimativas dos bens com valor comercial não baixados).")]
     [EndpointDescription("Aceita os filtros da listagem de bens. valorEstimadoPatrimonial é uma estimativa, não um saldo financeiro: não altera o " +
         "dashboard nem gera lançamentos.")]
@@ -451,6 +463,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
             incluirExcluidos)), cancellationToken));
 
     [HttpGet("Relatorios/Patrimonio/Csv")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Exporta o relatório patrimonial em CSV (tombo, nome, descrição, conservação, localização, situação, aquisição e estimativa).")]
     [EndpointDescription("Mesmos filtros do relatório. CSV com separador ';', decimais com vírgula, datas yyyy-MM-dd e UTF-8 com BOM; campos que " +
         "começam com = + - @ recebem apóstrofo (proteção contra fórmulas). Acervo sem data: 'Desconhecida'.")]
@@ -464,6 +477,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
             incluirExcluidos)), cancellationToken));
 
     [HttpGet("Relatorios/Emprestimos")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Empréstimos abertos (ou só os atrasados, com atrasados=true), da previsão mais antiga para a mais recente.")]
     [ProducesResponseType<IReadOnlyList<EmprestimoDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<EmprestimoDto>>> RelatorioEmprestimos([FromQuery] bool atrasados = false,
@@ -471,6 +485,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
         Ok(await Mediator.Send(new RelatorioEmprestimosQuery(atrasados), cancellationToken));
 
     [HttpGet("Relatorios/Emprestimos/Csv")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Exporta em CSV os empréstimos abertos (ou só os atrasados).")]
     [Produces("text/csv")]
     [ProducesResponseType<FileContentResult>(StatusCodes.Status200OK, "text/csv")]
@@ -478,6 +493,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
         Csv(await Mediator.Send(new ExportarEmprestimosQuery(atrasados), cancellationToken));
 
     [HttpGet("Relatorios/Desejos")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Necessidades abertas por urgência: quantidade, quantidade pendente e custo estimado pendente (quando disponível).")]
     [EndpointDescription("custoPendenteEstimado soma só as necessidades com custo unitário estimado; necessidadesSemCustoEstimado indica quantas não " +
         "entraram na soma (custo desconhecido não é zero).")]
@@ -486,6 +502,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
         Ok(await Mediator.Send(new RelatorioDesejosQuery(), cancellationToken));
 
     [HttpGet("Responsaveis")]
+    [RequerPermissao(Permissoes.AlmoxarifadoConsultar)]
     [EndpointSummary("Responsáveis designados pelo almoxarifado (vigentes; incluirRevogados=true traz também os revogados).")]
     [ProducesResponseType<IReadOnlyList<ResponsavelAlmoxarifadoDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<ResponsavelAlmoxarifadoDto>>> ListarResponsaveis([FromQuery] bool incluirRevogados = false,
@@ -493,7 +510,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
         Ok(await Mediator.Send(new ListarResponsaveisQuery(incluirRevogados), cancellationToken));
 
     [HttpPost("Responsaveis")]
-    [Authorize(Policy = Policies.DesignacaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoResponsaveisDesignar)]
     [EndpointSummary("Designa um membro ativo como responsável pelo almoxarifado do clube (ADM, DIR, DIRA, SEC).")]
     [EndpointDescription("membroId (membro ativo) e dataInicio (não futura) obrigatórios; observacoes opcional. O membro mantém o cargo e passa a " +
         "gerenciar o almoxarifado na requisição seguinte. 409 se já houver designação vigente do mesmo membro.")]
@@ -507,7 +524,7 @@ public sealed class AlmoxarifadoController(ISender mediator) : AlmoxarifadoContr
     }
 
     [HttpPost("Responsaveis/{id:guid}/Revogar")]
-    [Authorize(Policy = Policies.DesignacaoAlmoxarifado)]
+    [RequerPermissao(Permissoes.AlmoxarifadoResponsaveisDesignar)]
     [EndpointSummary("Revoga a designação (motivo obrigatório); o acesso de gestão deixa de valer na requisição seguinte.")]
     [ProducesResponseType<ResponsavelAlmoxarifadoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

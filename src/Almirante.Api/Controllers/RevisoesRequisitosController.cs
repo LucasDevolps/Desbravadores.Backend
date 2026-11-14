@@ -15,22 +15,22 @@ namespace Almirante.Api.Controllers;
 [Route("api/RevisoesRequisitos")]
 [Authorize(Policy = Policies.Autoatendimento)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-public sealed class RevisoesRequisitosController(ISender mediator) : ControllerBase
+public sealed class RevisoesRequisitosController(ISender mediator, PermissoesService permissoes) : ControllerBase
 {
     [HttpGet("{id:guid}", Name = nameof(ObterRevisao))]
     [EndpointSummary("Consulta uma revisão com a árvore de requisitos.")]
-    [EndpointDescription("Rascunhos e descartadas só para GestaoFormacao (para os demais, 404). Cada requisito traz código, seção, ordem, " +
+    [EndpointDescription("Rascunhos e descartadas só para quem tem formacao.revisoes.administrar (para os demais, 404). Cada requisito traz código, seção, ordem, " +
         "obrigatoriedade, regra do grupo (Todos ou Alternativas com quantidadeMinima), referência oficial e exigência de especialidades.")]
     [ProducesResponseType<RevisaoRequisitosDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<RevisaoRequisitosDto>> ObterRevisao(Guid id, CancellationToken cancellationToken)
     {
-        var dto = await mediator.Send(new ObterRevisaoQuery(id, Roles.Formacao.Contains(User.Role())), cancellationToken);
+        var dto = await mediator.Send(new ObterRevisaoQuery(id, await permissoes.TemAsync(User, Permissoes.FormacaoRevisoesAdministrar, cancellationToken)), cancellationToken);
         return dto is null ? NotFound(new ProblemDetails { Title = "Revisão não encontrada.", Status = StatusCodes.Status404NotFound }) : Ok(dto);
     }
 
     [HttpPost]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoRevisoesAdministrar)]
     [EndpointSummary("Cria uma revisão em rascunho com todos os requisitos (reprodução do cartão oficial, com fonte documentada).")]
     [EndpointDescription("classe OU especialidadeId; edicao e fonteOficial obrigatórias; observacoes registra orientações posteriores e divergências. " +
         "requisitos: árvore (até 4 níveis, 500 itens) na ordem do cartão. Itens com subitens exigem regra: Todos (todos os subitens obrigatórios) " +
@@ -51,7 +51,7 @@ public sealed class RevisoesRequisitosController(ISender mediator) : ControllerB
     }
 
     [HttpPost("{id:guid}/Publicar")]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoRevisoesAdministrar)]
     [EndpointSummary("Publica um rascunho: vira a revisão vigente e a anterior passa a substituída.")]
     [EndpointDescription("Corpo: versao. Novas associações usam a vigente; vínculos existentes continuam na revisão que usam até uma migração " +
         "explícita (POST /api/Formacao/.../{id}/MigrarRevisao). 409 se não for rascunho ou se outra publicação ocorrer ao mesmo tempo.")]
@@ -64,7 +64,7 @@ public sealed class RevisoesRequisitosController(ISender mediator) : ControllerB
         AlterarSituacao(id, request, publicar: true, cancellationToken);
 
     [HttpPost("{id:guid}/Descartar")]
-    [Authorize(Policy = Policies.GestaoFormacao)]
+    [RequerPermissao(Permissoes.FormacaoRevisoesAdministrar)]
     [EndpointSummary("Descarta um rascunho (motivo obrigatório; o registro é preservado).")]
     [ProducesResponseType<RevisaoRequisitosDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

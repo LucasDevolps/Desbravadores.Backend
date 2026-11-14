@@ -91,6 +91,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
         ConfigurarSenhas(modelBuilder);
         ConfigurarAuditoriaHttp(modelBuilder);
         ConfigurarAlmoxarifado(modelBuilder);
+        ConfigurarAutorizacao(modelBuilder);
 
         modelBuilder.Entity<Usuario>(entity =>
         {
@@ -429,6 +430,8 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.Property(c => c.CriadoPor).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(c => c.Role).HasColumnType("varchar(20)").HasMaxLength(20).IsUnicode(false).IsRequired();
             entity.HasIndex(c => c.Role).IsUnique();
+            entity.Property(c => c.SistemaProtegido).HasDefaultValue(false);
+            entity.Property(c => c.Versao).HasDefaultValue(1L).IsConcurrencyToken();
         });
     }
 }

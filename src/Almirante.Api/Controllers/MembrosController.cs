@@ -8,15 +8,15 @@ namespace Almirante.Api.Controllers;
 
 [ApiController]
 [Route("api/Membros")]
-[Authorize(Policy = Policies.ConsultaMembros)]
 [ProducesResponseType(StatusCodes.Status401Unauthorized)]
 [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
 public sealed class MembrosController(ISender mediator) : ControllerBase
 {
     [HttpGet]
+    [RequerPermissao(Permissoes.MembrosConsultar)]
     [EndpointSummary("Lista os membros ativos com o mínimo para identificá-los (seletor de participantes e cobrados).")]
     [EndpointDescription("id, nome, cargo (nome) e role, em ordem de nome. Sem CPF, RG, contato, saúde, responsável, endereço ou foto: " +
-        "o cadastro completo continua em GET /api/Usuarios (GestaoCadastros). Policy ConsultaMembros: ADM, DIR, DIRA, SEC, TES.")]
+        "o cadastro completo continua em GET /api/Usuarios (usuarios.consultar). Exige membros.consultar.")]
     [ProducesResponseType<IReadOnlyList<MembroResumoDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<MembroResumoDto>>> Listar(CancellationToken cancellationToken) =>
         Ok(await mediator.Send(new ListarMembrosQuery(), cancellationToken));

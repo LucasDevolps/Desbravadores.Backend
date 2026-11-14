@@ -14,7 +14,7 @@ namespace Almirante.Api.Services;
 /// dela, <see cref="TravarERevalidarAsync"/> trava usuários, cargos e sessão até o commit e recusa a operação se algo mudou desde a
 /// fotografia. Assim um retry nunca reaproveita uma confirmação de senha feita sobre estado obsoleto.
 /// </summary>
-public sealed class ContasSenha(AlmiranteDbContext db, IPasswordHasher<Usuario> hasher, ILogger<ContasSenha> logger)
+public sealed class ContasSenha(AlmiranteDbContext db, IPasswordHasher<Usuario> hasher, ILogger<ContasSenha> logger, PermissoesService permissoes)
 {
     public const string CampoSenhaAtual = "senhaAtualSolicitante";
     public const string CampoNovaSenha = "novaSenha";
@@ -51,12 +51,16 @@ public sealed class ContasSenha(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         return solicitante is { Utilizavel: true } && sessaoVigente ? solicitante : throw SessaoInvalida();
     }
 
+    /// <summary>Par solicitante → alvo de uma operação de senha sobre terceiro e a permissão (com regra por alvo) que a autoriza.</summary>
+    public sealed record RegraTerceiro(Conta Solicitante, Conta Alvo, string Permissao);
+
     /// <summary>
-    /// Solicitante e alvo de uma operação sobre outro usuário. Ordem que não permite enumeração: o cargo do solicitante (do banco) precisa
-    /// atender alguém antes de qualquer consulta ao alvo; depois 404 alvo inexistente, 403 par fora da matriz e 409 alvo inativo.
+    /// Solicitante e alvo de uma operação sobre outro usuário, autorizada por <paramref name="permissao"/> e pelas regras por alvo do banco.
+    /// Ordem que não permite enumeração: o cargo do solicitante (do banco) precisa atender alguém antes de qualquer consulta ao alvo; depois
+    /// 404 alvo inexistente, 403 par sem regra e 409 alvo inativo.
     /// </summary>
-    public async Task<(Conta Solicitante, Conta Alvo)> AutorizarTerceiroAsync(ContextoSolicitanteSenha contexto, Guid alvoId, DateTime agoraUtc,
-        CancellationToken ct)
+    public async Task<(Conta Solicitante, Conta Alvo)> AutorizarTerceiroAsync(ContextoSolicitanteSenha contexto, Guid alvoId, string permissao,
+        DateTime agoraUtc, CancellationToken ct)
     {
         if (alvoId == contexto.UsuarioId)
         {
@@ -64,13 +68,13 @@ public sealed class ContasSenha(AlmiranteDbContext db, IPasswordHasher<Usuario> 
         }
 
         var solicitante = await CarregarSolicitanteAsync(contexto, agoraUtc, ct);
-        if (PermissoesSenha.AlvosPermitidos(solicitante.Role).Count == 0)
+        if ((await permissoes.AlvosPermitidosAsync(solicitante.Role, permissao, ct)).Count == 0)
         {
             throw AcessoNegado();
         }
 
         var alvo = await CarregarAsync(alvoId, ct) ?? throw ApiProblemException.NotFound("Usuário não encontrado.");
-        if (!PermissoesSenha.PodeAlterarSenhaDeTerceiro(solicitante.Role, alvo.Role))
+        if (!await permissoes.PodeSobreAlvoAsync(solicitante.Role, permissao, alvo.Role, ct))
         {
             throw AcessoNegado();
         }
@@ -113,13 +117,20 @@ public sealed class ContasSenha(AlmiranteDbContext db, IPasswordHasher<Usuario> 
 
     /// <summary>
     /// Trava as contas (UPDLOCK/HOLDLOCK: login, refresh, troca de cargo ou desativação concorrentes esperam o commit) e confere que
-    /// situação, cargo e SecurityVersion são os da fotografia. Com <paramref name="contexto"/>, também trava e confere a sessão do
-    /// solicitante (401 se deixou de valer). Diferença → <paramref name="recusa"/> (409 nas trocas autenticadas; resposta genérica na
-    /// recuperação), sem nada gravado.
+    /// situação, cargo e SecurityVersion são os da fotografia. Com <paramref name="regra"/>, antes de tudo trava a revisão da autorização
+    /// para leitura e, depois das contas, confere de novo a concessão e a regra por alvo: uma revogação já confirmada nunca é ignorada e
+    /// uma revogação concorrente espera o commit. Com <paramref name="contexto"/>, também trava e confere a sessão do solicitante (401 se
+    /// deixou de valer). Diferença → <paramref name="recusa"/> (409 nas trocas autenticadas; resposta genérica na recuperação), sem nada
+    /// gravado; regra revogada → 403 nas trocas autenticadas.
     /// </summary>
     public async Task TravarERevalidarAsync(IReadOnlyCollection<Conta> contas, ContextoSolicitanteSenha? contexto, DateTime agoraUtc,
-        Func<ApiProblemException> recusa, CancellationToken ct)
+        Func<ApiProblemException> recusa, CancellationToken ct, RegraTerceiro? regra = null)
     {
+        if (regra is not null)
+        {
+            await permissoes.TravarRevisaoParaLeituraAsync(ct);
+        }
+
         var ids = contas.Select(c => c.Id).Distinct().ToList();
         var primeiro = ids[0];
         var segundo = ids[^1];
@@ -139,6 +150,13 @@ public sealed class ContasSenha(AlmiranteDbContext db, IPasswordHasher<Usuario> 
                 logger.LogWarning("Operação de senha recusada: a conta {UsuarioId} mudou durante a operação.", conta.Id);
                 throw recusa();
             }
+        }
+
+        if (regra is not null && !await permissoes.PodeSobreAlvoAsync(regra.Solicitante.Role, regra.Permissao, regra.Alvo.Role, ct))
+        {
+            logger.LogWarning("Operação de senha recusada: a regra {Permissao} do usuário {UsuarioId} foi revogada durante a operação.",
+                regra.Permissao, regra.Solicitante.Id);
+            throw contexto is null ? recusa() : AcessoNegado();
         }
 
         if (contexto is null)
