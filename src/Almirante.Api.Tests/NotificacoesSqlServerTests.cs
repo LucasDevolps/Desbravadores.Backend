@@ -83,7 +83,8 @@ public sealed class NotificacoesSqlServerTests : IAsyncLifetime
             var propria = Assert.Single(notificacoes, n => n.DestinatarioId == membro);
             Assert.Equal(evento.Id, propria.EventoId);
             Assert.Equal(evento.Lancamentos.Single(l => l.MembroId == membro).Id, propria.LancamentoId);
-            Assert.Equal("Novo evento: Sítio São José", propria.Titulo);
+            Assert.Equal("Novo evento: Passeio no parque", propria.Titulo);
+            Assert.Contains("Sítio São José", propria.Mensagem);
             Assert.Contains("R$ 20,00", propria.Mensagem);
             Assert.Contains(evento.DataEvento.ToString("dd/MM/yyyy"), propria.Mensagem);
         }

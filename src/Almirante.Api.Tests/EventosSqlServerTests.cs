@@ -56,10 +56,21 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     }
 
     private static Dictionary<string, object?> Editar(EventoDto e, object? membros, decimal? transporte = null, string? local = null,
-        DateOnly? data = null, string? motivo = null, string? versao = null, decimal? alimentacao = null, bool? individual = null, decimal? seguro = null) =>
+        DateOnly? data = null, string? motivo = null, string? versao = null, decimal? alimentacao = null, bool? individual = null, decimal? seguro = null,
+        string? titulo = null, string? descricao = null) =>
         EventosTestKit.Corpo(membros, data ?? e.DataEvento, local ?? e.Local, transporte ?? e.Transporte.Valor, e.Transporte.EhGratis,
             alimentacao ?? e.Alimentacao.Valor, individual ?? e.Alimentacao.Individual, seguro ?? e.SeguroObrigatorio,
-            versao: versao ?? e.Versao, motivo: motivo);
+            versao: versao ?? e.Versao, motivo: motivo, titulo: titulo ?? e.Titulo, descricao: descricao ?? e.Descricao);
+
+    private static readonly (string Campo, object? Valor)[] SemValorAPagar =
+    [
+            ("transporte", new { valor = 0m, ehGratis = false }),
+            ("alimentacao", new { individual = false, valor = 0m }),
+            ("seguroObrigatorio", 0m),
+    ];
+
+    private Task<List<EventoMembro>> ParticipantesDe(Guid eventoId) =>
+        Db(db => db.EventosMembros.AsNoTracking().Where(p => p.EventoId == eventoId).ToListAsync());
 
     private Task<T> Db<T>(Func<AlmiranteDbContext, Task<T>> consulta) => TestHelpers.WithDbAsync(Factory, consulta);
 
@@ -134,8 +145,9 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(dto.DataEvento, lanc.Vencimento);
         Assert.True(lanc.Ativo);
         Assert.Equal(20m, lanc.Valor);
-        Assert.Equal($"Evento - Parque Ibirapuera - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
+        Assert.Equal($"Evento - Passeio no parque - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
         Assert.Null(await EscalarAsync<string>("SELECT Finalidade FROM Lancamentos WHERE Id = @id", ("@id", lanc.Id)));
+        Assert.Equal(("Passeio no parque", (string?)null), (dto.Titulo, dto.Descricao));
     }
 
     [Fact]
@@ -192,21 +204,56 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     }
 
     [Fact]
-    public async Task Post_TodosOsComponentesZerados_GeraLancamentosPendentesDeZeroParaCadaParticipante()
+    public async Task Post_ValorPorMembroZero_RegistraOsParticipantes_SemGerarLancamentos_ENotificaSemValorAPagar()
     {
         var m = await MembrosAsync(3);
+        var dto = await CriarAsync(m, ajustes: [.. SemValorAPagar, ("titulo", "Reunião de clube")]);
+
+        Assert.Equal((0m, 0m, 3), (dto.ValorPorMembro, dto.Total, dto.QuantidadeMembros));
+        Assert.Equal(m.Order(), dto.Membros);
+        Assert.Empty(dto.Lancamentos);
+        Assert.Empty(await LancamentosDe(dto.Id));
+
+        var participantes = await ParticipantesDe(dto.Id);
+        Assert.Equal(m.Order(), participantes.Select(p => p.MembroId).Order());
+        Assert.All(participantes, p => Assert.Equal(((Guid?)null, true), (p.LancamentoId, p.Ativo)));
+
+        var notificacoes = await Db(db => db.Notificacoes.AsNoTracking().Where(n => n.EventoId == dto.Id).ToListAsync());
+        Assert.Equal(m.Order(), notificacoes.Select(n => n.DestinatarioId).Order());
+        Assert.All(notificacoes, n =>
+        {
+            Assert.Equal((TipoNotificacao.EventoCadastrado, (Guid?)null, "Novo evento: Reunião de clube"), (n.Tipo, n.LancamentoId, n.Titulo));
+            Assert.EndsWith("Não há valor a pagar por este evento.", n.Mensagem);
+        });
+
+        var lido = await ObterAsync(dto.Id);
+        Assert.Equal(m.Order(), lido.Membros);
+        Assert.Empty(lido.Lancamentos);
+        Assert.Contains(dto.Id, (await Client.GetFromJsonAsync<EventosResponse>("/api/Eventos"))!.Items.Select(i => i.Id));
+    }
+
+    [Fact]
+    public async Task Post_TituloEDescricao_SaoNormalizadosGravadosEDevolvidos()
+    {
+        var m = (await MembrosAsync(1))[0];
         var dto = await CriarAsync(m, ajustes:
         [
-            ("transporte", new { valor = 0m, ehGratis = false }),
-            ("alimentacao", new { individual = false, valor = 0m }),
-            ("seguroObrigatorio", 0m),
+            ("titulo", "  Acampamento   de  primavera "),
+            ("descricao", "  Levar barraca e lanterna.\r\nSaída às 7h.  "),
         ]);
 
-        Assert.Equal((0m, 0m), (dto.ValorPorMembro, dto.Total));
-        var lancamentos = await LancamentosDe(dto.Id);
-        Assert.Equal(3, lancamentos.Count);
-        Assert.All(lancamentos, l => Assert.Equal((0m, StatusLancamento.Pendente, true), (l.Valor, l.Status, l.Ativo)));
-        Assert.Contains(dto.Id, (await Client.GetFromJsonAsync<EventosResponse>("/api/Eventos"))!.Items.Select(i => i.Id));
+        Assert.Equal(("Acampamento de primavera", "Levar barraca e lanterna.\nSaída às 7h."), (dto.Titulo, dto.Descricao));
+        var lido = await ObterAsync(dto.Id);
+        Assert.Equal((dto.Titulo, dto.Descricao), (lido.Titulo, lido.Descricao));
+        var linha = await Db(db => db.Eventos.AsNoTracking().SingleAsync(e => e.Id == dto.Id));
+        Assert.Equal((dto.Titulo, dto.Descricao), (linha.Titulo, linha.Descricao));
+        Assert.Equal($"Evento - Acampamento de primavera - {dto.DataEvento:dd/MM/yyyy}", Assert.Single(await LancamentosDe(dto.Id)).Descricao);
+
+        var semTitulo = await EventosTestKit.PostAsync(Client, EventosTestKit.Corpo(m, titulo: "   "));
+        Assert.Equal(HttpStatusCode.BadRequest, semTitulo.StatusCode);
+        Assert.Contains("titulo é obrigatório", await semTitulo.Content.ReadAsStringAsync());
+        var descricaoVazia = await CriarAsync(m, ajustes: [("descricao", "   ")]);
+        Assert.Null(descricaoVazia.Descricao);
     }
 
     [Theory]
@@ -684,7 +731,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal((novaData, "Outro local"), (alterado.DataEvento, alterado.Local));
         var lanc = Assert.Single(await LancamentosDe(g1.Id));
         Assert.Equal(novaData, lanc.Vencimento);
-        Assert.Contains("Outro local", lanc.Descricao);
+        Assert.Equal($"Evento - Passeio no parque - {novaData:dd/MM/yyyy}", lanc.Descricao);
     }
 
     [Fact]
@@ -777,19 +824,22 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     }
 
     [Fact]
-    public async Task Put_ComLancamentoPago_PermiteCorrigirSoOLocal()
+    public async Task Put_ComLancamentoPago_PermiteCorrigirLocalTituloEDescricao()
     {
         var m = (await MembrosAsync(1))[0];
         var dto = await CriarAsync(m);
         await PagarAsync(dto.Lancamentos[0].Id);
         dto = await ObterAsync(dto.Id);
 
-        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, local: "Parque Ibirapuera (corrigido)"));
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, local: "Parque Ibirapuera (corrigido)",
+            titulo: "Passeio corrigido", descricao: "Saída às 8h"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var alterado = await EventosTestKit.LerAsync(response);
+        Assert.Equal(("Parque Ibirapuera (corrigido)", "Passeio corrigido", "Saída às 8h"), (alterado.Local, alterado.Titulo, alterado.Descricao));
         var lanc = Assert.Single(await LancamentosDe(dto.Id));
         Assert.Equal((StatusLancamento.Pago, 20m), (lanc.Status, lanc.Valor));
-        Assert.Equal($"Evento - Parque Ibirapuera (corrigido) - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
+        Assert.Equal($"Evento - Passeio corrigido - {dto.DataEvento:dd/MM/yyyy}", lanc.Descricao);
     }
 
     [Fact]
@@ -824,6 +874,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
         var historico = Assert.Single(await Db(db => db.HistoricoEventos.AsNoTracking().Where(h => h.EventoId == g1.Id).ToListAsync()));
         Assert.Equal((g1.EventoGrupoId, (Guid?)null, g1.DataEvento, "Parque Ibirapuera"), (historico.EventoGrupoId, historico.EventoReferenciaId, historico.DataEvento, historico.Local));
+        Assert.Equal(("Passeio no parque", (string?)null), (historico.Titulo, historico.Descricao));
         Assert.Equal((false, 10m, false, 8m, 2m), (historico.TransporteEhGratis, historico.TransporteValor, historico.AlimentacaoIndividual, historico.AlimentacaoValor, historico.SeguroObrigatorio));
         Assert.Equal((20m, 2, 40m), (historico.ValorPorMembro, historico.QuantidadeMembros, historico.Total));
         Assert.Equal((fx.AdminId, "198.51.100.77", "Grupo cancelado pela diretoria"), (historico.UsuarioResponsavelId, historico.IpResponsavel, historico.Motivo));
@@ -839,6 +890,98 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         var auditoriaLanc = await Db(db => db.LancamentosDeletados.AsNoTracking().Where(d => d.EventoId == g1.Id).ToListAsync());
         Assert.Equal(2, auditoriaLanc.Count);
         Assert.All(auditoriaLanc, d => Assert.Equal((fx.AdminId, "198.51.100.77", "Grupo cancelado pela diretoria", (string?)null), (d.UsuarioResponsavelId, d.IpResponsavel, d.Motivo, d.Finalidade)));
+    }
+
+    [Fact]
+    public async Task Put_ValorDeZeroParaPositivo_CriaOLancamentoPendenteDeCadaParticipante()
+    {
+        var m = await MembrosAsync(3);
+        var dto = await CriarAsync(new[] { m[0], m[1] }, ajustes: SemValorAPagar);
+
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m, transporte: 15m));
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var alterado = await EventosTestKit.LerAsync(response);
+        Assert.Equal((15m, 45m, 3), (alterado.ValorPorMembro, alterado.Total, alterado.QuantidadeMembros));
+        Assert.Equal(m.Order(), alterado.Lancamentos.Select(l => l.MembroId));
+
+        var lancamentos = await LancamentosDe(dto.Id);
+        Assert.Equal(m.Order(), lancamentos.Select(l => l.MembroId!.Value).Order());
+        Assert.All(lancamentos, l => Assert.Equal((15m, StatusLancamento.Pendente, true, dto.DataEvento), (l.Valor, l.Status, l.Ativo, l.Vencimento)));
+        var participantes = (await ParticipantesDe(dto.Id)).Where(p => p.Ativo).ToList();
+        Assert.Equal(lancamentos.Select(l => (l.MembroId!.Value, l.Id)).Order(), participantes.Select(p => (p.MembroId, p.LancamentoId!.Value)).Order());
+    }
+
+    [Fact]
+    public async Task Put_ValorPositivoParaZero_ExigeMotivo_EDesativaAsCobrancasComAuditoria_MantendoOsParticipantes()
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m);
+        var zerar = Editar(dto, m, transporte: 0m, alimentacao: 0m, seguro: 0m);
+
+        var semMotivo = await EventosTestKit.PutAsync(Client, dto.Id, zerar);
+        Assert.Equal(HttpStatusCode.BadRequest, semMotivo.StatusCode);
+        Assert.Contains("Motivo", await semMotivo.Content.ReadAsStringAsync());
+        Assert.All(await LancamentosDe(dto.Id), l => Assert.True(l.Ativo));
+
+        zerar["motivo"] = "Evento passou a ser gratuito";
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, zerar);
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var alterado = await EventosTestKit.LerAsync(response);
+        Assert.Equal((0m, 0m), (alterado.ValorPorMembro, alterado.Total));
+        Assert.Equal(m.Order(), alterado.Membros);
+        Assert.Empty(alterado.Lancamentos);
+        Assert.All(await LancamentosDe(dto.Id), l => Assert.False(l.Ativo));
+        var participantes = await ParticipantesDe(dto.Id);
+        Assert.All(participantes, p => Assert.Equal((true, (Guid?)null), (p.Ativo, p.LancamentoId)));
+        var auditoria = await Db(db => db.LancamentosDeletados.AsNoTracking().Where(d => d.EventoId == dto.Id).ToListAsync());
+        Assert.Equal(2, auditoria.Count);
+        Assert.All(auditoria, d => Assert.Equal((fx.AdminId, "Evento passou a ser gratuito"), (d.UsuarioResponsavelId, d.Motivo)));
+
+        var deNovo = await EventosTestKit.PutAsync(Client, dto.Id, Editar(alterado, m, transporte: 5m));
+        Assert.True(deNovo.StatusCode == HttpStatusCode.OK, await deNovo.Content.ReadAsStringAsync());
+        Assert.Equal(2, (await LancamentosDe(dto.Id)).Count(l => l.Ativo && l.Valor == 5m));
+    }
+
+    [Fact]
+    public async Task Put_EventoSemValor_AdicionaERemoveParticipantes_SemCriarLancamentos()
+    {
+        var m = await MembrosAsync(3);
+        var dto = await CriarAsync(new[] { m[0], m[1] }, ajustes: SemValorAPagar);
+
+        var adicionar = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, m));
+        Assert.True(adicionar.StatusCode == HttpStatusCode.OK, await adicionar.Content.ReadAsStringAsync());
+        var comTres = await EventosTestKit.LerAsync(adicionar);
+        Assert.Equal(m.Order(), comTres.Membros);
+        Assert.Empty(comTres.Lancamentos);
+
+        var remover = await EventosTestKit.PutAsync(Client, dto.Id, Editar(comTres, new[] { m[0] }, motivo: "Não poderá ir"));
+        Assert.True(remover.StatusCode == HttpStatusCode.OK, await remover.Content.ReadAsStringAsync());
+        Assert.Equal([m[0]], (await EventosTestKit.LerAsync(remover)).Membros);
+
+        Assert.Empty(await LancamentosDe(dto.Id));
+        var participantes = await ParticipantesDe(dto.Id);
+        Assert.Equal(3, participantes.Count);
+        Assert.All(participantes, p => Assert.Null(p.LancamentoId));
+        Assert.Equal([m[0]], participantes.Where(p => p.Ativo).Select(p => p.MembroId));
+    }
+
+    [Fact]
+    public async Task Delete_EventoSemValor_GravaSnapshotComOsParticipantesSemLancamento()
+    {
+        var m = await MembrosAsync(2);
+        var dto = await CriarAsync(m, ajustes: [.. SemValorAPagar, ("titulo", "Reunião de clube"), ("descricao", "Na sede")]);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await EventosTestKit.DeleteAsync(Client, dto.Id, "Reunião cancelada", dto.Versao)).StatusCode);
+
+        var historico = Assert.Single(await Db(db => db.HistoricoEventos.AsNoTracking().Where(h => h.EventoId == dto.Id).ToListAsync()));
+        Assert.Equal(("Reunião de clube", "Na sede", 0m, 2, 0m), (historico.Titulo, historico.Descricao, historico.ValorPorMembro, historico.QuantidadeMembros, historico.Total));
+        var participantes = JsonNode.Parse(historico.ParticipantesJson)!.AsArray();
+        Assert.Equal(m.Select(x => x.ToString()).Order(), participantes.Select(p => ((string)p!["membroId"]!).ToLowerInvariant()).Order());
+        Assert.All(participantes, p => Assert.Equal((null, null, null), (p!["lancamentoId"], p["valor"], p["status"])));
+        Assert.All(await ParticipantesDe(dto.Id), p => Assert.False(p.Ativo));
+        Assert.Empty(await Db(db => db.LancamentosDeletados.AsNoTracking().Where(d => d.EventoId == dto.Id).ToListAsync()));
     }
 
     [Fact]
@@ -1057,10 +1200,10 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     public async Task Lancamentos_ConsultaExibeFinalidadeNulaEEventoId_ENaoQuebraABusca()
     {
         var m = (await MembrosAsync(1))[0];
-        var local = $"Busca{Guid.NewGuid():N}";
-        var dto = await CriarAsync(m, ajustes: [("local", local)]);
+        var titulo = $"Busca{Guid.NewGuid():N}";
+        var dto = await CriarAsync(m, ajustes: [("titulo", titulo)]);
 
-        var lista = await Client.GetFromJsonAsync<LancamentosResponse>($"/api/Lancamentos?search={local}&pageSize=50");
+        var lista = await Client.GetFromJsonAsync<LancamentosResponse>($"/api/Lancamentos?search={titulo}&pageSize=50");
         var item = Assert.Single(lista!.Items);
         Assert.Equal((null, dto.Id, CategoriaLancamento.Evento, StatusLancamento.Pendente), (item.Finalidade, item.EventoId, item.Categoria, item.Status));
         Assert.Equal(HttpStatusCode.OK, (await Client.GetAsync("/api/Lancamentos?search=mensalidade&status=Pendente&finalidade=Mensalidade")).StatusCode);
@@ -1290,7 +1433,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(1, await TestHelpers.WithDbAsync(factory, db => db.LancamentosDeletados.CountAsync(d => d.Motivo == "remoção")));
     }
     [Fact]
-    public async Task Put_CorrigirSoOLocal_AtualizaDescricaoDePagosEPendentes_SemTocarValorNemStatus()
+    public async Task Put_CorrigirSoOTitulo_AtualizaDescricaoDePagosEPendentes_SemTocarValorNemStatus()
     {
         var m = await MembrosAsync(2);
         var dto = await CriarAsync(m);
@@ -1298,10 +1441,10 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         await PagarAsync(pago);
         dto = await ObterAsync(dto.Id);
 
-        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { m[0], m[1] }, local: "Parque Novo"));
+        var response = await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { m[0], m[1] }, titulo: "Passeio novo"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var esperada = $"Evento - Parque Novo - {dto.DataEvento:dd/MM/yyyy}";
+        var esperada = $"Evento - Passeio novo - {dto.DataEvento:dd/MM/yyyy}";
         var lancamentos = await LancamentosDe(dto.Id);
         Assert.All(lancamentos, l => Assert.Equal(esperada, l.Descricao));
         Assert.All(lancamentos, l => Assert.Equal(dto.ValorPorMembro, l.Valor));

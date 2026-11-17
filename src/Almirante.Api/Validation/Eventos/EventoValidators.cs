@@ -12,6 +12,20 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
         RuleLevelCascadeMode = CascadeMode.Stop;
         Func<decimal, bool> valorValido = EventoRegras.ValorValido;
 
+        RuleFor(x => x.Titulo)
+            .Must(titulo => EventoRegras.NormalizarTitulo(titulo).Length > 0).WithMessage("titulo é obrigatório.")
+            .Must(titulo => EventoRegras.NormalizarTitulo(titulo).Length <= EventoRegras.TituloMaximo)
+            .WithMessage($"titulo deve ter no máximo {EventoRegras.TituloMaximo} caracteres.")
+            .Must(titulo => TextoVarchar.CabeNaPagina1252(EventoRegras.NormalizarTitulo(titulo)))
+            .WithMessage(TextoVarchar.ForaDaPagina1252("titulo"));
+
+        RuleFor(x => x.Descricao)
+            .Must(descricao => EventoRegras.NormalizarDescricao(descricao)!.Length <= EventoRegras.DescricaoMaximo)
+            .WithMessage($"descricao deve ter no máximo {EventoRegras.DescricaoMaximo} caracteres.")
+            .Must(descricao => TextoVarchar.CabeNaPagina1252(EventoRegras.NormalizarDescricao(descricao)!, permitirQuebraDeLinha: true))
+            .WithMessage(TextoVarchar.ForaDaPagina1252("descricao"))
+            .When(x => EventoRegras.NormalizarDescricao(x.Descricao) is not null);
+
         RuleFor(x => x.DataEvento).NotNull().WithMessage("dataEvento é obrigatório (yyyy-MM-dd).");
 
         RuleFor(x => x.Local)

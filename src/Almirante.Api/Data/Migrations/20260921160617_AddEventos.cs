@@ -365,7 +365,7 @@ namespace Almirante.Api.Data.Migrations
             END
             """;
 
-        private const string EventosTrigger = """
+        internal const string EventosTrigger = """
             CREATE TRIGGER [TR_eventos_AuditoriaExclusaoLogica] ON [eventos] AFTER UPDATE AS
             BEGIN
               SET NOCOUNT ON;

@@ -7,6 +7,9 @@ public sealed class Evento
     public Guid EventoGrupoId { get; set; }
     public Guid? EventoReferenciaId { get; set; }
 
+    public required string Titulo { get; set; }
+    public string? Descricao { get; set; }
+
     public DateOnly DataEvento { get; set; }
     public required string Local { get; set; }
 

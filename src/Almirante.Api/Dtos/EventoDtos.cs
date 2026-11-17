@@ -25,6 +25,12 @@ public sealed record AlimentacaoRequest
 /// <summary>Campos editáveis de um cadastro de evento, compartilhados por POST e PUT (mesma validação e normalização).</summary>
 public abstract class EventoConteudoRequest
 {
+    /// <summary>Título do evento (ex.: "Reunião de clube"), 1–150 caracteres após trim e espaços colapsados.</summary>
+    public string? Titulo { get; set; }
+
+    /// <summary>Descrição opcional, até 2000 caracteres após trim; aceita quebras de linha. Vazia ou só espaços é gravada como nula.</summary>
+    public string? Descricao { get; set; }
+
     /// <summary>Data do evento (yyyy-MM-dd). No POST, a partir do primeiro dia do mês atual (UTC).</summary>
     public DateOnly? DataEvento { get; set; }
 
@@ -58,7 +64,10 @@ public sealed class UpdateEventoRequest : EventoConteudoRequest, IRequest<Evento
     /// <summary>Versão (rowversion) devolvida pela API no cadastro; atualização concorrente resulta em 409.</summary>
     public string? Versao { get; set; }
 
-    /// <summary>Obrigatório (1–255) quando a alteração remove participantes; alimenta a auditoria dos lançamentos removidos.</summary>
+    /// <summary>
+    /// Obrigatório (1–255) quando a alteração remove participantes ou zera o valor por membro de um evento com cobranças;
+    /// alimenta a auditoria dos lançamentos desativados.
+    /// </summary>
     public string? Motivo { get; set; }
 
     [JsonIgnore] public Guid Id { get; set; }
@@ -96,6 +105,8 @@ public sealed record EventoDto
     public Guid Id { get; init; }
     public Guid EventoGrupoId { get; init; }
     public Guid? EventoReferenciaId { get; init; }
+    public string Titulo { get; init; } = string.Empty;
+    public string? Descricao { get; init; }
     public DateOnly DataEvento { get; init; }
     public required string Local { get; init; }
     public required TransporteDto Transporte { get; init; }
@@ -111,6 +122,8 @@ public sealed record EventoDto
 
     /// <summary>Token de concorrência (base64 do rowversion). Devolva-o em PUT/DELETE.</summary>
     public required string Versao { get; init; }
+
+    /// <summary>Um por participante quando valorPorMembro &gt; 0; vazio quando o evento não tem valor a pagar.</summary>
     public required IReadOnlyList<EventoLancamentoDto> Lancamentos { get; init; }
 }
 

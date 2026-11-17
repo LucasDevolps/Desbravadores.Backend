@@ -10,10 +10,12 @@ public static class EventosTestKit
 
     public static Dictionary<string, object?> Corpo(object? membros, DateOnly? data = null, string local = "Parque Ibirapuera",
         decimal transporte = 10m, bool gratis = false, decimal alimentacao = 8m, bool individual = false, decimal seguro = 2m,
-        Guid? referencia = null, string? versao = null, string? motivo = null)
+        Guid? referencia = null, string? versao = null, string? motivo = null, string? titulo = "Passeio no parque", string? descricao = null)
     {
         var corpo = new Dictionary<string, object?>
         {
+            ["titulo"] = titulo,
+            ["descricao"] = descricao,
             ["dataEvento"] = (data ?? Hoje.AddDays(10)).ToString("yyyy-MM-dd"),
             ["local"] = local,
             ["transporte"] = new { valor = transporte, ehGratis = gratis },

@@ -275,6 +275,8 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             });
             entity.HasKey(e => e.Id);
             entity.HasAlternateKey(e => new { e.Id, e.EventoGrupoId }).HasName("AK_eventos_Id_EventoGrupoId");
+            entity.Property(e => e.Titulo).HasColumnType("varchar(150)").HasMaxLength(150).IsUnicode(false).IsRequired();
+            entity.Property(e => e.Descricao).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
             entity.Property(e => e.Local).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(e => e.DataEvento).HasColumnType("date");
             entity.Property(e => e.TransporteValor).HasColumnType("decimal(18,2)");
@@ -332,6 +334,8 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.ToTable("historico_eventos", table =>
                 table.HasCheckConstraint("CK_historico_eventos_ParticipantesJson", "ISJSON([ParticipantesJson]) = 1"));
             entity.HasKey(h => h.Id);
+            entity.Property(h => h.Titulo).HasColumnType("varchar(150)").HasMaxLength(150).IsUnicode(false);
+            entity.Property(h => h.Descricao).HasColumnType("varchar(2000)").HasMaxLength(2000).IsUnicode(false);
             entity.Property(h => h.Local).HasColumnType("varchar(200)").HasMaxLength(200).IsUnicode(false).IsRequired();
             entity.Property(h => h.DataEvento).HasColumnType("date");
             entity.Property(h => h.TransporteValor).HasColumnType("decimal(18,2)");

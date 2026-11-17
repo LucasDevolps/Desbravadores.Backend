@@ -60,19 +60,23 @@ public sealed record MeusEventosResponse
 }
 
 /// <summary>
-/// Evento visto pelo participante: data, local, composição do valor por membro e a própria cobrança. Não traz os outros
-/// participantes, o total do evento, os lançamentos dos demais, a versão nem o agrupamento administrativo.
+/// Evento visto pelo participante: título, descrição, data, local, composição do valor por membro e a própria cobrança. Não traz os
+/// outros participantes, o total do evento, os lançamentos dos demais, a versão nem o agrupamento administrativo.
 /// </summary>
 public sealed record EventoParticipanteDto
 {
     public Guid Id { get; init; }
+    public required string Titulo { get; init; }
+    public string? Descricao { get; init; }
     public DateOnly DataEvento { get; init; }
     public required string Local { get; init; }
     public required TransporteDto Transporte { get; init; }
     public required AlimentacaoDto Alimentacao { get; init; }
     public decimal SeguroObrigatorio { get; init; }
     public decimal ValorPorMembro { get; init; }
-    public required MinhaCobrancaDto MinhaCobranca { get; init; }
+
+    /// <summary>Nula quando o evento não tem valor a pagar (valor por membro zero): o membro participa sem cobrança.</summary>
+    public MinhaCobrancaDto? MinhaCobranca { get; init; }
 }
 
 /// <summary>Lançamento do próprio participante gerado pelo evento.</summary>

@@ -6,6 +6,11 @@ public sealed class HistoricoEvento
     public Guid EventoId { get; set; }
     public Guid EventoGrupoId { get; set; }
     public Guid? EventoReferenciaId { get; set; }
+
+    /// <summary>Nulos nas exclusões gravadas antes de o evento ter título e descrição.</summary>
+    public string? Titulo { get; set; }
+    public string? Descricao { get; set; }
+
     public DateOnly DataEvento { get; set; }
     public required string Local { get; set; }
     public bool TransporteEhGratis { get; set; }

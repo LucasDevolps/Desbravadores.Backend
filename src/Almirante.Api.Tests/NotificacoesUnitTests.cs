@@ -26,7 +26,15 @@ public sealed class NotificacoesUnitTests
         Vencimento = new DateOnly(2026, 11, 10), EventoId = eventoId,
     };
 
-    private static Evento Evento() => new() { Id = Guid.NewGuid(), Local = "Parque Ibirapuera", DataEvento = new DateOnly(2026, 11, 15) };
+    private static Evento Evento() => new()
+    {
+        Id = Guid.NewGuid(), Titulo = "Passeio no parque", Local = "Parque Ibirapuera", DataEvento = new DateOnly(2026, 11, 15),
+    };
+
+    private static EventoMembro Participante(Evento evento, Guid membro, Guid? lancamentoId = null) => new()
+    {
+        Id = Guid.NewGuid(), EventoId = evento.Id, EventoGrupoId = evento.EventoGrupoId, MembroId = membro, LancamentoId = lancamentoId,
+    };
 
     // ---- Destinatários ----
 
@@ -75,13 +83,16 @@ public sealed class NotificacoesUnitTests
         var naoSelecionado = Guid.NewGuid();
         var lancamentos = participantes.Select(m => Lancamento(m, eventoId: evento.Id, valor: 20m)).ToList();
 
-        var notificacoes = NotificacoesFabrica.ParaEvento(evento, lancamentos, Agora);
+        var notificacoes = NotificacoesFabrica.ParaEvento(evento,
+            lancamentos.Select(l => Participante(evento, l.MembroId!.Value, l.Id)), lancamentos, Agora);
 
         Assert.Equal(participantes.Order(), notificacoes.Select(n => n.DestinatarioId).Order());
         Assert.All(notificacoes, n =>
         {
             Assert.Equal((TipoNotificacao.EventoCadastrado, evento.Id, $"evento:{evento.Id:N}"), (n.Tipo, n.EventoId!.Value, n.ChaveOrigem));
             Assert.Equal(lancamentos.Single(l => l.MembroId == n.DestinatarioId).Id, n.LancamentoId);
+            Assert.Equal("Novo evento: Passeio no parque", n.Titulo);
+            Assert.Contains("Passeio no parque", n.Mensagem);
             Assert.Contains("Parque Ibirapuera", n.Mensagem);
             Assert.Contains("15/11/2026", n.Mensagem);
             Assert.Contains("R$ 20,00", n.Mensagem);
@@ -97,9 +108,26 @@ public sealed class NotificacoesUnitTests
         var deOutroCadastro = Lancamento(Guid.NewGuid(), eventoId: Guid.NewGuid());
 
         var notificacoes = NotificacoesFabrica.ParaEvento(evento,
+            [Participante(evento, membro), Participante(evento, membro), Participante(new Evento { Id = Guid.NewGuid(), Titulo = "x", Local = "x" }, Guid.NewGuid())],
             [Lancamento(membro, eventoId: evento.Id), Lancamento(membro, eventoId: evento.Id), deOutroCadastro], Agora);
 
         Assert.Equal(membro, Assert.Single(notificacoes).DestinatarioId);
+    }
+
+    [Fact]
+    public void EventoSemValorAPagar_CadaParticipanteRecebeANotificacao_SemLancamento()
+    {
+        var evento = Evento();
+        var participantes = new[] { Guid.NewGuid(), Guid.NewGuid() };
+
+        var notificacoes = NotificacoesFabrica.ParaEvento(evento, participantes.Select(m => Participante(evento, m)), [], Agora);
+
+        Assert.Equal(participantes.Order(), notificacoes.Select(n => n.DestinatarioId).Order());
+        Assert.All(notificacoes, n =>
+        {
+            Assert.Null(n.LancamentoId);
+            Assert.EndsWith("Não há valor a pagar por este evento.", n.Mensagem);
+        });
     }
 
     // ---- Deduplicação (idempotência) ----

@@ -723,8 +723,9 @@ informando a data e o valor reais. `DataAtualizacao` nunca é usada como data de
 ## Eventos
 
 `/api/Eventos` cadastra **grupos de cobrança** de passeios/eventos. Cada `POST` cria um cadastro
-(uma composição de custos + uma lista de membros) e gera **um lançamento pendente por membro**,
-reutilizando as regras financeiras internamente (nenhuma chamada HTTP a `/Lancamentos`). Permissões
+(título, descrição, uma composição de custos e uma lista de membros) e, quando há valor a pagar, gera
+**um lançamento pendente por membro**, reutilizando as regras financeiras internamente (nenhuma chamada
+HTTP a `/Lancamentos`). Permissões
 `eventos.consultar/criar/editar/excluir` (inicialmente `ADM`, `DIR`, `DIRA`, `SEC`, `TES`; `401` sem autenticação, `403` sem permissão):
 o Secretário gerencia eventos e o Tesoureiro executa as mesmas operações, mas registrar pagamentos
 continua só em `/api/Lancamentos` (`financeiro.pagamentos.registrar`). O participante consulta os próprios eventos
@@ -746,6 +747,14 @@ JSON diferentes, repetidos (o erro cita os IDs; nada é removido em silêncio) e
 No OpenAPI o schema é `oneOf [string/uuid, array de uuid]`, com exemplos das duas formas. A
 resposta devolve sempre um array.
 
+**Título e descrição.** `titulo` é obrigatório (1–150 caracteres depois do trim, com espaços colapsados,
+como o local) e identifica o evento (ex.: "Reunião de clube"). `descricao` é opcional (até 2000
+caracteres depois do trim, aceita quebras de linha, padronizadas em `\n`); vazia ou só com espaços é
+gravada como `null`. Os dois só aceitam caracteres da página 1252, como os demais textos. A resposta
+devolve `titulo` e `descricao`, e `/api/Me/Eventos` também. A descrição do lançamento de cada participante
+é `Evento - {titulo} - {dd/MM/yyyy}`. Cadastros de outro grupo do mesmo passeio (`eventoReferenciaId`)
+podem ter título próprio.
+
 **Cálculo** (`decimal` / `decimal(18,2)`, ≥ 0, no máximo 2 casas):
 
 ```text
@@ -755,8 +764,15 @@ total          = valorPorMembro × quantidadeMembros        # nunca gravado no l
 ```
 
 Os cinco campos (`ehGratis`, `individual` e os três valores) são obrigatórios no corpo — zero/`false`
-são válidos; valor ignorado por um booleano é normalizado para zero antes das validações. Todos
-zerados gera lançamentos pendentes de R$ 0,00. O lançamento nasce com `Finalidade = NULL` real,
+são válidos; valor ignorado por um booleano é normalizado para zero antes das validações.
+
+**Evento sem valor a pagar.** Com `valorPorMembro = 0` (ex.: reunião de clube), os membros são
+registrados como participantes (`evento_membros.LancamentoId = NULL`) e recebem a notificação "Não há
+valor a pagar por este evento", mas **nenhum lançamento é gerado**: a resposta traz `lancamentos: []`,
+`total = 0` e os `membros` normalmente, e `/api/Me/Eventos` devolve `minhaCobranca: null`. Eventos zerados
+cadastrados antes desta regra mantêm os lançamentos de R$ 0,00 que já tinham.
+
+O lançamento nasce com `Finalidade = NULL` real,
 `Categoria = Evento`, `Status = Pendente`, `TipoFluxo = Entrada`, `Vencimento = dataEvento`, `Ativo`
 e `EventoId`; nada disso (nem responsável, IP, total) vem do cliente.
 
@@ -767,8 +783,9 @@ exige as duas datas (`dataInicial <= dataFinal`) e aceita períodos históricos 
 paginada; período maior devolve `400`). Lista vazia é `items: []`.
 
 **Idempotência.** Chave UUID + usuário autenticado (tabela `eventos_operacoes`, separada de
-`LancamentosOperacoes`). O hash usa apenas dados normalizados: data, local (trim + espaços
-colapsados), booleanos, valores efetivos, seguro, `eventoReferenciaId` e membros **ordenados**;
+`LancamentosOperacoes`). O hash (`evento.v2`) usa apenas dados normalizados: título e local (trim +
+espaços colapsados), descrição normalizada, data, booleanos, valores efetivos, seguro, `eventoReferenciaId`
+e membros **ordenados**;
 GUID único ≡ array de um elemento, e a ordem dos membros não importa. Mesma chave + mesma operação →
 `200` com o **resultado original do POST** (o mesmo DTO, com a **versão original**) — não o estado atual: se o
 cadastro foi editado ou pago depois, o `GET` mostra o estado atual e o replay continua devolvendo o original
@@ -803,13 +820,18 @@ foi efetivado antes de responder sucesso.
 **PUT.** Campos editáveis = os do POST + `versao` (+ `motivo`); não altera `id`, `eventoGrupoId`,
 `eventoReferenciaId`, total, valor por membro nem status. Sem lançamento `Pago`: mantidos são atualizados,
 novos ganham lançamento pendente e removidos são desativados (participação + lançamento, com auditoria
-do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. `Atrasado` é só um
+do trigger de lançamentos) — `motivo` (1–255) é obrigatório quando há remoção. Valor por membro que
+passa de zero a positivo cria o lançamento pendente de cada participante que ainda não tinha; de positivo
+a zero, desativa as cobranças (com auditoria em `lancamentos_deletados`, `motivo` obrigatório) e mantém os
+participantes, agora sem lançamento. Participantes adicionados a um evento sem valor não ganham lançamento.
+`Atrasado` é só um
 `Pendente` vencido (issue #184): acompanha o novo valor e a nova data e volta a `Pendente` se a nova data
 ainda não passou (com data passada, o `Pendente` fica para a rotina de vencimento). Com algum lançamento
 `Pago`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
 `individual`, seguro — não só o total), participantes ou data (pagamentos nunca voltam a pendente nem
-geram estorno); só o **local** pode ser corrigido (a descrição de todos os lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo
-local; valor, vencimento e status do pagamento não mudam). Data/local não mudam por PUT isolado quando o passeio
+geram estorno); só **local**, **título** e **descrição** podem ser corrigidos (a descrição de todos os
+lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo título; valor, vencimento e status do pagamento
+não mudam). Data/local não mudam por PUT isolado quando o passeio
 tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.
 
 **DELETE** `{ "motivo": "...", "versao": "..." }`: exclusão lógica (`Ativo = false`) do cadastro, das
@@ -817,8 +839,9 @@ participações e dos lançamentos (`Pendente` ou `Atrasado`), na mesma transaç
 permanecem. `Pago` → `409` sem alterar nada; inexistente/já excluído → `404`.
 
 **Auditoria (`historico_eventos`).** Trigger `TR_eventos_AuditoriaExclusaoLogica` (`AFTER UPDATE`, só na
-transição `Ativo 1 → 0`, várias linhas) grava snapshot completo (IDs, grupo/referência, data, local,
-booleanos, valores, valor por membro, total, participantes e lançamentos em JSON), responsável, IP,
+transição `Ativo 1 → 0`, várias linhas) grava snapshot completo (IDs, grupo/referência, título,
+descrição, data, local, booleanos, valores, valor por membro, total, participantes e lançamentos em JSON;
+participante sem lançamento aparece com `lancamentoId`, `valor` e `status` nulos), responsável, IP,
 motivo e horário UTC do banco. A aplicação **nunca** insere nessa tabela (o usuário de runtime tem
 `DENY` de escrita, como em `lancamentos_deletados`) e a trigger falha (`THROW 50011`) sem
 `SESSION_CONTEXT`. Responsável = claims validadas; IP = `HttpContext.Connection.RemoteIpAddress`
@@ -840,6 +863,15 @@ composta `evento_membros(EventoId, EventoGrupoId)`), recria `TR_Lancamentos_Audi
 (copia `EventoId`, aceita `Finalidade` nula) e cria o trigger de eventos. `Down` é reversível
 (lançamentos de evento voltam com `Finalidade = ''`). Aplicação pelo startup como as demais; nenhuma
 variável de ambiente, porta ou credencial nova.
+
+**Migration `AddEventosTituloDescricaoSemCobranca`** (incremental): adiciona `eventos.Titulo`
+(`varchar(150)`, obrigatório) e `eventos.Descricao` (`varchar(2000)`, opcional), e as mesmas colunas
+(opcionais) em `historico_eventos`; torna `evento_membros.LancamentoId` opcional; recria
+`TR_eventos_AuditoriaExclusaoLogica` com título, descrição e `LEFT JOIN` nos lançamentos. Eventos
+existentes recebem o próprio local como título (os primeiros 150 caracteres), o mesmo texto que já
+aparece na descrição dos lançamentos deles; exclusões já auditadas ficam com título e descrição nulos.
+O `Down` remove título e descrição e é recusado (`THROW 50196`) enquanto houver participante sem
+lançamento, para não inventar cobrança.
 
 **Frontend (issue #57).** Use `GET /api/Membros` (id, nome e cargo, disponível também ao Tesoureiro) para os IDs; envie `membros` como GUID ou array;
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em

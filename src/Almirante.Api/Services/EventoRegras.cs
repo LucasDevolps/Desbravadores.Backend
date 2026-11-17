@@ -7,6 +7,8 @@ using Almirante.Api.Dtos;
 namespace Almirante.Api.Services;
 
 public sealed record EventoNormalizado(
+    string Titulo,
+    string? Descricao,
     DateOnly DataEvento,
     string Local,
     bool TransporteEhGratis,
@@ -21,11 +23,16 @@ public sealed record EventoNormalizado(
 
     /// <summary>valorPorMembro × quantidade de membros.</summary>
     public decimal Total => ValorPorMembro * Membros.Count;
+
+    /// <summary>Só há lançamento (cobrança) por participante quando existe valor a pagar.</summary>
+    public bool GeraCobranca => EventoRegras.GeraCobranca(ValorPorMembro);
 }
 
 public static class EventoRegras
 {
     public const decimal ValorMaximo = 9_999_999_999_999_999.99m;
+    public const int TituloMaximo = 150;
+    public const int DescricaoMaximo = 2000;
     public const int LocalMaximo = 200;
     public const int MotivoMaximo = 255;
 
@@ -45,6 +52,19 @@ public static class EventoRegras
     public static string NormalizarLocal(string? local) =>
         string.Join(' ', (local ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
+    /// <summary>Título com espaços colapsados, como o local.</summary>
+    public static string NormalizarTitulo(string? titulo) => NormalizarLocal(titulo);
+
+    /// <summary>Descrição com trim e quebras de linha padronizadas em \n; vazia ou só espaços vira nula.</summary>
+    public static string? NormalizarDescricao(string? descricao)
+    {
+        var texto = (descricao ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        return texto.Length == 0 ? null : texto;
+    }
+
+    /// <summary>Evento com valor por membro zero (ex.: reunião de clube) não gera lançamento para os participantes.</summary>
+    public static bool GeraCobranca(decimal valorPorMembro) => valorPorMembro > 0;
+
     public static bool ValorValido(decimal valor) => valor >= 0 && valor <= ValorMaximo && decimal.Round(valor, 2) == valor;
 
     public static string? NormalizarIdempotencyKey(string? key) =>
@@ -55,6 +75,8 @@ public static class EventoRegras
         var gratis = request.Transporte!.EhGratis!.Value;
         var individual = request.Alimentacao!.Individual!.Value;
         return new EventoNormalizado(
+            NormalizarTitulo(request.Titulo),
+            NormalizarDescricao(request.Descricao),
             request.DataEvento!.Value,
             NormalizarLocal(request.Local),
             gratis,
@@ -65,16 +87,19 @@ public static class EventoRegras
             request.Membros!.OrderBy(m => m).ToArray());
     }
 
-    public static string DescricaoLancamento(string local, DateOnly data)
+    /// <summary>Texto do lançamento de cada participante: "Evento - {título} - {dd/MM/yyyy}".</summary>
+    public static string DescricaoLancamento(string titulo, DateOnly data)
     {
-        var texto = $"Evento - {local} - {data.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
+        var texto = $"Evento - {titulo} - {data.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}";
         return texto.Length <= 500 ? texto : texto[..500];
     }
 
     public static string Hash(EventoNormalizado e, Guid? eventoReferenciaId)
     {
         var canonical = string.Join('|',
-            "evento.v1",
+            "evento.v2",
+            JsonSerializer.Serialize(e.Titulo),
+            JsonSerializer.Serialize(e.Descricao),
             e.DataEvento.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             JsonSerializer.Serialize(e.Local),
             e.TransporteEhGratis ? "1" : "0",

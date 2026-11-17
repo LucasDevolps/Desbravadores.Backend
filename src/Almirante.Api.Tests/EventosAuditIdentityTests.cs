@@ -18,9 +18,9 @@ public sealed class EventosAuditIdentityTests
             INSERT INTO dbo.Cargos (Id, Nome, Descricao, CriadoPor, CriadoEm, Role, Ativo) VALUES ('{cargo}', N'Cargo', N'x', N'teste', SYSUTCDATETIME(), N'DS', 1);
             INSERT INTO dbo.Usuarios (Id, Nome, Email, EmailNormalizado, SenhaHash, CargoId, DataCriacao, SecurityVersion, FalhasLoginConsecutivas)
                 VALUES ('{membro}', N'Membro', N'm@x.dev', N'M@X.DEV', N'x', '{cargo}', SYSUTCDATETIME(), 0, 0);
-            INSERT INTO dbo.eventos (Id, EventoGrupoId, DataEvento, [Local], TransporteEhGratis, TransporteValor, AlimentacaoIndividual, AlimentacaoValor,
+            INSERT INTO dbo.eventos (Id, EventoGrupoId, Titulo, DataEvento, [Local], TransporteEhGratis, TransporteValor, AlimentacaoIndividual, AlimentacaoValor,
                                      SeguroObrigatorio, ValorPorMembro, Ativo, CriadoPorUsuarioId, CriadoEmUtc)
-                VALUES ('{evento}', '{evento}', '2026-10-18', N'Parque', 0, 10, 0, 8, 2, 20, 1, '{membro}', SYSUTCDATETIME());
+                VALUES ('{evento}', '{evento}', N'Passeio', '2026-10-18', N'Parque', 0, 10, 0, 8, 2, 20, 1, '{membro}', SYSUTCDATETIME());
             INSERT INTO dbo.Lancamentos (Id, MembroId, Finalidade, Descricao, Categoria, Valor, Vencimento, Status, TipoFluxo, DataCriacao, Ativo, EventoId)
                 VALUES ('{lancamento}', '{membro}', NULL, N'evento', 0, 20, '2026-10-18', 0, 0, SYSUTCDATETIME(), 1, '{evento}');
             INSERT INTO dbo.evento_membros (Id, EventoId, EventoGrupoId, MembroId, LancamentoId, Ativo, CriadoEmUtc)

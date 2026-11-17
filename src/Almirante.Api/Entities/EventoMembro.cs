@@ -7,7 +7,8 @@ public sealed class EventoMembro
     public Evento? Evento { get; set; }
     public Guid EventoGrupoId { get; set; }
     public Guid MembroId { get; set; }
-    public Guid LancamentoId { get; set; }
+    /// <summary>Cobrança ativa do participante; nula quando o cadastro não tem valor a pagar (valor por membro zero).</summary>
+    public Guid? LancamentoId { get; set; }
     public bool Ativo { get; set; } = true;
     public DateTime CriadoEmUtc { get; set; }
     public DateTime? DesativadoEmUtc { get; set; }

@@ -131,7 +131,7 @@ public static class EventosSqlSupport
         DateOnly? data = null, string? motivo = null, decimal? alimentacao = null, bool? individual = null, bool? gratis = null, decimal? seguro = null) =>
         EventosTestKit.Corpo(membros, data ?? e.DataEvento, local ?? e.Local, transporte ?? e.Transporte.Valor, gratis ?? e.Transporte.EhGratis,
             alimentacao ?? e.Alimentacao.Valor, individual ?? e.Alimentacao.Individual, seguro ?? e.SeguroObrigatorio,
-            versao: e.Versao, motivo: motivo);
+            versao: e.Versao, motivo: motivo, titulo: e.Titulo, descricao: e.Descricao);
 
     public static async Task<T?> EscalarAsync<T>(SqlServerApiFactory factory, string sql, params (string, object)[] parametros)
     {

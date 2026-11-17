@@ -14,7 +14,7 @@ public sealed class EventosRegrasTests
 
     private static string Json(string membros, string data = "2026-10-18", string transporte = """{"valor":10.00,"ehGratis":false}""",
         string alimentacao = """{"individual":false,"valor":8.00}""", string seguro = "2.00", string extra = "") =>
-        $$"""{"dataEvento":"{{data}}","local":"Parque Ibirapuera","transporte":{{transporte}},"alimentacao":{{alimentacao}},"seguroObrigatorio":{{seguro}},"membros":{{membros}}{{extra}}}""";
+        $$"""{"titulo":"Passeio no parque","dataEvento":"{{data}}","local":"Parque Ibirapuera","transporte":{{transporte}},"alimentacao":{{alimentacao}},"seguroObrigatorio":{{seguro}},"membros":{{membros}}{{extra}}}""";
 
     private static RegistrarEventoRequest Ler(string json, string? chave = null)
     {
@@ -191,6 +191,46 @@ public sealed class EventosRegrasTests
         Assert.Contains(Erros(Ler(Json($"\"{A}\"").Replace("Parque Ibirapuera", "   "))), e => e.Contains("local é obrigatório"));
     }
 
+    [Fact]
+    public void Titulo_EhObrigatorioNormalizadoELimitado()
+    {
+        Assert.Equal("Reunião de clube", EventoRegras.NormalizarTitulo("  Reunião \t de   clube \n"));
+        Assert.Contains(Erros(Ler(Json($"\"{A}\"").Replace("\"titulo\":\"Passeio no parque\",", ""))), e => e.Contains("titulo é obrigatório"));
+        Assert.Contains(Erros(Ler(Json($"\"{A}\"").Replace("Passeio no parque", "   "))), e => e.Contains("titulo é obrigatório"));
+        Assert.Contains(Erros(Ler(Json($"\"{A}\"").Replace("Passeio no parque", new string('t', 151)))), e => e.Contains("titulo deve ter no máximo 150"));
+        Assert.Empty(Erros(Ler(Json($"\"{A}\"").Replace("Passeio no parque", "  " + new string('t', 150) + "  "))));
+    }
+
+    [Fact]
+    public void Descricao_EhOpcional_AceitaQuebraDeLinha_ELimitadaA2000()
+    {
+        Assert.Null(EventoRegras.NormalizarDescricao(null));
+        Assert.Null(EventoRegras.NormalizarDescricao(" \r\n "));
+        Assert.Equal("Trazer lanche\nE uniforme", EventoRegras.NormalizarDescricao("  Trazer lanche\r\nE uniforme  "));
+
+        Assert.Empty(Erros(Ler(Json($"\"{A}\""))));
+        Assert.Empty(Erros(Ler(Json($"\"{A}\"", extra: ",\"descricao\":\"Trazer lanche\\r\\nE uniforme\""))));
+        Assert.Empty(Erros(Ler(Json($"\"{A}\"", extra: $",\"descricao\":\" {new string('d', 2000)} \""))));
+        Assert.Contains(Erros(Ler(Json($"\"{A}\"", extra: $",\"descricao\":\"{new string('d', 2001)}\""))),
+            e => e.Contains("descricao deve ter no máximo 2000"));
+        Assert.Equal("Trazer lanche\nE uniforme",
+            EventoRegras.Normalizar(Ler(Json($"\"{A}\"", extra: ",\"descricao\":\" Trazer lanche\\r\\nE uniforme \""))).Descricao);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(0.01, true)]
+    [InlineData(20, true)]
+    public void GeraCobranca_SoComValorPorMembroMaiorQueZero(decimal valorPorMembro, bool gera) =>
+        Assert.Equal(gera, EventoRegras.GeraCobranca(valorPorMembro));
+
+    [Fact]
+    public void DescricaoDoLancamento_UsaOTitulo()
+    {
+        var normalizado = EventoRegras.Normalizar(Ler(Json($"\"{A}\"")));
+        Assert.Equal("Evento - Passeio no parque - 18/10/2026", EventoRegras.DescricaoLancamento(normalizado.Titulo, normalizado.DataEvento));
+    }
+
     [Theory]
     [InlineData("2026-09-01", true)]
     [InlineData("2026-09-10", true)]
@@ -260,6 +300,16 @@ public sealed class EventosRegrasTests
     }
 
     [Fact]
+    public void Hash_TituloEDescricaoFazemParteDaOperacao()
+    {
+        var original = Json($"\"{A}\"");
+        Assert.Equal(Hash(original), Hash(original.Replace("Passeio no parque", "  Passeio   no parque ")));
+        Assert.NotEqual(Hash(original), Hash(original.Replace("Passeio no parque", "Reunião de clube")));
+        Assert.NotEqual(Hash(original), Hash(Json($"\"{A}\"", extra: ",\"descricao\":\"Trazer lanche\"")));
+        Assert.Equal(Hash(original), Hash(Json($"\"{A}\"", extra: ",\"descricao\":\"   \"")));
+    }
+
+    [Fact]
     public void Hash_QualquerDadoDeNegocioDiferenteMudaAOperacao()
     {
         var baseHash = Hash(Json($"\"{A}\""));
@@ -299,7 +349,7 @@ public sealed class EventosRegrasTests
         var validator = new UpdateEventoRequestValidator();
         UpdateEventoRequest Put(string? versao, string? motivo) => new()
         {
-            DataEvento = new DateOnly(2026, 10, 18), Local = "x", Membros = [A], SeguroObrigatorio = 1,
+            Titulo = "x", DataEvento = new DateOnly(2026, 10, 18), Local = "x", Membros = [A], SeguroObrigatorio = 1,
             Transporte = new TransporteRequest { Valor = 1, EhGratis = false }, Alimentacao = new AlimentacaoRequest { Individual = false, Valor = 1 },
             Versao = versao, Motivo = motivo,
         };
