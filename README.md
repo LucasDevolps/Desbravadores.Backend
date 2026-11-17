@@ -1132,7 +1132,7 @@ O projeto `src/Almirante.Api.Tests` tem duas suítes:
   (`WebApplicationFactory`) com EF InMemory e ViaCEP simulado: contratos HTTP, matriz de autorização por cargo (`AuthorizationTests`),
   JWT, CSRF, rate limit e lockout, cabeçalhos de segurança, forwarded headers, auditoria HTTP (sanitização, diário em disco,
   resiliência), fotos, notificações, CLI de reset de senha, startup e serviços em segundo plano com relógio manual.
-- **`Category=RequiresSqlServer`** (~450 casos, job `sqlserver-integration`): SQL Server 2022 real, com migrations completas (inclusive
+- **`Category=RequiresSqlServer`** (~450 casos, só execução local, fora da pipeline): SQL Server 2022 real, com migrations completas (inclusive
   o `Down` de todas até o banco vazio), triggers de auditoria e `SESSION_CONTEXT`, transações e rollback, `rowversion`,
   `sp_getapplock`, índices únicos filtrados, concorrência e corridas injetadas, identidades SQL de menor privilégio e a API no
   processo real (`ApiProcess*`).
@@ -1195,16 +1195,16 @@ sem filtro de caminhos. Todos os jobs usam runners descartáveis hospedados pelo
 
 - `build-and-test`: instala .NET 10, compila a solução no Windows e executa os testes sem
   dependências externas.
-- `sqlserver-integration`: executa **todos** os testes `Category=RequiresSqlServer` em Linux,
-  com SQL Server 2022 descartável, senha aleatória, porta em loopback e nenhum volume de deploy.
 - `deploy-scripts`: testa o preflight, a política dos workflows e nginx real (HTTP/HTTPS/429),
   com certificados de teste e containers descartáveis.
-- `coverage`: publica a cobertura unitária (só a suíte sem dependências) separada da combinada (as duas suítes,
-  unidas pelo OpenCover), com as lacunas por arquivo no Job Summary e os relatórios no artifact `coverage-<sha>`. A
-  combinada exige **100% de linhas e branches**; a unitária não pode regredir. Detalhes em
+- `coverage`: publica a cobertura da suíte unitária (sem dependências externas), com as lacunas por arquivo no Job
+  Summary e o relatório no artifact `coverage-<sha>`, e aplica o gate de não regressão. Detalhes em
   [docs/test-coverage.md](docs/test-coverage.md).
 
-Os testes .NET geram artefatos TRX (`unit-<sha>` e `sqlserver-<sha>`, retidos por 14 dias).
+Os testes de integração (`Category=RequiresSqlServer`) **não rodam na pipeline**: continuam no repositório e são
+executados só localmente, quando necessário (ver [Testes](#testes)).
+
+Os testes .NET geram o artefato TRX `unit-<sha>`, retido por 14 dias.
 Em PRs o checkout usa o SHA do HEAD em revisão: resultado de outro commit não substitui o atual.
 
 O workflow `.github/workflows/backend-deploy.yml` cuida da publicação em si, em runners self-hosted, a cada push em `develop`: builda e sobe os containers via Docker Compose no(s) Pop!_OS registrado(s) e publica a aplicação no IIS na máquina Windows. Em ambos os casos, as migrations pendentes rodam automaticamente na inicialização da aplicação (`DbSeeder.SeedAsync`). O job Linux só reporta sucesso quando o endpoint `/health` responde; o job Windows termina depois de publicar e deixa um aviso para conferir o `/health` manualmente (as migrations podem demorar mais que qualquer espera razoável do job).
@@ -1224,8 +1224,8 @@ branch, `enforcement: active`). As demais branches (`feature/*`, `fix/*`, `chore
 - Todas as conversations do PR precisam estar resolvidas antes do merge.
 - Não há aprovação humana obrigatória (0 aprovações) enquanto o projeto é mantido
   individualmente; o quality gate é o CI.
-- Checks obrigatórios, todos verdes, publicados pelo GitHub Actions: `build-and-test`,
-  `sqlserver-integration` e `deploy-scripts`. O `coverage` (gates de cobertura) só bloqueia o merge se for
+- Checks obrigatórios, todos verdes, publicados pelo GitHub Actions: `build-and-test` e
+  `deploy-scripts`. O `coverage` (gates de cobertura) só bloqueia o merge se for
   incluído nos rulesets, o que é configuração do repositório. Os jobs de `backend-deploy.yml` não são checks de PR.
 - A branch do PR precisa estar atualizada com a branch de destino (`strict`).
 - Sem bypass: nenhum usuário, admin, app ou deploy key ignora as regras. Mudanças de política

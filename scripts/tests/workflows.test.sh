@@ -79,8 +79,8 @@ for arquivo in "$WF"/*.yml "$WF"/*.yaml; do
   done < <(jobs_de "$arquivo")
 done
 
-# 4. backend-ci.yml: cobertura das duas suítes, relatório, resumo e quality gate (#67), sem perder a integração
-#    SQL Server real. Verifica comandos/propriedades dentro de cada job, não posições no YAML.
+# 4. backend-ci.yml: cobertura da suíte unitária, relatório, resumo e quality gate (#67). Os testes de integração
+#    (Category=RequiresSqlServer) não rodam na pipeline. Verifica comandos/propriedades dentro de cada job, não posições no YAML.
 CI="$WF/backend-ci.yml"
 exige() { # JOB TRECHO DESCRICAO
   if bloco_do_job "$CI" "$1" | grep -F -- "$2" >/dev/null; then
@@ -90,27 +90,19 @@ exige() { # JOB TRECHO DESCRICAO
   fi
 }
 if [[ -f "$CI" ]]; then
-  for job in build-and-test sqlserver-integration; do
-    exige "$job" '--collect "XPlat Code Coverage"' "coleta cobertura"
-    exige "$job" '--settings src/coverage.runsettings' "usa src/coverage.runsettings"
-    exige "$job" 'TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
-    exige "$job" 'TestResults/*/coverage.opencover.xml' "publica o OpenCover bruto (união exata dos ramos)"
-  done
+  exige build-and-test '--collect "XPlat Code Coverage"' "coleta cobertura"
+  exige build-and-test '--settings src/coverage.runsettings' "usa src/coverage.runsettings"
+  exige build-and-test 'TestResults/*/coverage.cobertura.xml' "publica o Cobertura bruto"
+  exige build-and-test 'TestResults/*/coverage.opencover.xml' "publica o OpenCover bruto"
   exige build-and-test 'Category!=RequiresDocker&Category!=RequiresSqlServer' "roda os testes sem dependências externas"
-  exige sqlserver-integration 'Category=RequiresSqlServer' "roda os testes RequiresSqlServer"
-  exige sqlserver-integration 'mcr.microsoft.com/mssql/server:2022' "usa SQL Server 2022 descartável"
-  exige sqlserver-integration 'openssl rand' "gera senha aleatória por execução"
-  exige sqlserver-integration '--publish 127.0.0.1::1433' "expõe o SQL só em loopback"
-  if bloco_do_job "$CI" sqlserver-integration | grep -B2 -F 'docker rm --force almirante-ci-sql' | grep -F 'if: always()' >/dev/null; then
-    ok "backend-ci.yml/sqlserver-integration: remove o container mesmo em falha"
+  if grep -F 'Category=RequiresSqlServer' "$CI" | grep -vF 'Category!=RequiresSqlServer' | grep -vE '^[[:space:]]*#' >/dev/null; then
+    erro "backend-ci.yml: os testes de integração (Category=RequiresSqlServer) não rodam na pipeline."
   else
-    erro "backend-ci.yml/sqlserver-integration: a remoção do SQL descartável precisa de 'if: always()'."
+    ok "backend-ci.yml: nenhum job roda os testes de integração (Category=RequiresSqlServer)"
   fi
-  exige coverage 'needs: [build-and-test, sqlserver-integration]' "consolida as duas suítes"
+  exige coverage 'needs: [build-and-test]' "consolida a suíte unitária"
   exige coverage 'dotnet tool restore' "usa o ReportGenerator fixado no manifesto local"
-  exige coverage 'bash scripts/coverage.sh report coverage-input/unit coverage-report/unitaria' "gera o relatório unitário separado"
-  exige coverage 'bash scripts/coverage.sh report coverage-input coverage-report/combinada' "gera o relatório combinado das duas suítes"
-  exige coverage 'bash scripts/coverage.sh gate coverage-report/combinada/Cobertura.xml src/coverage-baseline.json' "aplica o gate da cobertura combinada"
+  exige coverage 'bash scripts/coverage.sh report coverage-input/unit coverage-report/unitaria' "gera o relatório unitário"
   exige coverage 'bash scripts/coverage.sh gate coverage-report/unitaria/Cobertura.xml src/coverage-baseline-unit.json' "aplica o gate da cobertura unitária"
   exige coverage 'bash scripts/coverage.sh lacunas' "lista as lacunas no resumo"
   exige coverage 'GITHUB_STEP_SUMMARY' "escreve o Job Summary"

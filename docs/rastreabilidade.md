@@ -14,7 +14,7 @@ o validam (issue #160). Levantada sobre `develop` em `20a450d` e mantida no mesm
 - **Sem dependências externas:** suíte que roda sem SQL Server, Docker ou rede (job `build-and-test`). Inclui testes unitários puros
   e testes de componente em processo (`WebApplicationFactory` com EF InMemory, ViaCEP simulado por `ViaCepFalso`). É a base da
   [cobertura unitária](test-coverage.md#unitária-x-combinada).
-- **SQL Server / processo real:** `Category=RequiresSqlServer` (job `sqlserver-integration`): SQL Server 2022 real e descartável,
+- **SQL Server / processo real:** `Category=RequiresSqlServer` (só execução local, fora da pipeline): SQL Server 2022 real e descartável,
   migrations completas, triggers, `SESSION_CONTEXT`, locks, identidades SQL do bootstrap e, nos `ApiProcess*`, a API no próprio
   processo (Kestrel) com a identidade de runtime de menor privilégio.
 - **E2E:** execução da aplicação publicada com os fluxos de ponta a ponta; as evidências de cada rodada ficam no PR da issue
