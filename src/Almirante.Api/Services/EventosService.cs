@@ -56,29 +56,36 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
     /// <summary>
     /// Eventos ativos em que <paramref name="membroId"/> é participante ativo, com a própria cobrança (o lançamento do evento não pode
-    /// ser excluído à parte; ele só sai com o participante). Sem recorte de data: eventos passados continuam consultáveis.
+    /// ser excluído à parte; ele só sai com o participante). Evento sem valor a pagar não tem cobrança: o participante o vê com
+    /// <c>minhaCobranca</c> nula. Sem recorte de data: eventos passados continuam consultáveis.
     /// </summary>
     public async Task<IReadOnlyList<EventoParticipanteDto>> ListarDoParticipanteAsync(Guid membroId, Guid? eventoId, CancellationToken ct)
     {
         var linhas = await (
                 from m in db.EventosMembros.AsNoTracking()
                 join e in db.Eventos.AsNoTracking() on m.EventoId equals e.Id
-                join l in db.Lancamentos.AsNoTracking() on m.LancamentoId equals l.Id
-                where m.MembroId == membroId && m.Ativo && e.Ativo && l.Ativo && (eventoId == null || e.Id == eventoId)
+                from l in db.Lancamentos.AsNoTracking().Where(l => l.Id == m.LancamentoId && l.Ativo).DefaultIfEmpty()
+                where m.MembroId == membroId && m.Ativo && e.Ativo && (eventoId == null || e.Id == eventoId)
                 orderby e.DataEvento, e.Local, e.Id
-                select new { Evento = e, l.Valor, l.Vencimento, l.Status })
+                select new
+                {
+                    Evento = e,
+                    Cobranca = l == null ? null : new MinhaCobrancaDto(l.Valor, l.Vencimento, l.Status),
+                })
             .ToListAsync(ct);
 
         return linhas.Select(x => new EventoParticipanteDto
         {
             Id = x.Evento.Id,
+            Titulo = x.Evento.Titulo,
+            Descricao = x.Evento.Descricao,
             DataEvento = x.Evento.DataEvento,
             Local = x.Evento.Local,
             Transporte = new TransporteDto(x.Evento.TransporteValor, x.Evento.TransporteEhGratis),
             Alimentacao = new AlimentacaoDto(x.Evento.AlimentacaoIndividual, x.Evento.AlimentacaoValor),
             SeguroObrigatorio = x.Evento.SeguroObrigatorio,
             ValorPorMembro = x.Evento.ValorPorMembro,
-            MinhaCobranca = new MinhaCobrancaDto(x.Valor, x.Vencimento, x.Status),
+            MinhaCobranca = x.Cobranca,
         }).ToList();
     }
 
@@ -156,6 +163,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     Id = eventoId,
                     EventoGrupoId = grupoId,
                     EventoReferenciaId = request.EventoReferenciaId,
+                    Titulo = conteudo.Titulo,
                     Local = conteudo.Local,
                     CriadoPorUsuarioId = usuarioId,
                     CriadoEmUtc = agora,
@@ -163,19 +171,24 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 AplicarConteudo(evento, conteudo);
                 db.Eventos.Add(evento);
 
+                // Valor por membro zero (ex.: reunião de clube): os membros participam, mas nenhum lançamento é gerado.
                 var participantes = new List<EventoMembro>(conteudo.Membros.Count);
-                var lancamentos = new List<Lancamento>(conteudo.Membros.Count);
+                var lancamentos = new List<Lancamento>(conteudo.GeraCobranca ? conteudo.Membros.Count : 0);
                 foreach (var membroId in conteudo.Membros)
                 {
-                    var lancamento = NovoLancamento(evento, membroId, agora);
-                    lancamentos.Add(lancamento);
-                    participantes.Add(NovoParticipante(evento, membroId, lancamento.Id, agora));
+                    var lancamento = conteudo.GeraCobranca ? NovoLancamento(evento, membroId, agora) : null;
+                    if (lancamento is not null)
+                    {
+                        lancamentos.Add(lancamento);
+                    }
+
+                    participantes.Add(NovoParticipante(evento, membroId, lancamento?.Id, agora));
                 }
 
                 db.Lancamentos.AddRange(lancamentos);
                 db.EventosMembros.AddRange(participantes);
                 // Uma notificação por participante deste cadastro, na mesma transação; o lançamento interno não gera outra de débito.
-                db.Notificacoes.AddRange(NotificacoesFabrica.ParaEvento(evento, lancamentos, agora));
+                db.Notificacoes.AddRange(NotificacoesFabrica.ParaEvento(evento, participantes, lancamentos, agora));
                 var operacao = new EventoOperacao
                 {
                     Id = Guid.NewGuid(),
@@ -196,8 +209,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 operacao.RespostaJson = JsonSerializer.Serialize(dto, RespostaJsonOptions);
                 await SalvarAsync(ct);
 
-                logger.LogInformation("Evento {EventoId} (grupo {EventoGrupoId}) criado por {UsuarioId} com {Quantidade} lançamentos de {ValorPorMembro}.",
-                    eventoId, grupoId, usuarioId, lancamentos.Count, evento.ValorPorMembro);
+                logger.LogInformation("Evento {EventoId} (grupo {EventoGrupoId}) criado por {UsuarioId} com {Participantes} participantes e {Quantidade} lançamentos de {ValorPorMembro}.",
+                    eventoId, grupoId, usuarioId, participantes.Count, lancamentos.Count, evento.ValorPorMembro);
                 return new RegistrarEventoResult(dto, true);
             }, ct);
             sinal.Sinalizar();
@@ -331,10 +344,13 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                         "Existe mais de um cadastro ativo neste passeio; data e local não podem ser alterados por um PUT isolado.");
                 }
 
-                if (removidos.Count > 0 && string.IsNullOrWhiteSpace(request.Motivo))
+                // Valor por membro que passa a zero cancela as cobranças em aberto (o lançamento Pago já barrou a mudança acima).
+                var cancelaCobrancas = EventoRegras.GeraCobranca(evento.ValorPorMembro) && !conteudo.GeraCobranca && lancamentos.Count > 0;
+
+                if ((removidos.Count > 0 || cancelaCobrancas) && string.IsNullOrWhiteSpace(request.Motivo))
                 {
                     throw ApiProblemException.Invalid(nameof(UpdateEventoRequest.Motivo),
-                        "motivo é obrigatório (1–255 caracteres) quando a alteração remove participantes.");
+                        "motivo é obrigatório (1–255 caracteres) quando a alteração remove participantes ou zera o valor de um evento com cobranças.");
                 }
 
                 if (adicionados.Count > 0)
@@ -348,11 +364,11 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 evento.AtualizadoEmUtc = agora;
 
                 var removidosIds = removidos.Select(r => r.MembroId).ToHashSet();
-                var descricao = EventoRegras.DescricaoLancamento(conteudo.Local, conteudo.DataEvento);
+                var descricao = EventoRegras.DescricaoLancamento(conteudo.Titulo, conteudo.DataEvento);
                 var hoje = dataCivil.Hoje();
                 foreach (var lancamento in lancamentos)
                 {
-                    if (lancamento.MembroId is { } m && removidosIds.Contains(m))
+                    if (cancelaCobrancas || (lancamento.MembroId is { } m && removidosIds.Contains(m)))
                     {
                         lancamento.Ativo = false;
                         lancamento.DataAtualizacao = agora;
@@ -387,28 +403,54 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     participante.DesativadoEmUtc = agora;
                 }
 
+                var mantidos = participantes.Where(p => p.Ativo).ToList();
                 var novosLancamentos = new List<Lancamento>();
-                foreach (var membroId in adicionados)
+                if (cancelaCobrancas)
                 {
-                    var lancamento = NovoLancamento(evento, membroId, agora);
-                    novosLancamentos.Add(lancamento);
-                    db.Lancamentos.Add(lancamento);
-                    db.EventosMembros.Add(NovoParticipante(evento, membroId, lancamento.Id, agora));
+                    foreach (var participante in mantidos)
+                    {
+                        participante.LancamentoId = null;
+                    }
+                }
+                else if (conteudo.GeraCobranca)
+                {
+                    // Evento que passa a ter valor: quem participava sem cobrança ganha o lançamento pendente agora.
+                    var comCobranca = lancamentos.Where(l => l.Ativo && l.MembroId is not null).Select(l => l.MembroId!.Value).ToHashSet();
+                    foreach (var participante in mantidos.Where(p => !comCobranca.Contains(p.MembroId)))
+                    {
+                        var lancamento = NovoLancamento(evento, participante.MembroId, agora);
+                        novosLancamentos.Add(lancamento);
+                        db.Lancamentos.Add(lancamento);
+                        participante.LancamentoId = lancamento.Id;
+                    }
                 }
 
-                if (removidos.Count > 0)
+                foreach (var membroId in adicionados)
+                {
+                    var lancamento = conteudo.GeraCobranca ? NovoLancamento(evento, membroId, agora) : null;
+                    if (lancamento is not null)
+                    {
+                        novosLancamentos.Add(lancamento);
+                        db.Lancamentos.Add(lancamento);
+                    }
+
+                    db.EventosMembros.Add(NovoParticipante(evento, membroId, lancamento?.Id, agora));
+                }
+
+                if (removidos.Count > 0 || cancelaCobrancas)
                 {
                     await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, request.Motivo!.Trim(), ct);
                 }
 
                 await SalvarAsync(ct);
 
-                logger.LogInformation("Evento {EventoId} atualizado por {UsuarioId}: {Adicionados} adicionados, {Removidos} removidos.",
-                    id, request.UsuarioResponsavelId, adicionados.Count, removidos.Count);
+                logger.LogInformation("Evento {EventoId} atualizado por {UsuarioId}: {Adicionados} adicionados, {Removidos} removidos, " +
+                    "{LancamentosCriados} lançamentos criados, cobranças canceladas: {Canceladas}.",
+                    id, request.UsuarioResponsavelId, adicionados.Count, removidos.Count, novosLancamentos.Count, cancelaCobrancas);
 
                 var ativos = lancamentos.Where(l => l.Ativo).Concat(novosLancamentos).ToList();
                 return EventoMapping.ToDto(evento,
-                    ativos.Select(l => l.MembroId!.Value),
+                    mantidos.Select(p => p.MembroId).Concat(adicionados),
                     ativos.Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)));
             }, ct);
         }
@@ -550,6 +592,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
     private static void AplicarConteudo(Evento evento, EventoNormalizado conteudo)
     {
+        evento.Titulo = conteudo.Titulo;
+        evento.Descricao = conteudo.Descricao;
         evento.DataEvento = conteudo.DataEvento;
         evento.Local = conteudo.Local;
         evento.TransporteEhGratis = conteudo.TransporteEhGratis;
@@ -565,7 +609,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         Id = Guid.NewGuid(),
         MembroId = membroId,
         Finalidade = null,
-        Descricao = EventoRegras.DescricaoLancamento(evento.Local, evento.DataEvento),
+        Descricao = EventoRegras.DescricaoLancamento(evento.Titulo, evento.DataEvento),
         Categoria = CategoriaLancamento.Evento,
         Valor = evento.ValorPorMembro,
         Vencimento = evento.DataEvento,
@@ -576,7 +620,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         EventoId = evento.Id,
     };
 
-    private static EventoMembro NovoParticipante(Evento evento, Guid membroId, Guid lancamentoId, DateTime agora) => new()
+    private static EventoMembro NovoParticipante(Evento evento, Guid membroId, Guid? lancamentoId, DateTime agora) => new()
     {
         Id = Guid.NewGuid(),
         EventoId = evento.Id,
@@ -631,6 +675,8 @@ internal static class EventoMapping
             Id = e.Id,
             EventoGrupoId = e.EventoGrupoId,
             EventoReferenciaId = e.EventoReferenciaId,
+            Titulo = e.Titulo,
+            Descricao = e.Descricao,
             DataEvento = e.DataEvento,
             Local = e.Local,
             Transporte = new TransporteDto(e.TransporteValor, e.TransporteEhGratis),

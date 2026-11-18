@@ -135,19 +135,16 @@ Todas as conversations do PR precisam estar resolvidas antes do merge.
 ## Testes e CI
 
 O CI (`.github/workflows/backend-ci.yml`) roda em todo push e PR para `main` e `develop`, sem
-filtro de caminhos, com três checks obrigatórios:
+filtro de caminhos, com dois checks obrigatórios:
 
 | Check | O que executa |
 |---|---|
 | `build-and-test` | restore, build Release e testes sem dependências externas (Windows) |
-| `sqlserver-integration` | testes `Category=RequiresSqlServer` contra SQL Server 2022 descartável (Linux) |
 | `deploy-scripts` | testes dos scripts de deploy, política dos workflows, cobertura, bootstrap SQL, Compose e Nginx |
 
-Depois dos dois jobs de testes .NET, o job `coverage` publica dois relatórios separados:
-
-- **combinada** (as duas suítes unidas): gate de 100% de linhas e de branches do código próprio, sem tolerância;
-- **unitária** (só `build-and-test`): gate de não regressão contra o baseline próprio, e a lista de linhas e branches
-  que só a integração cobre aparece no resumo do job.
+Os testes de integração (`Category=RequiresSqlServer`) não rodam na pipeline; ficam no repositório para execução local.
+Depois de `build-and-test`, o job `coverage` publica o relatório da cobertura **unitária** e aplica o gate de não
+regressão contra o baseline próprio.
 
 A integração nunca conta para a cobertura unitária. Não baixe um baseline nem adicione exclusões para
 "passar" um PR: a política, o que entra na medição e como atualizar o baseline legitimamente estão em

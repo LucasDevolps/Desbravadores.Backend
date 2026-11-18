@@ -153,7 +153,7 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         var no = JsonNode.Parse(json!)!.AsObject();
         Assert.Equal(original.Versao, (string)no["versao"]!);
         Assert.Equal(Convert.ToBase64String((await Sql<byte[]>("SELECT Versao FROM eventos WHERE Id = @e", ("@e", original.Id)))!), (string)no["versao"]!);
-        var esperados = new[] { "id", "eventoGrupoId", "eventoReferenciaId", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio",
+        var esperados = new[] { "id", "eventoGrupoId", "eventoReferenciaId", "titulo", "descricao", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio",
             "membros", "quantidadeMembros", "valorPorMembro", "total", "ativo", "versao", "lancamentos" };
         Assert.Empty(no.Select(p => p.Key).Except(esperados, StringComparer.OrdinalIgnoreCase));
         Assert.DoesNotContain("senha", json!, StringComparison.OrdinalIgnoreCase);

@@ -196,4 +196,93 @@ public sealed class EventosMigrationTests
         await c3.OpenAsync();
         Assert.Equal(2, await Escalar<int>(c3, "SELECT COUNT(*) FROM eventos_operacoes WHERE RespostaJson IS NULL"));
     }
+
+    private const string MigrationAntesDoTitulo = "20261114142207_AddNotificacoesHistorico";
+    private const string MigrationTitulo = "20261117230835_AddEventosTituloDescricaoSemCobranca";
+
+    [Fact]
+    public async Task AddEventosTituloDescricao_EventosExistentesRecebemOLocalComoTitulo_EDownRecusaParticipanteSemLancamento()
+    {
+        using var factory = new SqlServerApiFactory();
+        var options = new DbContextOptionsBuilder<AlmiranteDbContext>().UseSqlServer(factory.ConnectionString).Options;
+        var (curto, longo, lancamento) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var localLongo = new string('L', 160);
+        Guid usuarioId;
+
+        await using (var db = new AlmiranteDbContext(options))
+        {
+            await db.GetService<IMigrator>().MigrateAsync(MigrationAntesDoTitulo);
+            var cargo = new Cargo { Id = Guid.NewGuid(), Nome = "Desbravador", Descricao = "Membro.", CriadoPor = "Teste", Role = "DS" };
+            await TestHelpers.InserirCargosLegadosAsync(db, cargo);
+            var usuario = new Usuario { Id = Guid.NewGuid(), Nome = "Legado", Email = "legado-titulo@local.dev", EmailNormalizado = "LEGADO-TITULO@LOCAL.DEV", SenhaHash = "x", CargoId = cargo.Id };
+            await TestHelpers.InserirUsuarioLegadoAsync(db, usuario);
+            usuarioId = usuario.Id;
+        }
+
+        await using (var c = new SqlConnection(factory.ConnectionString))
+        {
+            await c.OpenAsync();
+            await Exec(c, """
+                INSERT INTO eventos (Id, EventoGrupoId, DataEvento, [Local], TransporteEhGratis, TransporteValor, AlimentacaoIndividual, AlimentacaoValor, SeguroObrigatorio, ValorPorMembro, Ativo, CriadoPorUsuarioId, CriadoEmUtc)
+                VALUES (@c, @c, '2026-10-18', N'Parque Ibirapuera', 0, 10, 0, 8, 2, 20, 1, @u, SYSUTCDATETIME()),
+                       (@l, @l, '2026-10-19', @local, 0, 10, 0, 8, 2, 20, 1, @u, SYSUTCDATETIME());
+                INSERT INTO Lancamentos (Id, MembroId, Finalidade, Descricao, Categoria, Valor, Vencimento, Status, TipoFluxo, DataCriacao, Ativo, EventoId)
+                VALUES (@lanc, @u, NULL, N'Evento - Parque Ibirapuera - 18/10/2026', 0, 20, '2026-10-18', 0, 0, SYSUTCDATETIME(), 1, @c);
+                INSERT INTO evento_membros (Id, EventoId, EventoGrupoId, MembroId, LancamentoId, Ativo, CriadoEmUtc)
+                VALUES (NEWID(), @c, @c, @u, @lanc, 1, SYSUTCDATETIME());
+                """, ("@c", curto), ("@l", longo), ("@u", usuarioId), ("@local", localLongo), ("@lanc", lancamento));
+        }
+        SqlConnection.ClearAllPools();
+
+        await using (var db = new AlmiranteDbContext(options))
+        {
+            await db.GetService<IMigrator>().MigrateAsync(MigrationTitulo);
+        }
+
+        await using (var c = new SqlConnection(factory.ConnectionString))
+        {
+            await c.OpenAsync();
+            Assert.Equal("Parque Ibirapuera", await Escalar<string>(c, "SELECT Titulo FROM eventos WHERE Id = @id", ("@id", curto)));
+            Assert.Equal(new string('L', 150), await Escalar<string>(c, "SELECT Titulo FROM eventos WHERE Id = @id", ("@id", longo)));
+            Assert.Equal(localLongo, await Escalar<string>(c, "SELECT [Local] FROM eventos WHERE Id = @id", ("@id", longo)));
+            Assert.Equal(0, await Escalar<int>(c, "SELECT COUNT(*) FROM eventos WHERE Descricao IS NOT NULL"));
+            Assert.Equal("NO", await Escalar<string>(c, "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'eventos' AND COLUMN_NAME = 'Titulo'"));
+            Assert.Equal("YES", await Escalar<string>(c, "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'evento_membros' AND COLUMN_NAME = 'LancamentoId'"));
+            Assert.Equal(lancamento, await Escalar<Guid>(c, "SELECT LancamentoId FROM evento_membros WHERE EventoId = @id", ("@id", curto)));
+            Assert.Equal(0, await Escalar<int>(c, "SELECT COUNT(*) FROM historico_eventos"));
+
+            // Participante sem cobrança (evento sem valor a pagar) impede voltar ao schema em que o lançamento era obrigatório.
+            await Exec(c, """
+                INSERT INTO evento_membros (Id, EventoId, EventoGrupoId, MembroId, LancamentoId, Ativo, CriadoEmUtc)
+                VALUES (NEWID(), @l, @l, @u, NULL, 1, SYSUTCDATETIME());
+                """, ("@l", longo), ("@u", usuarioId));
+        }
+        SqlConnection.ClearAllPools();
+
+        await using (var db = new AlmiranteDbContext(options))
+        {
+            var erro = await Assert.ThrowsAsync<SqlException>(() => db.GetService<IMigrator>().MigrateAsync(MigrationAntesDoTitulo));
+            Assert.Equal(50196, erro.Number);
+        }
+
+        await using (var c = new SqlConnection(factory.ConnectionString))
+        {
+            await c.OpenAsync();
+            Assert.Equal(1, await Escalar<int>(c, "SELECT COUNT(*) FROM __EFMigrationsHistory WHERE MigrationId = @m", ("@m", MigrationTitulo)));
+            Assert.Equal(1, await Escalar<int>(c, "SELECT COUNT(*) FROM evento_membros WHERE LancamentoId IS NULL"));
+            await Exec(c, "UPDATE evento_membros SET LancamentoId = @lanc WHERE LancamentoId IS NULL", ("@lanc", lancamento));
+        }
+        SqlConnection.ClearAllPools();
+
+        await using (var db = new AlmiranteDbContext(options))
+        {
+            await db.GetService<IMigrator>().MigrateAsync(MigrationAntesDoTitulo);
+        }
+
+        await using var c2 = new SqlConnection(factory.ConnectionString);
+        await c2.OpenAsync();
+        Assert.Equal(0, await Escalar<int>(c2, "SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID('dbo.eventos') AND name IN (N'Titulo', N'Descricao')"));
+        Assert.Equal("NO", await Escalar<string>(c2, "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'evento_membros' AND COLUMN_NAME = 'LancamentoId'"));
+        Assert.Equal(1, await Escalar<int>(c2, "SELECT COUNT(*) FROM sys.triggers WHERE name = 'TR_eventos_AuditoriaExclusaoLogica'"));
+    }
 }

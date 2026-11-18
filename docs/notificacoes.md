@@ -23,7 +23,7 @@ seguir. O frontend ainda não foi implementado nem validado.
 |---|---|---|---|
 | `POST /api/Lancamentos/Registrar` individual, `tipoFluxo: Entrada` | o `membroId` do lançamento | `DebitoCadastrado` | `lancamentoId` |
 | `POST /api/Lancamentos/Registrar` com `aplicarATodosOsMembros: true`, `Entrada` | cada usuário que recebeu um lançamento na operação (a regra atual não mudou: todos os usuários cadastrados), cada um com a própria notificação | `DebitoCadastrado` | `lancamentoId` do lançamento daquele usuário |
-| `POST /api/Eventos` (novo cadastro) | cada participante (`membros`) daquele cadastro, uma vez | `EventoCadastrado` | `eventoId` e `lancamentoId` |
+| `POST /api/Eventos` (novo cadastro) | cada participante (`membros`) daquele cadastro, uma vez | `EventoCadastrado` | `eventoId` e `lancamentoId` (nulo em evento sem valor a pagar, que não gera lançamento) |
 | Rotina de vencimento (issue #184): o lançamento passa de `Pendente` a `Atrasado` | o `membroId` do débito (`Entrada` com membro), uma vez por vencimento | `DebitoAtrasado` | `lancamentoId` (e `eventoId` no lançamento de evento); `ChaveOrigem` = `atraso:{lancamentoId}:{vencimento yyyyMMdd}` |
 | `POST /api/Usuarios/{id}/alterar-senha` e `POST /api/Auth/recuperacao-senha/confirmar` (issue #159) | só o titular da senha alterada, quando quem agiu foi outra pessoa (a troca própria não notifica) | `SenhaAlterada` | nenhuma (`ChaveOrigem` = `senha:{id da auditoria}`) — ver [`senhas.md`](senhas.md#notificação-interna) |
 
@@ -32,8 +32,10 @@ Regras:
 - **Débito** é um lançamento de `Entrada` (o clube recebe) atribuído a um membro, como mensalidades e
   as cobranças de evento. `Saida` é despesa do clube (nome legado `Despesa`): mesmo com membro, não é
   cobrança e não gera notificação.
-- O evento gera uma única notificação por participante, já com data, local, valor e vencimento do
-  lançamento do evento. O lançamento interno do evento não gera uma segunda notificação de débito.
+- O evento gera uma única notificação por participante, com título, local e data do evento e o valor e
+  o vencimento do lançamento dele. Em evento sem valor a pagar (valor por membro zero) não há lançamento:
+  a mensagem diz "Não há valor a pagar por este evento" e `lancamentoId` fica nulo. O lançamento interno do
+  evento não gera uma segunda notificação de débito.
   Participantes de outros cadastros do mesmo passeio não são notificados.
 - A notificação é gravada na **mesma transação** do cadastro. Se o cadastro falhar ou for desfeito,
   não existe notificação. Ela só fica visível e só é anunciada depois do commit.
@@ -81,8 +83,8 @@ Autenticação: `Authorization: Bearer <access token>`, como no resto da API. As
     {
       "id": "6f1c2a9e-3b0d-4f7a-9c1e-2d4b5a6c7e8f",
       "tipo": "EventoCadastrado",
-      "titulo": "Novo evento: Parque Ibirapuera",
-      "mensagem": "Você está na lista de participantes do evento em Parque Ibirapuera, no dia 15/11/2026. Valor a pagar: R$ 20,00, com vencimento em 15/11/2026.",
+      "titulo": "Novo evento: Passeio no parque",
+      "mensagem": "Você está na lista de participantes do evento Passeio no parque, em Parque Ibirapuera, no dia 15/11/2026. Valor a pagar: R$ 20,00, com vencimento em 15/11/2026.",
       "criadaEmUtc": "2026-10-20T14:03:11.5170000Z",
       "lidaEmUtc": null,
       "eventoId": "0b7e5d1c-8a2f-4c3e-9d6b-1a2b3c4d5e6f",
@@ -99,7 +101,8 @@ Sem pendências: `{ "items": [], "naoLidas": 0, "pageSize": 20, "proximoCursor":
 
 `eventoId` e `lancamentoId` são metadados e não dão acesso por si. O destinatário consulta o evento em
 `GET /api/Me/Eventos/{eventoId}` (só enquanto participa dele; evento excluído, alheio ou do qual foi removido
-devolve `404`), com data, local, composição do valor e a própria cobrança. `/api/Eventos` e `/api/Lancamentos`
+devolve `404`), com título, descrição, data, local, composição do valor e a própria cobrança (`minhaCobranca`,
+nula em evento sem valor a pagar). `/api/Eventos` e `/api/Lancamentos`
 continuam restritos às policies de gestão. O resumo também está em `titulo` e `mensagem`.
 
 ### Histórico
@@ -134,7 +137,7 @@ com `lidaEmUtc` preenchida, e sai de `/Pendentes`.
     {
       "id": "6f1c2a9e-3b0d-4f7a-9c1e-2d4b5a6c7e8f",
       "tipo": "EventoCadastrado",
-      "titulo": "Novo evento: Parque Ibirapuera",
+      "titulo": "Novo evento: Passeio no parque",
       "mensagem": "…",
       "criadaEmUtc": "2026-10-20T14:03:11.5170000Z",
       "lidaEmUtc": "2026-10-20T14:05:42.0110000Z",
@@ -178,7 +181,7 @@ Histórico vazio: `{ "items": [], "filtro": "Todas", "naoLidas": 0, "pageSize": 
   "notificacao": {
     "id": "6f1c2a9e-3b0d-4f7a-9c1e-2d4b5a6c7e8f",
     "tipo": "EventoCadastrado",
-    "titulo": "Novo evento: Parque Ibirapuera",
+    "titulo": "Novo evento: Passeio no parque",
     "mensagem": "…",
     "criadaEmUtc": "2026-10-20T14:03:11.5170000Z",
     "lidaEmUtc": "2026-10-20T14:05:42.0110000Z",

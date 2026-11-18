@@ -26,14 +26,21 @@ public static class NotificacoesFabrica
         lancamentos.Where(EhDebito).Select(l => DebitoCadastrado(l, agoraUtc)).ToList();
 
     /// <summary>
-    /// Destinatários de um cadastro de evento: os participantes deste cadastro, uma notificação cada, a partir do lançamento
-    /// gerado para ele. Os lançamentos do evento não passam por <see cref="ParaDebitos"/>.
+    /// Destinatários de um cadastro de evento: os participantes deste cadastro, uma notificação cada, com o lançamento gerado
+    /// para ele quando o evento tem valor a pagar. Os lançamentos do evento não passam por <see cref="ParaDebitos"/>.
     /// </summary>
-    public static List<Notificacao> ParaEvento(Evento evento, IEnumerable<Lancamento> lancamentosDoCadastro, DateTime agoraUtc) =>
-        lancamentosDoCadastro.Where(l => l.MembroId is not null && l.EventoId == evento.Id)
+    public static List<Notificacao> ParaEvento(Evento evento, IEnumerable<EventoMembro> participantes,
+        IEnumerable<Lancamento> lancamentosDoCadastro, DateTime agoraUtc)
+    {
+        var lancamentos = lancamentosDoCadastro.Where(l => l.MembroId is not null && l.EventoId == evento.Id)
             .GroupBy(l => l.MembroId!.Value)
-            .Select(g => EventoCadastrado(evento, g.First(), agoraUtc))
+            .ToDictionary(g => g.Key, g => g.First());
+        return participantes.Where(p => p.EventoId == evento.Id)
+            .Select(p => p.MembroId)
+            .Distinct()
+            .Select(membroId => EventoCadastrado(evento, membroId, lancamentos.GetValueOrDefault(membroId), agoraUtc))
             .ToList();
+    }
 
     public static string ChaveDebito(Guid lancamentoId) => $"lancamento:{lancamentoId:N}";
 
@@ -49,16 +56,19 @@ public static class NotificacoesFabrica
             eventoId: null, lancamento.Id);
     }
 
-    /// <summary>Uma notificação por participante, já com o valor do lançamento do evento (não há notificação de débito à parte).</summary>
-    public static Notificacao EventoCadastrado(Evento evento, Lancamento lancamento, DateTime agoraUtc)
+    /// <summary>
+    /// Uma notificação por participante, já com o valor do lançamento do evento (não há notificação de débito à parte). Sem
+    /// lançamento (evento sem valor a pagar), a mensagem informa que não há valor a pagar.
+    /// </summary>
+    public static Notificacao EventoCadastrado(Evento evento, Guid membroId, Lancamento? lancamento, DateTime agoraUtc)
     {
-        var valor = lancamento.Valor > 0
+        var valor = lancamento is { Valor: > 0 }
             ? $" Valor a pagar: {Moeda(lancamento.Valor)}, com vencimento em {Data(lancamento.Vencimento)}."
             : " Não há valor a pagar por este evento.";
-        return Nova(lancamento.MembroId!.Value, TipoNotificacao.EventoCadastrado, ChaveEvento(evento.Id), agoraUtc,
-            $"Novo evento: {evento.Local}",
-            $"Você está na lista de participantes do evento em {evento.Local}, no dia {Data(evento.DataEvento)}.{valor}",
-            evento.Id, lancamento.Id);
+        return Nova(membroId, TipoNotificacao.EventoCadastrado, ChaveEvento(evento.Id), agoraUtc,
+            $"Novo evento: {evento.Titulo}",
+            $"Você está na lista de participantes do evento {evento.Titulo}, em {evento.Local}, no dia {Data(evento.DataEvento)}.{valor}",
+            evento.Id, lancamento?.Id);
     }
 
     /// <summary>A chave inclui o vencimento: um débito prorrogado que volta a vencer gera um aviso novo, e o mesmo atraso nunca dois.</summary>

@@ -105,6 +105,8 @@ public sealed class EventosOperationFilter : IOperationFilter
     {
         var corpo = new JsonObject
         {
+            ["titulo"] = "Passeio no parque",
+            ["descricao"] = "Saída da sede às 8h. Levar lanche e garrafa de água.",
             ["dataEvento"] = "2026-10-18",
             ["local"] = "Parque Ibirapuera",
             ["transporte"] = new JsonObject { ["valor"] = 10.00m, ["ehGratis"] = false },
@@ -119,7 +121,7 @@ public sealed class EventosOperationFilter : IOperationFilter
         else
         {
             corpo["versao"] = "AAAAAAAAB9E=";
-            corpo["motivo"] = "Obrigatório apenas quando a alteração remove participantes";
+            corpo["motivo"] = "Obrigatório apenas quando a alteração remove participantes ou zera o valor de um evento com cobranças";
         }
 
         return corpo;

@@ -5,6 +5,11 @@
 Accepted (registro retroativo em 2026-09-23). O job `sqlserver-integration` foi introduzido no
 PR #59 (commit `6a25011`).
 
+**Atualização (2026-11-17):** o job `sqlserver-integration` foi removido da pipeline e deixou de ser check obrigatório nos
+rulesets de `main` e `develop`, porque a suíte de integração ficou lenta demais para o ciclo de PR. Os testes
+`Category=RequiresSqlServer` continuam no repositório e passam a ser executados apenas localmente; o CI aplica só o gate da
+cobertura unitária.
+
 ## Contexto
 
 Parte importante do comportamento do sistema depende do SQL Server e não é reproduzida pelo provider

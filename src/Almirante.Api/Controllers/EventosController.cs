@@ -48,10 +48,12 @@ public sealed class EventosController(ISender mediator) : ControllerBase
 
     [HttpPost]
     [RequerPermissao(Permissoes.EventosCriar)]
-    [EndpointSummary("Cadastra um grupo de cobrança de evento e gera um lançamento pendente por membro.")]
+    [EndpointSummary("Cadastra um grupo de cobrança de evento e, quando há valor a pagar, gera um lançamento pendente por membro.")]
     [EndpointDescription("Exige o header Idempotency-Key (UUID). O campo membros aceita um GUID OU um array de GUIDs (mesma operação). " +
         "A data mínima é o primeiro dia do mês atual (referência UTC do servidor, não a data de hoje). " +
+        "titulo é obrigatório (1–150) e descricao é opcional (até 2000, aceita quebras de linha). " +
         "Cada membro recebe um lançamento com valorPorMembro = transporte efetivo + alimentação efetiva + seguro; total = valorPorMembro × membros. " +
+        "Com valorPorMembro zero (ex.: reunião de clube), os membros participam e são notificados, mas nenhum lançamento é gerado (lancamentos: []). " +
         "201: criado. 200: reenvio idempotente (mesma chave e mesma operação normalizada) — devolve o RESULTADO ORIGINAL do POST, com a versao original, " +
         "não o estado atual (consulte o GET antes de editar; um PUT com a versao original recebe 409 se o cadastro mudou). O reenvio vale mesmo depois da virada do mês; " +
         "a data mínima só se aplica a operações novas. 409: chave com dados diferentes, evento já excluído, membro já em outro grupo ativo do mesmo passeio, " +
@@ -86,7 +88,10 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [EndpointSummary("Atualiza um cadastro de evento e sincroniza participantes e lançamentos.")]
     [EndpointDescription("Exige versao (rowversion). Sem lançamento Pago, atualiza mantidos, cria novos e desativa removidos " +
         "(motivo obrigatório na remoção); um lançamento Atrasado acompanha o novo valor e a nova data e volta a Pendente se a data ainda não passou. " +
-        "Com lançamento Pago, qualquer mudança na composição de custos (transporte, ehGratis, alimentação, individual, seguro — não só o total), participantes ou data retorna 409; o local ainda pode ser corrigido. " +
+        "Valor por membro que passa de zero a positivo cria o lançamento pendente de cada participante; de positivo a zero desativa as cobranças " +
+        "(motivo obrigatório) e mantém os participantes. " +
+        "Com lançamento Pago, qualquer mudança na composição de custos (transporte, ehGratis, alimentação, individual, seguro — não só o total), participantes ou data retorna 409; " +
+        "local, título e descrição ainda podem ser corrigidos (a descrição dos lançamentos acompanha o título). " +
         "membros aceita GUID ou GUID[] como no POST. Data e local não mudam quando o passeio tem mais de um cadastro ativo (409).")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]

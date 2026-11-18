@@ -1184,6 +1184,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateOnly>("DataEvento")
                         .HasColumnType("date");
 
+                    b.Property<string>("Descricao")
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
+
                     b.Property<Guid>("EventoGrupoId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1198,6 +1203,12 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<decimal>("SeguroObrigatorio")
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Titulo")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(150)");
 
                     b.Property<bool>("TransporteEhGratis")
                         .HasColumnType("bit");
@@ -1262,7 +1273,7 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid>("EventoId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid>("LancamentoId")
+                    b.Property<Guid?>("LancamentoId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid>("MembroId")
@@ -1468,6 +1479,11 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<DateOnly>("DataEvento")
                         .HasColumnType("date");
 
+                    b.Property<string>("Descricao")
+                        .HasMaxLength(2000)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2000)");
+
                     b.Property<Guid>("EventoGrupoId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1506,6 +1522,11 @@ namespace Almirante.Api.Data.Migrations
 
                     b.Property<decimal>("SeguroObrigatorio")
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Titulo")
+                        .HasMaxLength(150)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(150)");
 
                     b.Property<decimal>("Total")
                         .HasColumnType("decimal(18,2)");
@@ -4060,8 +4081,7 @@ namespace Almirante.Api.Data.Migrations
                     b.HasOne("Almirante.Api.Entities.Lancamento", null)
                         .WithMany()
                         .HasForeignKey("LancamentoId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Almirante.Api.Entities.Usuario", null)
                         .WithMany()

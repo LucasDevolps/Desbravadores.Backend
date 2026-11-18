@@ -71,7 +71,7 @@ public sealed class DashboardTests : IAsyncLifetime
             var grupo = grupoId ?? id;
             var evento = new Evento
             {
-                Id = id, EventoGrupoId = grupo, EventoReferenciaId = grupoId, DataEvento = data, Local = local, Ativo = ativo,
+                Id = id, EventoGrupoId = grupo, EventoReferenciaId = grupoId, DataEvento = data, Titulo = local, Local = local, Ativo = ativo,
                 CriadoPorUsuarioId = _membroId, CriadoEmUtc = DateTime.UtcNow,
             };
             for (var i = 0; i < participantes + participantesInativos; i++)

@@ -62,7 +62,9 @@ public sealed class EventosParticipanteSqlServerTests(EventosSqlFixture fx) : IC
         Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
         var texto = await resposta.Content.ReadAsStringAsync();
         var json = JsonNode.Parse(texto)!.AsObject();
-        Assert.Equal(["id", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio", "valorPorMembro", "minhaCobranca"], json.Select(p => p.Key));
+        Assert.Equal(["id", "titulo", "descricao", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio", "valorPorMembro", "minhaCobranca"],
+            json.Select(p => p.Key));
+        Assert.Equal(("Passeio no parque", (string?)null), ((string)json["titulo"]!, (string?)json["descricao"]));
         Assert.Equal((evento.Id, evento.DataEvento.ToString("yyyy-MM-dd"), "Parque Ibirapuera", 20m, 10m, 8m, 2m),
             ((Guid)json["id"]!, (string)json["dataEvento"]!, (string)json["local"]!, (decimal)json["valorPorMembro"]!,
              (decimal)json["transporte"]!["valor"]!, (decimal)json["alimentacao"]!["valor"]!, (decimal)json["seguroObrigatorio"]!));
@@ -90,6 +92,23 @@ public sealed class EventosParticipanteSqlServerTests(EventosSqlFixture fx) : IC
         Assert.Equal((0, 0), ((await PendentesAsync(participante)).Items.Count, (await PendentesAsync(participante)).NaoLidas));
         Assert.NotNull(await TestHelpers.WithDbAsync(Factory, db => db.Notificacoes.Where(n => n.Id == notificacao.Id).Select(n => n.LidaEmUtc).SingleAsync()));
         Assert.Equal(HttpStatusCode.OK, (await participante.GetAsync($"/api/Me/Eventos/{notificacao.EventoId}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EventoSemValorAPagar_ParticipanteOVeEmMeusEventos_SemCobranca()
+    {
+        var (secretario, _) = await UsuarioAsync("SEC");
+        var (participante, participanteId) = await UsuarioAsync("DS");
+        var corpo = EventosTestKit.Corpo(participanteId, transporte: 0m, alimentacao: 0m, seguro: 0m, titulo: "Reunião de clube", descricao: "Na sede");
+        var criado = await EventosTestKit.PostAsync(secretario, corpo);
+        Assert.True(criado.StatusCode == HttpStatusCode.Created, await criado.Content.ReadAsStringAsync());
+        var evento = await EventosTestKit.LerAsync(criado);
+
+        Assert.Equal([evento.Id], await MeusEventosAsync(participante));
+        var visto = await JsonAsync(await participante.GetAsync($"/api/Me/Eventos/{evento.Id}"));
+        Assert.Equal(("Reunião de clube", "Na sede", 0m), ((string)visto["titulo"]!, (string)visto["descricao"]!, (decimal)visto["valorPorMembro"]!));
+        Assert.True(visto.ContainsKey("minhaCobranca"));
+        Assert.Null(visto["minhaCobranca"]);
     }
 
     [Fact]

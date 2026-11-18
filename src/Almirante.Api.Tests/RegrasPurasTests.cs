@@ -119,7 +119,7 @@ public sealed class RegrasPurasTests
     [Fact]
     public void NotificacaoDeEvento_SoParaLancamentosDoCadastroComMembro_EValorNegativoComSinal()
     {
-        var evento = new Evento { Id = Guid.NewGuid(), EventoGrupoId = Guid.NewGuid(), Local = "Parque", DataEvento = new DateOnly(2026, 11, 10) };
+        var evento = new Evento { Id = Guid.NewGuid(), EventoGrupoId = Guid.NewGuid(), Titulo = "Passeio", Local = "Parque", DataEvento = new DateOnly(2026, 11, 10) };
         Lancamento Lancamento(Guid? membro, Guid? eventoId) => new()
         {
             Id = Guid.NewGuid(), MembroId = membro, EventoId = eventoId, Finalidade = null, Descricao = "x", Categoria = CategoriaLancamento.Evento,
@@ -127,7 +127,8 @@ public sealed class RegrasPurasTests
         };
         var membro = Guid.NewGuid();
 
-        var notificacoes = NotificacoesFabrica.ParaEvento(evento,
+        var participante = new EventoMembro { Id = Guid.NewGuid(), EventoId = evento.Id, EventoGrupoId = evento.EventoGrupoId, MembroId = membro };
+        var notificacoes = NotificacoesFabrica.ParaEvento(evento, [participante],
             [Lancamento(membro, evento.Id), Lancamento(null, evento.Id), Lancamento(Guid.NewGuid(), Guid.NewGuid())], DateTime.UtcNow);
 
         Assert.Equal(membro, Assert.Single(notificacoes).DestinatarioId);

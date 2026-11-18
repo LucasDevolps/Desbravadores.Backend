@@ -25,9 +25,9 @@ public sealed class TextoVarcharValidadoresUnitTests
         TipoFluxo = TipoFluxoLancamento.Entrada, Valor = 10m, Vencimento = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(1), IdempotencyKey = chave,
     };
 
-    private static RegistrarEventoRequest Evento(string local) => new()
+    private static RegistrarEventoRequest Evento(string local, string titulo = "Passeio", string? descricao = null) => new()
     {
-        DataEvento = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(10), Local = local,
+        Titulo = titulo, Descricao = descricao, DataEvento = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(10), Local = local,
         Transporte = new TransporteRequest { Valor = 10m, EhGratis = false }, Alimentacao = new AlimentacaoRequest { Individual = false, Valor = 5m },
         SeguroObrigatorio = 1m, Membros = [Guid.NewGuid()], IdempotencyKey = Guid.NewGuid().ToString(),
     };
@@ -39,6 +39,7 @@ public sealed class TextoVarcharValidadoresUnitTests
         Assert.False(Recusa(new UpdateLancamentoRequestValidator(TimeProvider.System), new UpdateLancamentoRequest { Descricao = Acentuado }, "Descricao"));
         Assert.True(new DeleteLancamentoRequestValidator().Validate(new DeleteLancamentoRequest { Motivo = Acentuado }).IsValid);
         Assert.True(new RegistrarEventoRequestValidator().Validate(Evento(Acentuado)).IsValid);
+        Assert.True(new RegistrarEventoRequestValidator().Validate(Evento("Parque", titulo: Acentuado, descricao: $"{Acentuado}\r\n{Acentuado}")).IsValid);
         Assert.False(Recusa(new UpdateEventoRequestValidator(), new UpdateEventoRequest { Local = Acentuado, Motivo = Acentuado }, "Motivo"));
         Assert.False(Recusa(new DeleteEventoRequestValidator(), new DeleteEventoRequest { Motivo = Acentuado }, "Motivo"));
     }
@@ -52,6 +53,9 @@ public sealed class TextoVarcharValidadoresUnitTests
         Assert.True(Recusa(new UpdateLancamentoRequestValidator(TimeProvider.System), new UpdateLancamentoRequest { Descricao = texto }, "Descricao"));
         Assert.True(Recusa(new DeleteLancamentoRequestValidator(), new DeleteLancamentoRequest { Motivo = texto }, "Motivo"));
         Assert.True(Recusa(new RegistrarEventoRequestValidator(), Evento(texto), "Local"));
+        Assert.True(Recusa(new RegistrarEventoRequestValidator(), Evento("Parque", titulo: texto), "Titulo"));
+        Assert.True(Recusa(new RegistrarEventoRequestValidator(), Evento("Parque", descricao: texto), "Descricao"));
+        Assert.True(Recusa(new UpdateEventoRequestValidator(), new UpdateEventoRequest { Titulo = texto }, "Titulo"));
         Assert.True(Recusa(new UpdateEventoRequestValidator(), new UpdateEventoRequest { Local = texto }, "Local"));
         Assert.True(Recusa(new UpdateEventoRequestValidator(), new UpdateEventoRequest { Local = "Parque", Motivo = texto }, "Motivo"));
         Assert.True(Recusa(new DeleteEventoRequestValidator(), new DeleteEventoRequest { Motivo = texto }, "Motivo"));

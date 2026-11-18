@@ -1,6 +1,10 @@
 # Cobertura de testes e quality gate
 
-O CI mede a cobertura do backend em todo push e PR para `main` e `develop`, publica os relatórios e aplica dois gates
+> **Atualização (2026-11-17):** os testes de integração (`Category=RequiresSqlServer`) saíram da pipeline. O CI agora mede e
+> aplica só o gate da **cobertura unitária**; a cobertura combinada e o gate de 100% descritos abaixo valem apenas quando a suíte
+> de integração é executada localmente.
+
+O CI mede a cobertura do backend em todo push e PR para `main` e `develop`, publica os relatórios e aplicava dois gates
 (issues #67 e #160):
 
 - **cobertura combinada** (as duas suítes juntas): **100% de linhas e de branches** do código próprio medido, sem tolerância;

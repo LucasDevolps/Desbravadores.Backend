@@ -49,18 +49,22 @@ public sealed class RegrasPurasBordasTests
     }
 
     [Fact]
-    public void NotificacoesDoEvento_SoParaLancamentosComMembroDesteEvento()
+    public void NotificacoesDoEvento_SoParaParticipantesDesteEvento_ComOLancamentoDeles()
     {
-        var evento = new Evento { Id = Guid.NewGuid(), Local = "Parque", DataEvento = new DateOnly(2026, 11, 7), ValorPorMembro = 30m };
+        var evento = new Evento { Id = Guid.NewGuid(), Titulo = "Passeio", Local = "Parque", DataEvento = new DateOnly(2026, 11, 7), ValorPorMembro = 30m };
         var membro = Guid.NewGuid();
         Lancamento Lancamento(Guid? membroId, Guid? eventoId) =>
             new() { Id = Guid.NewGuid(), MembroId = membroId, EventoId = eventoId, Categoria = CategoriaLancamento.Evento, Valor = 30m };
+        EventoMembro Participante(Guid eventoId, Guid membroId) => new() { Id = Guid.NewGuid(), EventoId = eventoId, MembroId = membroId };
+        var doMembro = Lancamento(membro, evento.Id);
 
         var notificacoes = NotificacoesFabrica.ParaEvento(evento,
-            [Lancamento(membro, evento.Id), Lancamento(null, evento.Id), Lancamento(Guid.NewGuid(), Guid.NewGuid()), Lancamento(Guid.NewGuid(), null)],
+            [Participante(evento.Id, membro), Participante(Guid.NewGuid(), Guid.NewGuid())],
+            [doMembro, Lancamento(null, evento.Id), Lancamento(Guid.NewGuid(), Guid.NewGuid()), Lancamento(Guid.NewGuid(), null)],
             DateTime.UtcNow);
 
-        Assert.Equal(membro, Assert.Single(notificacoes).DestinatarioId);
+        var notificacao = Assert.Single(notificacoes);
+        Assert.Equal((membro, doMembro.Id), (notificacao.DestinatarioId, notificacao.LancamentoId!.Value));
     }
 
     [Fact]

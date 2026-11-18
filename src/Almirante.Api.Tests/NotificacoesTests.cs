@@ -396,12 +396,21 @@ public sealed class NotificacoesTests(AlmiranteApiFactory factory) : IClassFixtu
         Assert.False(NotificacoesFabrica.EhDebito(new Lancamento { Categoria = CategoriaLancamento.Clube, MembroId = Guid.NewGuid(), TipoFluxo = TipoFluxoLancamento.Saida }));
         Assert.False(NotificacoesFabrica.EhDebito(new Lancamento { Categoria = CategoriaLancamento.Clube, MembroId = null, TipoFluxo = TipoFluxoLancamento.Entrada }));
 
-        var evento = new Evento { Id = Guid.NewGuid(), Local = new string('L', 200), DataEvento = new DateOnly(2026, 12, 5) };
-        lancamento.Valor = 0m;
-        var gratis = NotificacoesFabrica.EventoCadastrado(evento, lancamento, DateTime.UtcNow);
-        Assert.Equal(NotificacoesFabrica.TituloMaximo, gratis.Titulo.Length);
-        Assert.EndsWith("Não há valor a pagar por este evento.", gratis.Mensagem);
-        Assert.Equal((TipoNotificacao.EventoCadastrado, evento.Id, lancamento.Id), (gratis.Tipo, gratis.EventoId!.Value, gratis.LancamentoId!.Value));
+        var evento = new Evento
+        {
+            Id = Guid.NewGuid(), Titulo = new string('T', 150), Local = new string('L', 200), DataEvento = new DateOnly(2026, 12, 5),
+        };
+        var membro = Guid.NewGuid();
+        var gratis = NotificacoesFabrica.EventoCadastrado(evento, membro, lancamento: null, DateTime.UtcNow);
+        // Título máximo do evento (150) cabe inteiro no título da notificação (200), sem reticências.
+        Assert.Equal($"Novo evento: {evento.Titulo}", gratis.Titulo);
+        Assert.True(gratis.Titulo.Length <= NotificacoesFabrica.TituloMaximo);
+        Assert.Equal((TipoNotificacao.EventoCadastrado, evento.Id, membro, (Guid?)null),
+            (gratis.Tipo, gratis.EventoId!.Value, gratis.DestinatarioId, gratis.LancamentoId));
+
+        evento.Titulo = "Reunião de clube";
+        var semValor = NotificacoesFabrica.EventoCadastrado(evento, membro, lancamento: null, DateTime.UtcNow);
+        Assert.EndsWith("Não há valor a pagar por este evento.", semValor.Mensagem);
     }
 
     [Fact]
