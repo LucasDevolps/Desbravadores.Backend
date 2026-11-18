@@ -45,7 +45,8 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         _factory = EventosSqlSupport.FabricaComRetry(o => o.AddInterceptors(_falha), s => s.AddScoped(sp => new EventosService(
             sp.GetRequiredService<AlmiranteDbContext>(), _clock, sp.GetRequiredService<ILogger<EventosService>>(), sp.GetRequiredService<EventosLockOptions>(),
             sp.GetRequiredService<SinalAvisosNotificacoes>(),
-            new DataCivil(_clock, sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Almirante.Api.Options.ClubeOptions>>()))));
+            new DataCivil(_clock, sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Almirante.Api.Options.ClubeOptions>>()),
+            sp.GetRequiredService<Microsoft.Extensions.Localization.IStringLocalizer<Almirante.Api.Resources.NotificacoesTextos>>())));
         _client = await TestHelpers.CreateAuthenticatedClientAsync(_factory);
         (_outroUsuario, _outroUsuarioId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, "TES");
         (_semPermissao, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, "DS");
@@ -154,7 +155,7 @@ public sealed class EventosReplaySqlTests : IAsyncLifetime
         Assert.Equal(original.Versao, (string)no["versao"]!);
         Assert.Equal(Convert.ToBase64String((await Sql<byte[]>("SELECT Versao FROM eventos WHERE Id = @e", ("@e", original.Id)))!), (string)no["versao"]!);
         var esperados = new[] { "id", "eventoGrupoId", "eventoReferenciaId", "titulo", "descricao", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio",
-            "membros", "quantidadeMembros", "valorPorMembro", "total", "ativo", "versao", "lancamentos" };
+            "membros", "quantidadeMembros", "valorPorMembro", "total", "ativo", "versao", "lancamentos", "devolucoes" };
         Assert.Empty(no.Select(p => p.Key).Except(esperados, StringComparer.OrdinalIgnoreCase));
         Assert.DoesNotContain("senha", json!, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("token", json!, StringComparison.OrdinalIgnoreCase);

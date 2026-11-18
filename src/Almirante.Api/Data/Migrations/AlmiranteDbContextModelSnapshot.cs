@@ -1799,6 +1799,16 @@ namespace Almirante.Api.Data.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(500)");
 
+                    b.Property<string>("DevolucaoJustificativa")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("DevolucaoMotivo")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
                     b.Property<Guid?>("EventoId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1806,6 +1816,9 @@ namespace Almirante.Api.Data.Migrations
                         .HasMaxLength(50)
                         .IsUnicode(false)
                         .HasColumnType("varchar(50)");
+
+                    b.Property<Guid?>("LancamentoOrigemId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid?>("MembroId")
                         .HasColumnType("uniqueidentifier");
@@ -1852,6 +1865,9 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("Finalidade");
 
+                    b.HasIndex("LancamentoOrigemId")
+                        .HasFilter("[LancamentoOrigemId] IS NOT NULL");
+
                     b.HasIndex("MembroId");
 
                     b.HasIndex("OperacaoId");
@@ -1865,6 +1881,8 @@ namespace Almirante.Api.Data.Migrations
                     b.ToTable("Lancamentos", null, t =>
                         {
                             t.HasCheckConstraint("CK_Lancamentos_Categoria", "[Categoria] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_Lancamentos_Devolucao", "([LancamentoOrigemId] IS NULL AND [DevolucaoMotivo] IS NULL AND [DevolucaoJustificativa] IS NULL) OR ([LancamentoOrigemId] IS NOT NULL AND [TipoFluxo] = 1 AND [EventoId] IS NOT NULL AND [MembroId] IS NOT NULL AND [DevolucaoMotivo] IS NOT NULL AND ([DevolucaoJustificativa] IS NULL OR [DataPagamento] IS NOT NULL))");
 
                             t.HasCheckConstraint("CK_Lancamentos_Pagamento", "([DataPagamento] IS NULL AND [ValorPago] IS NULL AND [PagamentoRegistradoPorUsuarioId] IS NULL AND [PagamentoRegistradoEmUtc] IS NULL) OR ([Status] = 1 AND [DataPagamento] IS NOT NULL AND [ValorPago] > 0 AND [ValorPago] <= [Valor] AND [PagamentoRegistradoPorUsuarioId] IS NOT NULL AND [PagamentoRegistradoEmUtc] IS NOT NULL)");
 
@@ -2449,7 +2467,7 @@ namespace Almirante.Api.Data.Migrations
 
                             t.HasCheckConstraint("CK_notificacoes_AvisoTentativas", "[AvisoTentativas] >= 0");
 
-                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2, 3, 4)");
+                            t.HasCheckConstraint("CK_notificacoes_Tipo", "[Tipo] IN (1, 2, 3, 4, 5)");
                         });
                 });
 
@@ -4224,6 +4242,11 @@ namespace Almirante.Api.Data.Migrations
                     b.HasOne("Almirante.Api.Entities.Evento", null)
                         .WithMany()
                         .HasForeignKey("EventoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Lancamento", null)
+                        .WithMany()
+                        .HasForeignKey("LancamentoOrigemId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Almirante.Api.Entities.Usuario", "Membro")

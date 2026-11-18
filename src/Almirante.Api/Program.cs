@@ -103,6 +103,8 @@ builder.Services.AddScoped<UsuariosService>();
 builder.Services.AddScoped<LancamentosService>();
 builder.Services.AddScoped<LancamentoGeralService>();
 builder.Services.AddScoped<LancamentoExclusaoService>();
+// Textos de notificação em .resx (IStringLocalizer<NotificacoesTextos>); o recurso neutro é pt-BR.
+builder.Services.AddLocalization();
 builder.Services.AddSingleton(new EventosLockOptions());
 builder.Services.AddScoped<EventosService>();
 builder.Services.AddScoped<CargosService>();

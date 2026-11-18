@@ -62,7 +62,7 @@ public sealed class EventosParticipanteSqlServerTests(EventosSqlFixture fx) : IC
         Assert.Equal(HttpStatusCode.OK, resposta.StatusCode);
         var texto = await resposta.Content.ReadAsStringAsync();
         var json = JsonNode.Parse(texto)!.AsObject();
-        Assert.Equal(["id", "titulo", "descricao", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio", "valorPorMembro", "minhaCobranca"],
+        Assert.Equal(["id", "titulo", "descricao", "dataEvento", "local", "transporte", "alimentacao", "seguroObrigatorio", "valorPorMembro", "minhaCobranca", "minhasDevolucoes"],
             json.Select(p => p.Key));
         Assert.Equal(("Passeio no parque", (string?)null), ((string)json["titulo"]!, (string?)json["descricao"]));
         Assert.Equal((evento.Id, evento.DataEvento.ToString("yyyy-MM-dd"), "Parque Ibirapuera", 20m, 10m, 8m, 2m),

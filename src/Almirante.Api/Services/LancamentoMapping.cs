@@ -26,6 +26,9 @@ internal static class LancamentoMapping
             : lancamento.Status == StatusLancamento.Pago ? (decimal?)null : lancamento.Valor,
         PagamentoRegistradoPorUsuarioId = lancamento.PagamentoRegistradoPorUsuarioId,
         PagamentoRegistradoEmUtc = lancamento.PagamentoRegistradoEmUtc,
+        LancamentoOrigemId = lancamento.LancamentoOrigemId,
+        DevolucaoMotivo = lancamento.DevolucaoMotivo,
+        DevolucaoJustificativa = lancamento.DevolucaoJustificativa,
     };
 
     public static readonly Func<Lancamento, LancamentoDto> ToDto = Projection.Compile();

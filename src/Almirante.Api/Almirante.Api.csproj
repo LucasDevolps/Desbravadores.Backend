@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Segredos locais de desenvolvimento (Jwt:Keys, SeedAdmin:Senha) ficam fora do repositório: dotnet user-secrets. -->
     <UserSecretsId>almirante-api-2f7c1e0a-5b8d-4c6e-9a31-d4b7e8f2c105</UserSecretsId>
+    <!-- Textos em .resx (issue #209): o recurso neutro é pt-BR; outros idiomas entram como satélites (Arquivo.{cultura}.resx). -->
+    <NeutralLanguage>pt-BR</NeutralLanguage>
   </PropertyGroup>
 
   <ItemGroup>

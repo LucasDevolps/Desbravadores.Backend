@@ -13,3 +13,13 @@ public sealed class AtualizarPagamentoHandler(LancamentosService service) : IReq
 {
     public Task<LancamentoDto?> Handle(AtualizarPagamentoRequest request, CancellationToken ct) => service.AtualizarPagamentoAsync(request, ct);
 }
+
+public sealed class RegistrarDevolucaoHandler(LancamentosService service) : IRequestHandler<RegistrarDevolucaoRequest, LancamentoDto?>
+{
+    public Task<LancamentoDto?> Handle(RegistrarDevolucaoRequest request, CancellationToken ct) => service.RegistrarDevolucaoAsync(request, ct);
+}
+
+public sealed class AtualizarDevolucaoHandler(LancamentosService service) : IRequestHandler<AtualizarDevolucaoRequest, LancamentoDto?>
+{
+    public Task<LancamentoDto?> Handle(AtualizarDevolucaoRequest request, CancellationToken ct) => service.AtualizarDevolucaoAsync(request, ct);
+}

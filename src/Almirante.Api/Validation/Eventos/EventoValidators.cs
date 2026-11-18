@@ -109,6 +109,20 @@ public sealed class UpdateEventoRequestValidator : EventoConteudoValidator<Updat
     }
 }
 
+public sealed class EstornarParticipanteRequestValidator : AbstractValidator<EstornarParticipanteRequest>
+{
+    public EstornarParticipanteRequestValidator()
+    {
+        RuleLevelCascadeMode = CascadeMode.Stop;
+        RuleFor(x => x.Motivo)
+            .Must(m => !string.IsNullOrWhiteSpace(m)).WithMessage("motivo é obrigatório.")
+            .Must(m => m!.Trim().Length <= EventoRegras.MotivoMaximo).WithMessage($"motivo deve ter no máximo {EventoRegras.MotivoMaximo} caracteres.")
+            .Must(m => TextoVarchar.CabeNaPagina1252(m!.Trim())).WithMessage(TextoVarchar.ForaDaPagina1252("motivo"));
+        RuleFor(x => x.Versao)
+            .Must(v => EventoRegras.TentarLerVersao(v, out _)).WithMessage("versao é obrigatória e deve ser a versão devolvida pela API.");
+    }
+}
+
 public sealed class DeleteEventoRequestValidator : AbstractValidator<DeleteEventoRequest>
 {
     public DeleteEventoRequestValidator()

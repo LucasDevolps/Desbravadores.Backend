@@ -89,9 +89,15 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [EndpointDescription("Exige versao (rowversion). Sem lançamento Pago, atualiza mantidos, cria novos e desativa removidos " +
         "(motivo obrigatório na remoção); um lançamento Atrasado acompanha o novo valor e a nova data e volta a Pendente se a data ainda não passou. " +
         "Valor por membro que passa de zero a positivo cria o lançamento pendente de cada participante; de positivo a zero desativa as cobranças " +
-        "(motivo obrigatório) e mantém os participantes. " +
-        "Com lançamento Pago, qualquer mudança na composição de custos (transporte, ehGratis, alimentação, individual, seguro — não só o total), participantes ou data retorna 409; " +
-        "local, título e descrição ainda podem ser corrigidos (a descrição dos lançamentos acompanha o título). " +
+        "em aberto (motivo obrigatório) e mantém os participantes. " +
+        "Com lançamento Pago: o valor por membro pode DIMINUIR (inclusive a zero), com motivo; as cobranças em aberto acompanham o novo valor " +
+        "(ou são canceladas no zero), os lançamentos Pagos não mudam, e cada pagamento acima do novo valor gera uma devolução pendente " +
+        "(Saída para o membro, valor = valorPago − novo valor − devoluções já geradas, listada em devolucoes) e notifica o membro. " +
+        "Aumento, ou outra composição de custos com o mesmo total, inclusão de participantes e mudança de data retornam 409. " +
+        "Quem já pagou só é removido antes da data do evento depois do estorno concluído (devolução gerada e baixada); no dia do evento ou depois, " +
+        "sai sem devolução e o pagamento continua no histórico. Quem não pagou sai normalmente (motivo obrigatório). " +
+        "Pago histórico sem dados de pagamento não gera devolução: registre o pagamento antes (409). " +
+        "Local, título e descrição ainda podem ser corrigidos (a descrição dos lançamentos e devoluções acompanha o título). " +
         "membros aceita GUID ou GUID[] como no POST. Data e local não mudam quando o passeio tem mais de um cadastro ativo (409).")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -113,8 +119,10 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [HttpDelete("{id:guid}")]
     [RequerPermissao(Permissoes.EventosExcluir)]
     [EndpointSummary("Exclui logicamente um cadastro de evento (auditado por trigger).")]
-    [EndpointDescription("Corpo: motivo (1–255) e versao. Desativa o cadastro, seus participantes e lançamentos (Pendente ou Atrasado) na mesma transação; " +
-        "outros grupos do passeio permanecem. 409 se houver lançamento Pago ou versão desatualizada; 404 se inexistente ou já excluído.")]
+    [EndpointDescription("Corpo: motivo (1–255) e versao. Desativa o cadastro, seus participantes e lançamentos em aberto (Pendente ou Atrasado) na mesma " +
+        "transação; pagamentos e devoluções baixadas continuam ativos (histórico do caixa). Outros grupos do passeio permanecem. " +
+        "409 enquanto houver valor retido (pagamento não devolvido por inteiro, ou devolução ainda não baixada) ou versão desatualizada; " +
+        "404 se inexistente ou já excluído.")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -131,6 +139,34 @@ public sealed class EventosController(ISender mediator) : ControllerBase
         request.IpResponsavel = IpDeOrigem();
         await mediator.Send(request, cancellationToken);
         return NoContent();
+    }
+
+    [HttpPost("{id:guid}/Participantes/{membroId:guid}/Estorno")]
+    [RequerPermissao(Permissoes.EventosEditar)]
+    [EndpointSummary("Gera a devolução de tudo o que o membro ainda tem retido nos pagamentos do evento (estorno do participante).")]
+    [EndpointDescription("Corpo: motivo (1–255) e versao. Para cada pagamento do membro no cadastro, cria uma devolução pendente (Saída) de " +
+        "valorPago − devoluções já geradas e notifica o membro; o pagamento original não muda e o participante continua no evento. " +
+        "Depois de dar baixa na devolução (POST /api/Lancamentos/{id}/Devolucao), o membro pode ser removido mesmo antes da data do evento. " +
+        "Vale também para quem já foi removido e ainda tem pagamento ativo. 200 com o evento atualizado (devolucoes). " +
+        "404: evento inexistente/excluído, ou membro sem participação nem lançamento no cadastro. " +
+        "409: nada a devolver (sem pagamento, ou tudo já devolvido/em devolução), Pago histórico sem dados de pagamento, versão desatualizada " +
+        "ou passeio em uso.")]
+    [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> EstornarParticipante(Guid id, Guid membroId, [FromBody] EstornarParticipanteRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TentarObterUsuarioId(out var usuarioId))
+        {
+            return IdentidadeInvalida();
+        }
+
+        request.Id = id;
+        request.MembroId = membroId;
+        request.UsuarioResponsavelId = usuarioId;
+        return Ok(await mediator.Send(request, cancellationToken));
     }
 
     private string IpDeOrigem() => HttpContext.IpDeOrigem();

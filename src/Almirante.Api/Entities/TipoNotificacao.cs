@@ -19,6 +19,10 @@ public enum TipoNotificacao
     /// <summary>Débito do membro que passou a Atrasado pela rotina de vencimento (issue #184).</summary>
     [Description("Débito em atraso")]
     DebitoAtrasado = 4,
+
+    /// <summary>Devolução gerada para o membro pela redução do valor do evento ou pelo estorno do participante (issue #209).</summary>
+    [Description("Devolução de evento")]
+    DevolucaoEvento = 5,
 }
 
 /// <summary>Aviso em tempo real ainda não emitido para o destinatário.</summary>

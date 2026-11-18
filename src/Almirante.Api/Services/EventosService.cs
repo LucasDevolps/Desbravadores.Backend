@@ -2,18 +2,20 @@ using Almirante.Api.Data;
 using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
 using Almirante.Api.Infrastructure;
+using Almirante.Api.Resources;
 using System.Data;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace Almirante.Api.Services;
 
 public sealed record EventosLockOptions(int TimeoutMs = 10_000);
 
 public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, ILogger<EventosService> logger, EventosLockOptions lockOptions,
-    SinalAvisosNotificacoes sinal, DataCivil dataCivil)
+    SinalAvisosNotificacoes sinal, DataCivil dataCivil, IStringLocalizer<NotificacoesTextos> textos)
 {
     public static string RecursoDoGrupo(Guid grupoId) => $"evento-grupo:{grupoId:D}";
 
@@ -57,7 +59,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
     /// <summary>
     /// Eventos ativos em que <paramref name="membroId"/> é participante ativo, com a própria cobrança (o lançamento do evento não pode
     /// ser excluído à parte; ele só sai com o participante). Evento sem valor a pagar não tem cobrança: o participante o vê com
-    /// <c>minhaCobranca</c> nula. Sem recorte de data: eventos passados continuam consultáveis.
+    /// <c>minhaCobranca</c> nula. As devoluções do membro no evento (issue #209) vêm em <c>minhasDevolucoes</c>. Sem recorte de data:
+    /// eventos passados continuam consultáveis.
     /// </summary>
     public async Task<IReadOnlyList<EventoParticipanteDto>> ListarDoParticipanteAsync(Guid membroId, Guid? eventoId, CancellationToken ct)
     {
@@ -74,6 +77,18 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 })
             .ToListAsync(ct);
 
+        var ids = linhas.Select(x => x.Evento.Id).ToList();
+        var devolucoes = ids.Count == 0 ? [] : await db.Lancamentos.AsNoTracking()
+            .Where(l => l.Ativo && l.MembroId == membroId && l.LancamentoOrigemId != null && l.EventoId != null && ids.Contains(l.EventoId.Value))
+            .OrderBy(l => l.Vencimento).ThenBy(l => l.Id)
+            .Select(l => new
+            {
+                EventoId = l.EventoId!.Value,
+                Devolucao = new MinhaDevolucaoDto(l.Valor, l.Vencimento, l.Status, l.ValorPago, l.DataPagamento, l.DevolucaoJustificativa),
+            })
+            .ToListAsync(ct);
+        var devolucoesPorEvento = devolucoes.ToLookup(d => d.EventoId, d => d.Devolucao);
+
         return linhas.Select(x => new EventoParticipanteDto
         {
             Id = x.Evento.Id,
@@ -86,6 +101,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             SeguroObrigatorio = x.Evento.SeguroObrigatorio,
             ValorPorMembro = x.Evento.ValorPorMembro,
             MinhaCobranca = x.Cobranca,
+            MinhasDevolucoes = devolucoesPorEvento[x.Evento.Id].ToList(),
         }).ToList();
     }
 
@@ -103,14 +119,15 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             .ToListAsync(ct);
         var lancamentos = await db.Lancamentos.AsNoTracking()
             .Where(l => l.Ativo && l.EventoId != null && ids.Contains(l.EventoId.Value) && l.MembroId != null)
-            .Select(l => new { EventoId = l.EventoId!.Value, l.Id, MembroId = l.MembroId!.Value, l.Valor, l.Status })
             .ToListAsync(ct);
 
         var membrosPorEvento = participantes.ToLookup(p => p.EventoId, p => p.MembroId);
-        var lancamentosPorEvento = lancamentos.ToLookup(l => l.EventoId);
+        var lancamentosPorEvento = lancamentos.ToLookup(l => l.EventoId!.Value);
         return eventos.Select(e => EventoMapping.ToDto(e,
             membrosPorEvento[e.Id],
-            lancamentosPorEvento[e.Id].Select(l => new EventoLancamentoDto(l.Id, l.MembroId, l.Valor, l.Status)))).ToList();
+            lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId == null)
+                .Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)),
+            lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId != null).Select(EventoMapping.ToDevolucaoDto))).ToList();
     }
 
     public async Task<RegistrarEventoResult> RegistrarAsync(RegistrarEventoRequest request, CancellationToken ct)
@@ -296,11 +313,14 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         var conteudo = EventoRegras.Normalizar(request);
         EventoRegras.TentarLerVersao(request.Versao, out var versao);
         var id = request.Id;
+        var motivo = string.IsNullOrWhiteSpace(request.Motivo) ? null : request.Motivo.Trim();
+        var notificou = false;
 
         try
         {
-            return await ExecutarAsync(async sessao =>
+            var atualizado = await ExecutarAsync(async sessao =>
             {
+                notificou = false;
                 var agora = clock.GetUtcNow().UtcDateTime;
 
                 await TravarGrupoDoEventoAsync(id, ct);
@@ -308,6 +328,9 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 var evento = await db.Eventos.Include(e => e.Membros.Where(m => m.Ativo)).SingleAsync(e => e.Id == id, ct);
                 var participantes = evento.Membros.ToList();
                 var lancamentos = await db.Lancamentos.Where(l => l.EventoId == id && l.Ativo).ToListAsync(ct);
+                var cobrancas = lancamentos.Where(l => l.LancamentoOrigemId == null).ToList();
+                var devolucoes = lancamentos.Where(l => l.LancamentoOrigemId != null).ToList();
+                var pagos = cobrancas.Where(l => l.Status == StatusLancamento.Pago).ToList();
 
                 var atuais = participantes.Select(p => p.MembroId).ToHashSet();
                 var novos = conteudo.Membros.ToHashSet();
@@ -322,13 +345,22 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     || conteudo.AlimentacaoValor != evento.AlimentacaoValor
                     || conteudo.SeguroObrigatorio != evento.SeguroObrigatorio
                     || conteudo.ValorPorMembro != evento.ValorPorMembro;
-                var financeiroMudou = custoMudou || dataMudou || removidos.Count > 0 || adicionados.Count > 0;
+                var reducao = conteudo.ValorPorMembro < evento.ValorPorMembro;
+                var hoje = dataCivil.Hoje();
 
                 // Issue #184: Atrasado é só um Pendente vencido (a rotina de vencimento o marca sozinha); apenas Pago trava o cadastro.
-                if (financeiroMudou && lancamentos.Any(l => l.Status == StatusLancamento.Pago))
+                // Issue #209: com Pago, o valor por membro ainda pode diminuir (quem pagou a mais recebe devolução) e participantes podem
+                // sair conforme ExigirRemocaoDePagantesPermitida; aumento, outra composição com o mesmo total, inclusão e data seguem travados.
+                if (pagos.Count > 0)
                 {
-                    throw ApiProblemException.Conflict("Evento com lançamento Pago.",
-                        "Valores, participantes e data não podem ser alterados quando algum lançamento do cadastro está Pago. Apenas o local pode ser corrigido.");
+                    if ((custoMudou && !reducao) || dataMudou || adicionados.Count > 0)
+                    {
+                        throw ApiProblemException.Conflict("Evento com lançamento Pago.",
+                            "Com lançamento Pago, o valor por membro só pode diminuir (aumento ou outra composição com o mesmo total retorna 409), " +
+                            "participantes não podem ser incluídos e a data não muda. Local, título e descrição podem ser corrigidos.");
+                    }
+
+                    ExigirRemocaoDePagantesPermitida(evento, removidos, pagos, devolucoes, hoje);
                 }
 
                 if (dataMudou && conteudo.DataEvento < EventoRegras.PrimeiroDiaDoMes(clock.GetUtcNow()))
@@ -344,13 +376,16 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                         "Existe mais de um cadastro ativo neste passeio; data e local não podem ser alterados por um PUT isolado.");
                 }
 
-                // Valor por membro que passa a zero cancela as cobranças em aberto (o lançamento Pago já barrou a mudança acima).
-                var cancelaCobrancas = EventoRegras.GeraCobranca(evento.ValorPorMembro) && !conteudo.GeraCobranca && lancamentos.Count > 0;
+                var aDevolver = reducao ? DevolucoesPorReducao(pagos, devolucoes, conteudo.ValorPorMembro) : [];
 
-                if ((removidos.Count > 0 || cancelaCobrancas) && string.IsNullOrWhiteSpace(request.Motivo))
+                // Valor por membro que passa a zero cancela as cobranças em aberto; as Pagas ficam (histórico do caixa) e geram devolução.
+                var cancelaCobrancas = EventoRegras.GeraCobranca(evento.ValorPorMembro) && !conteudo.GeraCobranca
+                    && cobrancas.Any(l => l.Status != StatusLancamento.Pago);
+
+                if ((removidos.Count > 0 || cancelaCobrancas || aDevolver.Count > 0) && motivo is null)
                 {
                     throw ApiProblemException.Invalid(nameof(UpdateEventoRequest.Motivo),
-                        "motivo é obrigatório (1–255 caracteres) quando a alteração remove participantes ou zera o valor de um evento com cobranças.");
+                        "motivo é obrigatório (1–255 caracteres) quando a alteração remove participantes, zera o valor de um evento com cobranças ou gera devoluções.");
                 }
 
                 if (adicionados.Count > 0)
@@ -365,10 +400,10 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
                 var removidosIds = removidos.Select(r => r.MembroId).ToHashSet();
                 var descricao = EventoRegras.DescricaoLancamento(conteudo.Titulo, conteudo.DataEvento);
-                var hoje = dataCivil.Hoje();
-                foreach (var lancamento in lancamentos)
+                foreach (var lancamento in cobrancas)
                 {
-                    if (cancelaCobrancas || (lancamento.MembroId is { } m && removidosIds.Contains(m)))
+                    var emAberto = lancamento.Status != StatusLancamento.Pago;
+                    if (emAberto && (cancelaCobrancas || (lancamento.MembroId is { } m && removidosIds.Contains(m))))
                     {
                         lancamento.Ativo = false;
                         lancamento.DataAtualizacao = agora;
@@ -376,7 +411,6 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                         continue;
                     }
 
-                    var emAberto = lancamento.Status != StatusLancamento.Pago;
                     if (lancamento.Descricao != descricao ||
                         (emAberto && (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento)))
                     {
@@ -397,6 +431,14 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     }
                 }
 
+                var descricaoDevolucao = DevolucaoRegras.Descricao(conteudo.Titulo, conteudo.DataEvento);
+                foreach (var devolucao in devolucoes.Where(d => d.Descricao != descricaoDevolucao))
+                {
+                    devolucao.Descricao = descricaoDevolucao;
+                    devolucao.DataAtualizacao = agora;
+                    devolucao.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
+                }
+
                 foreach (var participante in removidos)
                 {
                     participante.Ativo = false;
@@ -407,7 +449,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 var novosLancamentos = new List<Lancamento>();
                 if (cancelaCobrancas)
                 {
-                    foreach (var participante in mantidos)
+                    var desativadas = cobrancas.Where(l => !l.Ativo).Select(l => l.Id).ToHashSet();
+                    foreach (var participante in mantidos.Where(p => p.LancamentoId is { } l && desativadas.Contains(l)))
                     {
                         participante.LancamentoId = null;
                     }
@@ -415,7 +458,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 else if (conteudo.GeraCobranca)
                 {
                     // Evento que passa a ter valor: quem participava sem cobrança ganha o lançamento pendente agora.
-                    var comCobranca = lancamentos.Where(l => l.Ativo && l.MembroId is not null).Select(l => l.MembroId!.Value).ToHashSet();
+                    var comCobranca = cobrancas.Where(l => l.Ativo && l.MembroId is not null).Select(l => l.MembroId!.Value).ToHashSet();
                     foreach (var participante in mantidos.Where(p => !comCobranca.Contains(p.MembroId)))
                     {
                         var lancamento = NovoLancamento(evento, participante.MembroId, agora);
@@ -437,22 +480,36 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     db.EventosMembros.Add(NovoParticipante(evento, membroId, lancamento?.Id, agora));
                 }
 
+                var novasDevolucoes = aDevolver
+                    .Select(d => DevolucaoRegras.Nova(d.Origem, d.Valor, evento.Titulo, evento.DataEvento, hoje, motivo!, agora))
+                    .ToList();
+                AdicionarDevolucoes(novasDevolucoes, evento.Titulo, agora);
+
                 if (removidos.Count > 0 || cancelaCobrancas)
                 {
-                    await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, request.Motivo!.Trim(), ct);
+                    await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, motivo!, ct);
                 }
 
                 await SalvarAsync(ct);
+                notificou = novasDevolucoes.Count > 0;
 
                 logger.LogInformation("Evento {EventoId} atualizado por {UsuarioId}: {Adicionados} adicionados, {Removidos} removidos, " +
-                    "{LancamentosCriados} lançamentos criados, cobranças canceladas: {Canceladas}.",
-                    id, request.UsuarioResponsavelId, adicionados.Count, removidos.Count, novosLancamentos.Count, cancelaCobrancas);
+                    "{LancamentosCriados} lançamentos criados, cobranças canceladas: {Canceladas}, {Devolucoes} devoluções geradas.",
+                    id, request.UsuarioResponsavelId, adicionados.Count, removidos.Count, novosLancamentos.Count, cancelaCobrancas, novasDevolucoes.Count);
 
-                var ativos = lancamentos.Where(l => l.Ativo).Concat(novosLancamentos).ToList();
+                var ativos = cobrancas.Where(l => l.Ativo).Concat(novosLancamentos).ToList();
                 return EventoMapping.ToDto(evento,
                     mantidos.Select(p => p.MembroId).Concat(adicionados),
-                    ativos.Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)));
+                    ativos.Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)),
+                    devolucoes.Concat(novasDevolucoes).Select(EventoMapping.ToDevolucaoDto));
             }, ct);
+
+            if (notificou)
+            {
+                sinal.Sinalizar();
+            }
+
+            return atualizado;
         }
         catch (ViolacaoUnicidadeException)
         {
@@ -461,6 +518,124 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             await ExigirSemConflitoNoGrupoAsync(grupoId, conteudo.Membros, id, ct);
             throw ConflitoInesperado();
         }
+    }
+
+    /// <summary>
+    /// Issue #209: participante que pagou só sai antes da data do evento depois do estorno concluído (devolução gerada e baixada); no dia
+    /// do evento ou depois, sai sem devolução. O lançamento Pago dele continua ativo nos dois casos.
+    /// </summary>
+    private static void ExigirRemocaoDePagantesPermitida(Evento evento, IReadOnlyCollection<EventoMembro> removidos,
+        IReadOnlyCollection<Lancamento> pagos, IReadOnlyCollection<Lancamento> devolucoes, DateOnly hoje)
+    {
+        if (removidos.Count == 0 || evento.DataEvento <= hoje)
+        {
+            return;
+        }
+
+        var removidosIds = removidos.Select(r => r.MembroId).ToHashSet();
+        var bloqueados = pagos
+            .Where(p => p.MembroId is { } m && removidosIds.Contains(m)
+                && !DevolucaoRegras.EstornoConcluido(p, devolucoes.Where(d => d.LancamentoOrigemId == p.Id).ToList()))
+            .Select(p => p.MembroId!.Value)
+            .Distinct()
+            .Order()
+            .ToList();
+        if (bloqueados.Count > 0)
+        {
+            throw ApiProblemException.Conflict("Participante com pagamento.",
+                "Antes da data do evento, quem já pagou só pode ser removido depois do estorno concluído: gere a devolução em " +
+                "POST /api/Eventos/{id}/Participantes/{membroId}/Estorno e dê baixa nela em POST /api/Lancamentos/{id}/Devolucao. " +
+                "Membros: " + string.Join(", ", bloqueados) + ".",
+                new Dictionary<string, object?> { ["membrosComPagamento"] = bloqueados });
+        }
+    }
+
+    /// <summary>Uma devolução por pagamento cujo valor pago fica acima do novo valor por membro (descontado o que já foi devolvido).</summary>
+    private static List<(Lancamento Origem, decimal Valor)> DevolucoesPorReducao(IEnumerable<Lancamento> pagos,
+        IReadOnlyCollection<Lancamento> devolucoes, decimal novoValorPorMembro)
+    {
+        var resultado = new List<(Lancamento Origem, decimal Valor)>();
+        foreach (var pago in pagos.OrderBy(p => p.MembroId).ThenBy(p => p.Id))
+        {
+            var valor = DevolucaoRegras.PorReducao(ValorPagoConhecido(pago), novoValorPorMembro,
+                devolucoes.Where(d => d.LancamentoOrigemId == pago.Id).Sum(d => d.Valor));
+            if (valor > 0)
+            {
+                resultado.Add((pago, valor));
+            }
+        }
+
+        return resultado;
+    }
+
+    /// <summary>"Pago" histórico sem dados de liquidação não diz quanto entrou: a devolução exige regularizar o pagamento antes.</summary>
+    private static decimal ValorPagoConhecido(Lancamento pago) => pago.ValorPago ?? throw ApiProblemException.Conflict(
+        "Pagamento sem dados de liquidação.",
+        "Há lançamento Pago sem data e valor de pagamento registrados (\"Pago\" histórico). Registre o pagamento em " +
+        "POST /api/Lancamentos/{id}/Pagamento antes de gerar devoluções.",
+        new Dictionary<string, object?> { ["lancamentoId"] = pago.Id });
+
+    private void AdicionarDevolucoes(IReadOnlyCollection<Lancamento> devolucoes, string tituloEvento, DateTime agora)
+    {
+        db.Lancamentos.AddRange(devolucoes);
+        db.Notificacoes.AddRange(devolucoes.Select(d => NotificacoesFabrica.DevolucaoEvento(textos, d, tituloEvento, agora)));
+    }
+
+    /// <summary>
+    /// Issue #209: gera, para o membro, a devolução de tudo o que ele ainda tem retido nos pagamentos do evento (valor pago menos as
+    /// devoluções já geradas). Vale para participante ativo ou já removido que ainda tenha pagamento ativo no cadastro.
+    /// </summary>
+    public async Task<EventoDto> EstornarParticipanteAsync(EstornarParticipanteRequest request, CancellationToken ct)
+    {
+        EventoRegras.TentarLerVersao(request.Versao, out var versao);
+        var id = request.Id;
+        var membroId = request.MembroId;
+        var motivo = request.Motivo!.Trim();
+
+        var dto = await ExecutarAsync(async _ =>
+        {
+            var agora = clock.GetUtcNow().UtcDateTime;
+            await TravarGrupoDoEventoAsync(id, ct);
+            await TravarCadastroAsync(id, versao, request.UsuarioResponsavelId, agora, ct);
+
+            var evento = await db.Eventos.AsNoTracking().SingleAsync(e => e.Id == id, ct);
+            var lancamentos = await db.Lancamentos.Where(l => l.EventoId == id && l.Ativo && l.MembroId == membroId).ToListAsync(ct);
+            if (lancamentos.Count == 0 &&
+                !await db.EventosMembros.AsNoTracking().AnyAsync(m => m.EventoId == id && m.MembroId == membroId && m.Ativo, ct))
+            {
+                throw ApiProblemException.NotFound("Participante não encontrado.",
+                    "O membro não participa deste evento e não tem lançamento ativo nele.");
+            }
+
+            var devolucoes = lancamentos.Where(l => l.LancamentoOrigemId != null).ToList();
+            var hoje = dataCivil.Hoje();
+            var novas = new List<Lancamento>();
+            foreach (var pago in lancamentos.Where(l => l.LancamentoOrigemId == null && l.Status == StatusLancamento.Pago).OrderBy(l => l.Id))
+            {
+                var retido = DevolucaoRegras.Retido(ValorPagoConhecido(pago),
+                    devolucoes.Where(d => d.LancamentoOrigemId == pago.Id).Sum(d => d.Valor));
+                if (retido > 0)
+                {
+                    novas.Add(DevolucaoRegras.Nova(pago, retido, evento.Titulo, evento.DataEvento, hoje, motivo, agora));
+                }
+            }
+
+            if (novas.Count == 0)
+            {
+                throw ApiProblemException.Conflict("Nada a devolver.",
+                    "O membro não tem pagamento registrado neste evento, ou todo o valor pago já foi devolvido ou está em devolução.");
+            }
+
+            AdicionarDevolucoes(novas, evento.Titulo, agora);
+            await SalvarAsync(ct);
+
+            logger.LogInformation("Estorno de {MembroId} no evento {EventoId} por {UsuarioId}: {Devolucoes} devoluções, total {Total}.",
+                membroId, id, request.UsuarioResponsavelId, novas.Count, novas.Sum(d => d.Valor));
+            return (await MontarDtosAsync([evento], ct))[0];
+        }, ct);
+
+        sinal.Sinalizar();
+        return dto;
     }
 
     public async Task DeleteAsync(DeleteEventoRequest request, CancellationToken ct)
@@ -475,10 +650,17 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             await TravarGrupoDoEventoAsync(id, ct);
             await TravarCadastroAsync(id, versao, request.UsuarioResponsavelId, agora, ct);
 
-            if (await db.Lancamentos.AnyAsync(l => l.EventoId == id && l.Ativo && l.Status == StatusLancamento.Pago, ct))
+            // Issue #209: a exclusão só passa quando nenhum pagamento ficou retido (todo valor pago devolvido e baixado).
+            var pagos = await db.Lancamentos.AsNoTracking()
+                .Where(l => l.EventoId == id && l.Ativo && l.LancamentoOrigemId == null && l.Status == StatusLancamento.Pago).ToListAsync(ct);
+            var devolucoes = await db.Lancamentos.AsNoTracking()
+                .Where(l => l.EventoId == id && l.Ativo && l.LancamentoOrigemId != null).ToListAsync(ct);
+            if (devolucoes.Any(d => d.Status != StatusLancamento.Pago) ||
+                pagos.Any(p => DevolucaoRegras.TemValorRetido(p, devolucoes.Where(d => d.LancamentoOrigemId == p.Id))))
             {
-                throw ApiProblemException.Conflict("Evento com lançamento Pago.",
-                    "O cadastro não pode ser excluído enquanto algum lançamento estiver Pago. Nenhum registro foi alterado.");
+                throw ApiProblemException.Conflict("Evento com valor retido.",
+                    "O cadastro não pode ser excluído enquanto algum pagamento não tiver sido totalmente estornado (devoluções geradas e baixadas). " +
+                    "Nenhum registro foi alterado.");
             }
 
             await sessao.DefinirContextoAuditoriaAsync(request.UsuarioResponsavelId, request.IpResponsavel, motivo, ct);
@@ -492,8 +674,9 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE dbo.evento_membros SET Ativo = 0, DesativadoEmUtc = {agora} WHERE EventoId = {id} AND Ativo = 1", ct);
+            // Pagamentos e devoluções baixadas ficam ativos: são o histórico do caixa (entrada e saída que de fato aconteceram).
             await db.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE dbo.Lancamentos SET Ativo = 0, DataAtualizacao = {agora}, AtualizadoPorUsuarioId = {request.UsuarioResponsavelId} WHERE EventoId = {id} AND Ativo = 1", ct);
+                $"UPDATE dbo.Lancamentos SET Ativo = 0, DataAtualizacao = {agora}, AtualizadoPorUsuarioId = {request.UsuarioResponsavelId} WHERE EventoId = {id} AND Ativo = 1 AND Status <> {(int)StatusLancamento.Pago}", ct);
 
             logger.LogInformation("Evento {EventoId} excluído logicamente por {UsuarioId}.", id, request.UsuarioResponsavelId);
             return true;
@@ -667,7 +850,11 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
 internal static class EventoMapping
 {
-    public static EventoDto ToDto(Evento e, IEnumerable<Guid> membros, IEnumerable<EventoLancamentoDto> lancamentos)
+    public static EventoDevolucaoDto ToDevolucaoDto(Lancamento d) => new(d.Id, d.MembroId!.Value, d.LancamentoOrigemId!.Value, d.Valor,
+        d.Vencimento, d.Status, d.ValorPago, d.DataPagamento, d.DevolucaoMotivo, d.DevolucaoJustificativa);
+
+    public static EventoDto ToDto(Evento e, IEnumerable<Guid> membros, IEnumerable<EventoLancamentoDto> lancamentos,
+        IEnumerable<EventoDevolucaoDto>? devolucoes = null)
     {
         var listaMembros = membros.OrderBy(m => m).ToList();
         return new EventoDto
@@ -689,6 +876,7 @@ internal static class EventoMapping
             Ativo = e.Ativo,
             Versao = EventoRegras.VersaoParaTexto(e.Versao),
             Lancamentos = lancamentos.OrderBy(l => l.MembroId).ThenBy(l => l.Id).ToList(),
+            Devolucoes = (devolucoes ?? []).OrderBy(d => d.MembroId).ThenBy(d => d.Vencimento).ThenBy(d => d.Id).ToList(),
         };
     }
 }

@@ -58,7 +58,8 @@ public sealed class SessaoAuditoriaPoolSqlTests
         await using var db = new AlmiranteDbContext(new DbContextOptionsBuilder<AlmiranteDbContext>()
             .UseSqlServer(cs).AddInterceptors(limpeza, fechamento).Options);
         var service = new EventosService(db, TimeProvider.System, NullLogger<EventosService>.Instance, new EventosLockOptions(), new SinalAvisosNotificacoes(),
-            new DataCivil(TimeProvider.System, Microsoft.Extensions.Options.Options.Create(new Almirante.Api.Options.ClubeOptions())));
+            new DataCivil(TimeProvider.System, Microsoft.Extensions.Options.Options.Create(new Almirante.Api.Options.ClubeOptions())),
+            TestHelpers.TextosNotificacoes());
         const string motivo = "auditoria preservada apesar da falha de limpeza";
         const string ip = "2001:db8::42";
 

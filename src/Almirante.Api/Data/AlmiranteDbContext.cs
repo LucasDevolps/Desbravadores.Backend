@@ -49,6 +49,18 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
         " OR ([Status] = 1 AND [DataPagamento] IS NOT NULL AND [ValorPago] > 0 AND [ValorPago] <= [Valor]" +
         " AND [PagamentoRegistradoPorUsuarioId] IS NOT NULL AND [PagamentoRegistradoEmUtc] IS NOT NULL)";
 
+    /// <summary>
+    /// Devolução de evento (issue #209): Saída do membro, ligada ao evento e ao lançamento de origem, com motivo; a justificativa só
+    /// existe depois da baixa. Lançamento comum não tem motivo nem justificativa de devolução.
+    /// </summary>
+    public const string CheckDevolucao =
+        "([LancamentoOrigemId] IS NULL AND [DevolucaoMotivo] IS NULL AND [DevolucaoJustificativa] IS NULL)" +
+        " OR ([LancamentoOrigemId] IS NOT NULL AND [TipoFluxo] = 1 AND [EventoId] IS NOT NULL AND [MembroId] IS NOT NULL" +
+        " AND [DevolucaoMotivo] IS NOT NULL AND ([DevolucaoJustificativa] IS NULL OR [DataPagamento] IS NOT NULL))";
+
+    public const int DevolucaoMotivoMaximo = 255;
+    public const int DevolucaoJustificativaMaximo = 255;
+
     public DbSet<Usuario> Usuarios => Set<Usuario>();
     public DbSet<Lancamento> Lancamentos => Set<Lancamento>();
     public DbSet<Cargo> Cargos => Set<Cargo>();
@@ -168,6 +180,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
                 table.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
                 table.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
                 table.HasCheckConstraint("CK_Lancamentos_Pagamento", CheckPagamento);
+                table.HasCheckConstraint("CK_Lancamentos_Devolucao", CheckDevolucao);
             });
             entity.HasKey(l => l.Id);
             entity.Property(l => l.Finalidade).HasColumnType("varchar(50)").HasMaxLength(50).IsUnicode(false);
@@ -179,6 +192,10 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.Property(l => l.Ativo).IsRequired();
             entity.Property(l => l.DataPagamento).HasColumnType("date").IsConcurrencyToken();
             entity.Property(l => l.ValorPago).HasColumnType("decimal(18,2)").IsConcurrencyToken();
+            entity.Property(l => l.DevolucaoMotivo).HasColumnType($"varchar({DevolucaoMotivoMaximo})")
+                .HasMaxLength(DevolucaoMotivoMaximo).IsUnicode(false);
+            entity.Property(l => l.DevolucaoJustificativa).HasColumnType($"varchar({DevolucaoJustificativaMaximo})")
+                .HasMaxLength(DevolucaoJustificativaMaximo).IsUnicode(false);
 
             entity.HasIndex(l => l.DataPagamento)
                 .HasFilter("[DataPagamento] IS NOT NULL")
@@ -191,7 +208,9 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.HasIndex(l => l.Ativo);
             entity.HasIndex(l => l.OperacaoId);
             entity.HasIndex(l => l.EventoId);
+            entity.HasIndex(l => l.LancamentoOrigemId).HasFilter("[LancamentoOrigemId] IS NOT NULL");
             entity.HasOne<Evento>().WithMany().HasForeignKey(l => l.EventoId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Lancamento>().WithMany().HasForeignKey(l => l.LancamentoOrigemId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(l => l.Membro).WithMany(u => u.Lancamentos).HasForeignKey(l => l.MembroId).OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne<Usuario>()

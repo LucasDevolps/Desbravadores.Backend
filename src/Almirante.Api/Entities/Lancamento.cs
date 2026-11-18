@@ -30,4 +30,16 @@ public sealed class Lancamento
     public Guid? OperacaoId { get; set; }
 
     public Guid? EventoId { get; set; }
+
+    /// <summary>
+    /// Preenchido só nas devoluções de evento (issue #209): o lançamento Pago de origem, cujo valor pago acima do novo valor por membro
+    /// (ou retido no estorno do participante) volta para o membro. A devolução é sempre Saída, do mesmo membro e do mesmo evento.
+    /// </summary>
+    public Guid? LancamentoOrigemId { get; set; }
+
+    /// <summary>Motivo informado na alteração do evento ou no estorno que gerou a devolução; obrigatório nas devoluções.</summary>
+    public string? DevolucaoMotivo { get; set; }
+
+    /// <summary>Justificativa da baixa da devolução; obrigatória quando o valor devolvido difere do esperado.</summary>
+    public string? DevolucaoJustificativa { get; set; }
 }

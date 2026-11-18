@@ -25,6 +25,11 @@ public sealed class UpdateEventoHandler(EventosService service) : IRequestHandle
     public Task<EventoDto> Handle(UpdateEventoRequest request, CancellationToken ct) => service.UpdateAsync(request, ct);
 }
 
+public sealed class EstornarParticipanteHandler(EventosService service) : IRequestHandler<EstornarParticipanteRequest, EventoDto>
+{
+    public Task<EventoDto> Handle(EstornarParticipanteRequest request, CancellationToken ct) => service.EstornarParticipanteAsync(request, ct);
+}
+
 public sealed class DeleteEventoHandler(EventosService service) : IRequestHandler<DeleteEventoRequest, Unit>
 {
     public async Task<Unit> Handle(DeleteEventoRequest request, CancellationToken ct)
