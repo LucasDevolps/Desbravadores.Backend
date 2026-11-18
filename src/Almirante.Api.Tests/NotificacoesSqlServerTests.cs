@@ -18,7 +18,6 @@ namespace Almirante.Api.Tests;
 [Trait("Category", "RequiresSqlServer")]
 public sealed class NotificacoesSqlServerTests : IAsyncLifetime
 {
-    /// <summary>Publicador e monitor com intervalos curtos para os testes não dependerem dos 5 s/30 s de produção.</summary>
     public static Dictionary<string, string?> Rapido(int maxTentativas = 10) => new()
     {
         ["Notificacoes:VarreduraAvisosMs"] = "200",
@@ -164,6 +163,56 @@ public sealed class NotificacoesSqlServerTests : IAsyncLifetime
             .Select(l => l!.Notificacao.LidaEmUtc).Distinct().ToList();
         var data = Assert.Single(datas);
         Assert.Equal(data, (await Db(db => db.Notificacoes.AsNoTracking().SingleAsync(n => n.Id == alvo.Id))).LidaEmUtc);
+    }
+
+    [Fact]
+    public async Task LeituraEmLote_Concorrente_CadaNotificacaoMarcadaUmaVez_EAOutraAbaRecebeOsAvisos()
+    {
+        var (membro, membroId) = await MembroAsync();
+        var (_, outroId) = await MembroAsync();
+        var criadas = DateTime.UtcNow.AddMinutes(-1);
+        Notificacao Nova(Guid destinatario, string chave, int i) => new()
+        {
+            Id = Guid.NewGuid(), DestinatarioId = destinatario, Tipo = TipoNotificacao.DebitoCadastrado, Titulo = "t", Mensagem = "m",
+            CriadaEmUtc = criadas.AddSeconds(-i), ChaveOrigem = chave,
+        };
+        await Db(async db =>
+        {
+            db.Notificacoes.AddRange(Enumerable.Range(0, 30).Select(i => Nova(membroId, $"lote:{i}", i)));
+            db.Notificacoes.Add(Nova(outroId, "lote:outro", 0));
+            return await db.SaveChangesAsync();
+        });
+        var ids = await Db(db => db.Notificacoes.Where(n => n.DestinatarioId == membroId).Select(n => n.Id).ToListAsync());
+        await using var outraAba = Hub(_factory, Token(membro));
+        var recebidos = new AvisosRecebidos(outraAba);
+        await outraAba.StartAsync();
+
+        var lotes = Enumerable.Range(0, 4).Select(_ => LerTodasAsync(membro)).ToList();
+        var individuais = ids.Take(5).Select(id => LerAsync(membro, id)).ToList();
+        await Task.WhenAll(lotes.Concat(individuais));
+
+        Assert.All(lotes.Concat(individuais), t => Assert.Equal(HttpStatusCode.OK, t.Result.StatusCode));
+        var respostas = await Task.WhenAll(lotes.Select(async t => (await t.Result.Content.ReadFromJsonAsync<LeituraTodasNotificacoesResponse>(Json))!));
+        var leituras = await Task.WhenAll(individuais.Select(async t => (await t.Result.Content.ReadFromJsonAsync<LeituraNotificacaoResponse>(Json))!));
+        var gravadas = await Db(db => db.Notificacoes.AsNoTracking().Where(n => n.DestinatarioId == membroId).ToListAsync());
+        Assert.All(gravadas, n => Assert.NotNull(n.LidaEmUtc));
+        Assert.All(respostas, r => Assert.Equal(0, r.NaoLidas));
+        var limites = respostas.Select(r => r.LimiteUtc).ToHashSet();
+        Assert.Equal(gravadas.Count(n => limites.Contains(n.LidaEmUtc!.Value)), respostas.Sum(r => r.Marcadas));
+        Assert.All(leituras, l => Assert.Equal(gravadas.Single(n => n.Id == l.Notificacao.Id).LidaEmUtc, l.Notificacao.LidaEmUtc));
+        Assert.Null((await Db(db => db.Notificacoes.AsNoTracking().SingleAsync(n => n.DestinatarioId == outroId))).LidaEmUtc);
+
+        var avisados = new HashSet<Guid>();
+        while (!avisados.SetEquals(ids))
+        {
+            var aviso = await recebidos.AguardarAsync("NotificacaoLida", p => !avisados.Contains(p.GetProperty("notificacaoId").GetGuid()));
+            avisados.Add(aviso.GetProperty("notificacaoId").GetGuid());
+        }
+
+        // O contador da outra aba converge para zero: o último lote de avisos é contado depois do último commit.
+        await recebidos.AguardarAsync("NotificacaoLida", p => p.GetProperty("naoLidas").GetInt32() == 0);
+        await AguardarAsync(async () => await Db(db => db.Notificacoes.Where(n => n.DestinatarioId == membroId).AllAsync(n => n.AvisoPendente == null)),
+            "avisos de leitura do lote concluídos");
     }
 
     [Fact]

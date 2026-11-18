@@ -435,7 +435,6 @@ public sealed class NotificacoesTests(AlmiranteApiFactory factory) : IClassFixtu
             services.AddDbContext<Almirante.Api.Data.AlmiranteDbContext>(o => o.UseInMemoryDatabase(_banco).AddInterceptors(Falhas));
     }
 
-    /// <summary>O retry também é exercitado por leituras concorrentes no SQL Server, mas lá depende de elas colidirem; aqui o conflito é certo.</summary>
     [Fact]
     public async Task Leitura_ConflitoDeConcorrencia_RelENovaTentativa_EDesisteDepoisDeTres()
     {
@@ -463,5 +462,50 @@ public sealed class NotificacoesTests(AlmiranteApiFactory factory) : IClassFixtu
         Assert.Equal(HttpStatusCode.InternalServerError, (await LerAsync(membro, segunda.Id)).StatusCode);
         Assert.Equal(3, conflitos);
         Assert.Null((await TestHelpers.WithDbAsync(banco, db => db.Notificacoes.AsNoTracking().SingleAsync(n => n.Id == segunda.Id))).LidaEmUtc);
+    }
+
+    [Fact]
+    public async Task LeituraEmLote_ConflitoComOutraLeitura_RelEMantemADataDaOutra_EDesisteDepoisDeTres()
+    {
+        await using var banco = new FactoryComFalhasNaGravacao();
+        var tesouraria = await TestHelpers.CreateAuthenticatedClientAsync(banco);
+        var (membro, membroId) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(banco, "DS");
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.Equal(HttpStatusCode.Created, (await RegistrarDebitoAsync(tesouraria, membroId, descricao: $"Débito {i}")).StatusCode);
+        }
+
+        Task<List<Notificacao>> Gravadas() =>
+            TestHelpers.WithDbAsync(banco, db => db.Notificacoes.AsNoTracking().Where(n => n.DestinatarioId == membroId).ToListAsync());
+        var lidaPelaOutraAba = (await PendentesAsync(membro)).Items[0].Id;
+        DateTime? dataDaOutraAba = null;
+        banco.Falhas.FalharProximoSave(() => new DbUpdateConcurrencyException("outra aba leu antes (simulado)"), antes: async () =>
+        {
+            using var leitura = await LerAsync(membro, lidaPelaOutraAba);
+            dataDaOutraAba = (await leitura.Content.ReadFromJsonAsync<LeituraNotificacaoResponse>(Json))!.Notificacao.LidaEmUtc;
+        });
+
+        var lote = await LerTodasOkAsync(membro);
+
+        Assert.Equal((2, 0), (lote.Marcadas, lote.NaoLidas));
+        var gravadas = await Gravadas();
+        Assert.NotNull(dataDaOutraAba);
+        Assert.Equal(dataDaOutraAba, gravadas.Single(n => n.Id == lidaPelaOutraAba).LidaEmUtc);
+        Assert.All(gravadas.Where(n => n.Id != lidaPelaOutraAba), n => Assert.Equal(lote.LimiteUtc, n.LidaEmUtc));
+
+        Assert.Equal(HttpStatusCode.Created, (await RegistrarDebitoAsync(tesouraria, membroId, descricao: "Depois do lote")).StatusCode);
+        var conflitos = 0;
+        Exception Conflito()
+        {
+            if (++conflitos < 3) banco.Falhas.FalharProximoSave(Conflito);
+            return new DbUpdateConcurrencyException("outra leitura gravou antes (simulado)");
+        }
+
+        banco.Falhas.FalharProximoSave(Conflito);
+        using var esgotada = await LerTodasAsync(membro);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, esgotada.StatusCode);
+        Assert.Equal(3, conflitos);
+        Assert.Single(await Gravadas(), n => n.LidaEmUtc is null);
     }
 }
