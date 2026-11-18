@@ -421,7 +421,8 @@ Cadastros, autoatendimento e rotas de apoio (a lista completa de rotas, com cód
 | --- | --- | --- |
 | `GET` | `/api/Usuarios` | lista os usuários ordenados por nome (ADM, DIR, DIRA, SEC) |
 | `POST` | `/api/Usuarios` | cadastra um usuário (`201`; CPF obrigatório e único, RG conforme `ehCin`, endereço pelo ViaCEP) |
-| `PUT` | `/api/Usuarios/{id}` | atualiza; campo omitido mantém o valor, `null` remove (regras abaixo) |
+| `PUT` | `/api/Usuarios/{id}` | atualiza; `nome`, `email` e `cargoId` obrigatórios, demais campos omitidos mantêm o valor, `null` remove (regras abaixo) |
+| `PATCH` | `/api/Usuarios/{id}` | edição parcial: só os campos enviados mudam; `nome`, `email` e `cargoId` omitidos também mantêm o gravado (issue #193, abaixo) |
 | `DELETE` | `/api/Usuarios/{id}` | exclusão lógica: inativa o usuário e revoga as sessões dele |
 | `POST` | `/api/Usuarios/{usuarioId}/alterar-senha` | troca a senha de outro usuário pela matriz de cargos ([`docs/senhas.md`](docs/senhas.md)) |
 | `GET` | `/api/Usuarios/recuperacao-senha/pendentes` | pedidos de recuperação que o responsável pode atender |
@@ -532,6 +533,17 @@ e-mail do responsável são **obrigatórios quando o usuário tem menos de 18 an
 idade é contada no calendário, dia a dia: a pessoa é menor até a véspera do 18º aniversário, e quem nasceu em 29/02
 completa 18 anos em 01/03 (Código Civil, art. 132, §3º). No `PUT`, a regra usa a data de nascimento e os dados do
 responsável **efetivos**: os do corpo ou, quando omitidos, os já gravados.
+
+**Edição parcial (issue #193).** `PATCH /api/Usuarios/{id}` aceita o mesmo corpo do `PUT`, mas **todo** campo omitido mantém o
+valor gravado, inclusive `nome`, `email` e `cargoId`. Assim, a tela de edição pode enviar só o que mudou
+(`{ "telefone": "(11) 98765-4321" }`) sem regravar nome, e-mail ou cargo lidos quando o formulário abriu. Os valores omitidos vêm da linha travada
+dentro da transação, então uma alteração de outro campo feita por outra pessoa nesse intervalo é preservada. `nome`, `email` e
+`cargoId`, quando enviados, seguem as regras do `PUT` e não aceitam `null` nem `""` (`400`), porque não podem ser removidos; nos
+demais campos, `null` remove, com as mesmas exceções do `PUT` (CPF gravado, documento completo, `ehCin`). Documento,
+responsável, CEP, inatividade e unicidade de e-mail e CPF são verificados sobre o estado resultante, e qualquer falha recusa a
+requisição inteira: nada é gravado pela metade. Corpo sem nenhum campo retorna `400` em `errors["corpo"]`. Permissões: as do
+`PUT` (`usuarios.editar` e regra por alvo para o cargo atual e, se `cargoId` for enviado, para o novo). O estado anterior vai
+para `_usuarios_hist` como em qualquer alteração. O `PUT` continua com o contrato completo para os clientes existentes.
 
 **Foto de perfil (issue #116).** `PUT /api/Usuarios/{id}/foto` recebe `multipart/form-data` com um único campo
 `arquivo` (JPEG, PNG ou WebP, com extensão, `Content-Type` e assinatura coincidentes). A API decodifica a imagem,

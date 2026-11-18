@@ -5,7 +5,6 @@ using FluentValidation;
 
 namespace Almirante.Api.Validation.Usuarios;
 
-/// <summary>Regras dos dados pessoais, as mesmas no cadastro administrativo e no autoatendimento (PUT /api/Me).</summary>
 public abstract class DadosPessoaisValidator<T> : AbstractValidator<T> where T : DadosPessoaisRequest
 {
     protected DadosPessoaisValidator() => RuleLevelCascadeMode = CascadeMode.Stop;
@@ -100,24 +99,30 @@ public abstract class DadosPessoaisValidator<T> : AbstractValidator<T> where T :
 
 public abstract class UsuarioConteudoValidator<T> : DadosPessoaisValidator<T> where T : UsuarioConteudoRequest
 {
-    protected UsuarioConteudoValidator(TimeProvider clock)
+    // parcial (PATCH): nome, email e cargoId omitidos mantêm o valor gravado; enviados, seguem as mesmas regras e não aceitam null.
+    protected UsuarioConteudoValidator(TimeProvider clock, bool parcial = false)
     {
+        var omissao = parcial ? " (omita o campo para manter o valor atual)" : string.Empty;
+
         RuleFor(x => x.Nome)
-            .Must(nome => !string.IsNullOrWhiteSpace(nome)).WithMessage("nome é obrigatório.")
+            .Must(nome => !string.IsNullOrWhiteSpace(nome)).WithMessage($"nome é obrigatório{omissao}.")
             .Must(nome => nome!.Trim().Length <= UsuariosService.NomeMaximo)
             .WithMessage($"nome deve ter no máximo {UsuariosService.NomeMaximo} caracteres.")
             .Must(nome => TextoVarchar.CabeNaPagina1252(nome!.Trim()))
-            .WithMessage("nome contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).");
+            .WithMessage("nome contém caracteres não suportados (use letras do alfabeto latino, com ou sem acento; sem emojis).")
+            .When(x => !parcial || x.NomeInformado);
 
         RuleFor(x => x.Email)
-            .Must(email => !string.IsNullOrWhiteSpace(email)).WithMessage("email é obrigatório.")
+            .Must(email => !string.IsNullOrWhiteSpace(email)).WithMessage($"email é obrigatório{omissao}.")
             .Must(email => email!.Trim().Length <= UsuariosService.EmailMaximo)
             .WithMessage($"email deve ter no máximo {UsuariosService.EmailMaximo} caracteres.")
             .Must(email => UsuariosService.SomenteAsciiImprimivel(email!.Trim()))
             .WithMessage("email deve conter apenas caracteres ASCII (sem acentos).")
-            .Must(UsuariosService.EmailValido).WithMessage("email em formato inválido.");
+            .Must(UsuariosService.EmailValido).WithMessage("email em formato inválido.")
+            .When(x => !parcial || x.EmailInformado);
 
-        RuleFor(x => x.CargoId).Must(cargoId => cargoId is { } id && id != Guid.Empty).WithMessage("cargoId é obrigatório.");
+        RuleFor(x => x.CargoId).Must(cargoId => cargoId is { } id && id != Guid.Empty).WithMessage($"cargoId é obrigatório{omissao}.")
+            .When(x => !parcial || x.CargoIdInformado);
 
         RegrasDosDadosPessoais(clock);
     }
@@ -167,7 +172,21 @@ public sealed class RegistrarUsuarioRequestValidator : UsuarioConteudoValidator<
 
 public sealed class UpdateUsuarioRequestValidator(TimeProvider clock) : UsuarioConteudoValidator<UpdateUsuarioRequest>(clock);
 
-/// <summary>PUT /api/Me: só dados pessoais; nome, e-mail, cargo e senha não existem no contrato.</summary>
+public sealed class PatchUsuarioRequestValidator : UsuarioConteudoValidator<PatchUsuarioRequest>
+{
+    public const string CampoCorpo = "corpo";
+    public const string CorpoVazio = "Informe ao menos um campo para alterar; os campos omitidos mantêm o valor atual.";
+
+    public PatchUsuarioRequestValidator(TimeProvider clock) : base(clock, parcial: true) =>
+        RuleFor(x => x).Custom((request, context) =>
+        {
+            if (!request.AlgumCampoInformado)
+            {
+                context.AddFailure(CampoCorpo, CorpoVazio);
+            }
+        });
+}
+
 public sealed class AtualizarMeusDadosRequestValidator : DadosPessoaisValidator<AtualizarMeusDadosRequest>
 {
     public AtualizarMeusDadosRequestValidator(TimeProvider clock) => RegrasDosDadosPessoais(clock);

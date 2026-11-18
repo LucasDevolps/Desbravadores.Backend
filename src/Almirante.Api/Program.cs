@@ -346,6 +346,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SchemaFilter<MembrosSchemaFilter>();
     options.OperationFilter<EventosOperationFilter>();
     options.OperationFilter<UsuariosFotoOperationFilter>();
+    options.OperationFilter<UsuariosEdicaoParcialOperationFilter>();
     options.OperationFilter<AlmoxarifadoOperationFilter>();
     options.OperationFilter<AutenticacaoOperationFilter>();
 
