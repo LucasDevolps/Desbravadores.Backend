@@ -963,8 +963,20 @@ os demais indicadores iguais.
       "eventoGrupoId": "6f0c…",
       "eventoIds": ["6f0c…", "a91d…"],
       "data": "2026-11-10",
+      "titulo": "Acampamento de primavera",
       "local": "Acampamento",
       "quantidadeParticipantes": 30
+    }
+  ],
+  "atividadesPlanejadas": { "dataInicial": "2026-11-05", "dataFinal": "2026-12-04", "quantidade": 12 },
+  "atividadesRecentes": [
+    {
+      "eventoGrupoId": "b27e…",
+      "eventoIds": ["b27e…"],
+      "data": "2026-11-01",
+      "titulo": "Trilha da serra",
+      "local": "Parque estadual",
+      "quantidadeParticipantes": 18
     }
   ]
 }
@@ -991,6 +1003,21 @@ data. Os cadastros de um mesmo passeio (`EventoGrupoId`, criados com `eventoRefe
 uma única vez, com `eventoIds` dos cadastros ativos e `quantidadeParticipantes` somando os
 participantes ativos de todos eles. Cadastros excluídos logicamente e eventos passados não aparecem.
 Não depende do período.
+
+**Atividades (issue #195).** No painel, atividade é o passeio cadastrado em `/api/Eventos` (um `EventoGrupoId`).
+Os dois blocos usam só cadastros ativos, contam cada passeio uma vez e não dependem do período financeiro.
+
+- `atividadesPlanejadas`: quantidade de passeios com algum cadastro ativo de hoje até hoje + 29 dias (30 dias civis,
+  limites inclusivos, fuso do clube). `dataInicial` e `dataFinal` informam a janela aplicada. Não tem limite: passeios
+  além dos 5 de `proximosEventos` também contam.
+- `atividadesRecentes`: até 5 passeios com cadastro ativo nos 30 dias civis anteriores a hoje (de hoje − 30 a hoje − 1).
+  Hoje fica em `proximosEventos`. `data` é a data mais recente do passeio dentro da janela. A ordem é estável: data
+  decrescente, depois `local` e `eventoGrupoId`. Os demais campos seguem a regra de `proximosEventos`.
+
+`titulo` (também em `proximosEventos`) vem dos cadastros ativos do passeio, o primeiro em ordem alfabética quando
+divergem; data e local já são iguais entre os cadastros de um passeio. O cadastro de evento não tem situação
+operacional (realizada, cancelada etc.), então a resposta não traz situação nem taxa de conclusão. Essa taxa depende
+de a Secretaria definir esses estados. O status dos lançamentos do evento é dado financeiro e não entra aqui.
 
 ## Tesouraria
 
