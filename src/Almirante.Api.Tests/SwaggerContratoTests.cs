@@ -3,10 +3,6 @@ using System.Text.RegularExpressions;
 
 namespace Almirante.Api.Tests;
 
-/// <summary>
-/// O swagger.json descreve a API real (issue #160): toda rota aparece com resumo, o Bearer é exigido exatamente nas rotas
-/// autenticadas e os códigos que os testes observam nas rotas corrigidas pela auditoria continuam declarados.
-/// </summary>
 public sealed partial class SwaggerContratoTests
 {
     private static readonly string[] RotasAnonimas =
@@ -57,7 +53,7 @@ public sealed partial class SwaggerContratoTests
         var documento = JsonNode.Parse(await factory.CreateClient().GetStringAsync("/swagger/v1/swagger.json"))!;
         return documento["paths"]!.AsObject()
             .SelectMany(p => p.Value!.AsObject()
-                .Where(o => o.Key is "get" or "post" or "put" or "delete")
+                .Where(o => o.Key is "get" or "post" or "put" or "patch" or "delete")
                 .Select(o => (Rota: $"{o.Key.ToUpperInvariant()} {p.Key}", Operacao: o.Value!)))
             .ToDictionary(o => o.Rota, o => o.Operacao);
     }

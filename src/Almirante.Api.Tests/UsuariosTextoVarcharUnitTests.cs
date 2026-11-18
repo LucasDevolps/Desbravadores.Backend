@@ -8,12 +8,6 @@ using Microsoft.Extensions.Options;
 
 namespace Almirante.Api.Tests;
 
-/// <summary>
-/// Testes unitários da trava de texto do cadastro de usuários: todo campo string gravado vai para coluna varchar (página 1252),
-/// então emoji, ideograma ou caractere de controle é recusado com 400 em vez de virar "?" no banco ou passar por uma coluna
-/// nvarchar legada (Usuarios.Nome, achado do E2E de 2026-10-21). A varredura por reflexão falha se um campo string novo for
-/// adicionado ao request sem validação.
-/// </summary>
 public sealed class UsuariosTextoVarcharUnitTests
 {
     // Senha não é gravada (só o hash), então pode ter qualquer caractere.
@@ -23,6 +17,8 @@ public sealed class UsuariosTextoVarcharUnitTests
         new(TimeProvider.System, new DataCivil(TimeProvider.System, Microsoft.Extensions.Options.Options.Create(new ClubeOptions())));
 
     private static readonly UpdateUsuarioRequestValidator Atualizar = new(TimeProvider.System);
+
+    private static readonly PatchUsuarioRequestValidator AtualizarParcial = new(TimeProvider.System);
 
     private static T Valido<T>() where T : UsuarioConteudoRequest, new() => new()
     {
@@ -63,6 +59,7 @@ public sealed class UsuariosTextoVarcharUnitTests
     {
         Assert.True(Registrar.Validate(ValidoParaRegistro()).IsValid, string.Join("; ", Registrar.Validate(ValidoParaRegistro()).Errors));
         Assert.True(Atualizar.Validate(Valido<UpdateUsuarioRequest>()).IsValid);
+        Assert.True(AtualizarParcial.Validate(Valido<PatchUsuarioRequest>()).IsValid);
         Assert.True(AtualizarProprios.Validate(ValidoParaAutoatendimento()).IsValid);
     }
 
@@ -88,6 +85,7 @@ public sealed class UsuariosTextoVarcharUnitTests
         {
             AssertRecusado(Registrar, ValidoParaRegistro(), r => r, campo, invalido);
             AssertRecusado(Atualizar, Valido<UpdateUsuarioRequest>(), r => r, campo, invalido);
+            AssertRecusado(AtualizarParcial, Valido<PatchUsuarioRequest>(), r => r, campo, invalido);
             verificados.Add(campo.Name);
         }
 
@@ -95,6 +93,7 @@ public sealed class UsuariosTextoVarcharUnitTests
         {
             AssertRecusado(Registrar, ValidoParaRegistro(), r => r.Endereco!, campo, invalido);
             AssertRecusado(Atualizar, Valido<UpdateUsuarioRequest>(), r => r.Endereco!, campo, invalido);
+            AssertRecusado(AtualizarParcial, Valido<PatchUsuarioRequest>(), r => r.Endereco!, campo, invalido);
             verificados.Add($"Endereco.{campo.Name}");
         }
 
