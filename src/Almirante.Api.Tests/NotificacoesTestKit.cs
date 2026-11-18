@@ -83,9 +83,18 @@ public static class NotificacoesTestKit
     public static Task<HttpResponseMessage> LerAsync(HttpClient client, Guid notificacaoId) =>
         client.PostAsync($"/api/Notificacoes/{notificacaoId}/Leitura", content: null);
 
+    public static Task<HttpResponseMessage> LerTodasAsync(HttpClient client, string query = "") =>
+        client.PostAsync("/api/Notificacoes/Leitura/Todas" + query, content: null);
+
+    public static async Task<LeituraTodasNotificacoesResponse> LerTodasOkAsync(HttpClient client)
+    {
+        using var response = await LerTodasAsync(client);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<LeituraTodasNotificacoesResponse>(Json))!;
+    }
+
     public static string Token(HttpClient client) => client.DefaultRequestHeaders.Authorization!.Parameter!;
 
-    /// <summary>Long polling pelo TestServer: o token vai no cabeçalho, como no cliente .NET.</summary>
     public static HubConnection Hub(WebApplicationFactory<Program> factory, string token) =>
         new HubConnectionBuilder()
             .WithUrl(new Uri(factory.Server.BaseAddress, "hubs/notificacoes"), options =>
@@ -96,7 +105,6 @@ public static class NotificacoesTestKit
             })
             .Build();
 
-    /// <summary>WebSocket como o navegador faz: negotiate com cabeçalho e o handshake GET com access_token na query.</summary>
     public static HubConnection HubWebSocketComTokenNaQuery(WebApplicationFactory<Program> factory, string token) =>
         new HubConnectionBuilder()
             .WithUrl(new Uri(factory.Server.BaseAddress, "hubs/notificacoes"), options =>
@@ -113,11 +121,9 @@ public static class NotificacoesTestKit
             })
             .Build();
 
-    /// <summary>Token de acesso válido para uma sessão existente, com expiração curta (o handler aceita 30 s de tolerância).</summary>
     public static string TokenComExpiracao(AlmiranteApiFactory factory, string tokenOriginal, TimeSpan duracao) =>
         TokenReassinado(factory, tokenOriginal, DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow + duracao);
 
-    /// <summary>Mesmo sub/role/sid do token original, assinado com a chave real, com datas escolhidas (ex.: já expirado).</summary>
     public static string TokenReassinado(AlmiranteApiFactory factory, string tokenOriginal, DateTime emitidoEmUtc, DateTime expiraEmUtc)
     {
         var original = new JwtSecurityTokenHandler().ReadJwtToken(tokenOriginal);
@@ -140,7 +146,6 @@ public static class NotificacoesTestKit
         Guid.Parse(new JwtSecurityTokenHandler().ReadJwtToken(token).Claims.Single(c => c.Type == "sid").Value);
 }
 
-/// <summary>Coleta os eventos do hub recebidos por uma conexão.</summary>
 public sealed class AvisosRecebidos
 {
     private readonly ConcurrentQueue<(string Evento, JsonElement Payload)> _recebidos = new();

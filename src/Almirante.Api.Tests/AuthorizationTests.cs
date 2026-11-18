@@ -6,11 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-/// <summary>
-/// Matriz de permissões da issue #127 (desde a #182, a matriz inicial de concessões e regras por alvo semeada no banco), endpoint por endpoint
-/// e perfil por perfil. "Permitido" = a autorização deixou passar (nunca 401/403;
-/// o corpo propositalmente inválido ou o id inexistente produzem 400/404); "negado" = 403 com o ProblemDetails padrão.
-/// </summary>
 public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixture<AlmiranteApiFactory>
 {
     public enum Modulo { Cadastros, Financeiro, Eventos, Membros, Painel, Formacao, Autoatendimento, SenhasTerceiros, ConsultaAlmoxarifado,
@@ -18,7 +13,6 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
 
     private static readonly Modulo[] Todos = Enum.GetValues<Modulo>();
 
-    /// <summary>Fonte única do esperado: docs/authentication-security.md descreve a mesma tabela.</summary>
     private static readonly Dictionary<string, Modulo[]> Matriz = new()
     {
         ["ADM"] = Todos,
@@ -103,6 +97,7 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("GET /api/Notificacoes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes?filtro=Lidas")),
         new("GET /api/Notificacoes/Pendentes", Modulo.Autoatendimento, () => new(HttpMethod.Get, "/api/Notificacoes/Pendentes")),
         new("POST /api/Notificacoes/{id}/Leitura", Modulo.Autoatendimento, () => new(HttpMethod.Post, $"/api/Notificacoes/{Guid.NewGuid()}/Leitura")),
+        new("POST /api/Notificacoes/Leitura/Todas", Modulo.Autoatendimento, () => new(HttpMethod.Post, "/api/Notificacoes/Leitura/Todas")),
 
         // Issue #159: a própria senha para qualquer cargo; senha de terceiros e recuperação assistida só ADM, DIR e SEC (o par
         // solicitante/alvo ainda passa pela matriz de PermissoesSenha, coberta em AlteracaoSenhaSqlServerTests).
@@ -145,7 +140,6 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         .. EndpointsDoAlmoxarifado(),
     ];
 
-    /// <summary>Issue #126: consulta para todo cargo menos DS; escrita para ADM, DIR, DIRA, SEC e ALM; designação para quem cadastra cargos.</summary>
     private static IEnumerable<Endpoint> EndpointsDoAlmoxarifado()
     {
         const string raiz = "/api/Almoxarifado";
@@ -174,7 +168,6 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         ];
     }
 
-    /// <summary>Ações comuns de /api/Formacao/Classes e /api/Formacao/Especialidades; corpo vazio = 400 para quem passa na autorização.</summary>
     private static IEnumerable<Endpoint> EndpointsDeVinculo(string recurso, string reconhecimento)
     {
         var rota = $"/api/Formacao/{recurso}";

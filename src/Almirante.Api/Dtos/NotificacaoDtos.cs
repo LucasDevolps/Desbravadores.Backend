@@ -11,39 +11,36 @@ public sealed record NotificacaoDto
     public required string Mensagem { get; init; }
     public DateTime CriadaEmUtc { get; init; }
 
-    /// <summary>Nula enquanto a notificação está pendente.</summary>
     public DateTime? LidaEmUtc { get; init; }
 
-    /// <summary>
-    /// Metadados do registro de origem; não concedem acesso por si: o destinatário consulta o evento em GET /api/Me/Eventos/{eventoId}
-    /// (só enquanto participa dele); /api/Eventos e /api/Lancamentos seguem as policies de gestão.
-    /// </summary>
     public Guid? EventoId { get; init; }
     public Guid? LancamentoId { get; init; }
 }
 
 public sealed record NotificacoesPendentesResponse
 {
-    /// <summary>Da mais recente para a mais antiga (criadaEmUtc, depois id).</summary>
     public required IReadOnlyList<NotificacaoDto> Items { get; init; }
 
-    /// <summary>Total de notificações não lidas do usuário, independente da página.</summary>
     public int NaoLidas { get; init; }
 
     public int PageSize { get; init; }
 
-    /// <summary>Cursor opaco da próxima página; nulo na última.</summary>
     public string? ProximoCursor { get; init; }
 }
 
 public sealed record LeituraNotificacaoResponse(NotificacaoDto Notificacao, int NaoLidas);
 
+/// <param name="Marcadas">Quantas pendências esta chamada marcou como lidas (0 quando não havia nenhuma até o limite).</param>
+/// <param name="NaoLidas">Total de não lidas depois da gravação: as criadas depois do limite continuam pendentes.</param>
+/// <param name="LimiteUtc">Instante em que a ação começou: entram as criadas até ele, e as marcadas recebem essa data em lidaEmUtc.</param>
+public sealed record LeituraTodasNotificacoesResponse(int Marcadas, int NaoLidas, DateTime LimiteUtc);
+
 public sealed record ListarNotificacoesPendentesQuery(Guid UsuarioId, int PageSize, string? Cursor) : IRequest<NotificacoesPendentesResponse>;
 
 public sealed record MarcarNotificacaoLidaCommand(Guid UsuarioId, Guid Id) : IRequest<LeituraNotificacaoResponse?>;
 
-/// <summary>Payload do evento NotificacaoCriada do hub.</summary>
+public sealed record MarcarTodasNotificacoesLidasCommand(Guid UsuarioId) : IRequest<LeituraTodasNotificacoesResponse>;
+
 public sealed record NotificacaoCriadaAviso(NotificacaoDto Notificacao, int NaoLidas);
 
-/// <summary>Payload do evento NotificacaoLida do hub.</summary>
 public sealed record NotificacaoLidaAviso(Guid NotificacaoId, DateTime LidaEmUtc, int NaoLidas);

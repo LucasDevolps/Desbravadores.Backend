@@ -17,3 +17,10 @@ public sealed class MarcarNotificacaoLidaHandler(NotificacoesService service)
     public Task<LeituraNotificacaoResponse?> Handle(MarcarNotificacaoLidaCommand request, CancellationToken ct) =>
         service.MarcarComoLidaAsync(request, ct);
 }
+
+public sealed class MarcarTodasNotificacoesLidasHandler(NotificacoesService service)
+    : IRequestHandler<MarcarTodasNotificacoesLidasCommand, LeituraTodasNotificacoesResponse>
+{
+    public Task<LeituraTodasNotificacoesResponse> Handle(MarcarTodasNotificacoesLidasCommand request, CancellationToken ct) =>
+        service.MarcarTodasComoLidasAsync(request, ct);
+}
