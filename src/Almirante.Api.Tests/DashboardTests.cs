@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Tests;
 
-/// <summary>Cada teste usa uma fábrica própria: os indicadores do dashboard são globais.</summary>
+// Cada teste usa uma fábrica própria: os indicadores do dashboard são globais.
 public sealed class DashboardTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -15,7 +15,7 @@ public sealed class DashboardTests : IAsyncLifetime
     private HttpClient _client = null!;
     private Guid _membroId;
 
-    /// <summary>Hoje no fuso do clube (Clube:FusoHorario padrão), a mesma referência da API.</summary>
+    // Hoje no fuso do clube (Clube:FusoHorario padrão), a mesma referência da API.
     private static DateOnly Hoje => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow,
         TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo")).DateTime);
 
@@ -64,14 +64,14 @@ public sealed class DashboardTests : IAsyncLifetime
         LancamentoAsync(fluxo, valor ?? valorPago, StatusLancamento.Pago, data, valorPago);
 
     private Task<Guid> EventoAsync(DateOnly data, string local, int participantes, Guid? grupoId = null, bool ativo = true,
-        int participantesInativos = 0) =>
+        int participantesInativos = 0, string? titulo = null) =>
         TestHelpers.WithDbAsync(_factory, async db =>
         {
             var id = Guid.NewGuid();
             var grupo = grupoId ?? id;
             var evento = new Evento
             {
-                Id = id, EventoGrupoId = grupo, EventoReferenciaId = grupoId, DataEvento = data, Titulo = local, Local = local, Ativo = ativo,
+                Id = id, EventoGrupoId = grupo, EventoReferenciaId = grupoId, DataEvento = data, Titulo = titulo ?? local, Local = local, Ativo = ativo,
                 CriadoPorUsuarioId = _membroId, CriadoEmUtc = DateTime.UtcNow,
             };
             for (var i = 0; i < participantes + participantesInativos; i++)
@@ -98,6 +98,8 @@ public sealed class DashboardTests : IAsyncLifetime
         Assert.Equal(new DashboardFinanceiroDto(0m, 0m, 0m), dashboard.Financeiro);
         Assert.Equal(0, dashboard.Desbravadores.QuantidadeAtivos);
         Assert.Empty(dashboard.ProximosEventos);
+        Assert.Equal(new DashboardAtividadesPlanejadasDto(Hoje, Hoje.AddDays(29), 0), dashboard.AtividadesPlanejadas);
+        Assert.Empty(dashboard.AtividadesRecentes);
     }
 
     [Fact]
@@ -244,7 +246,7 @@ public sealed class DashboardTests : IAsyncLifetime
     [Fact]
     public async Task ProximosEventos_IncluiHojeEFuturos_ExcluiPassadosEExcluidos_EIgnoraOFiltroFinanceiro()
     {
-        var hoje = await EventoAsync(Hoje, "Clube", 3, participantesInativos: 2);
+        var hoje = await EventoAsync(Hoje, "Clube", 3, participantesInativos: 2, titulo: "Reunião");
         var futuro = await EventoAsync(Hoje.AddDays(30), "Acampamento", 1);
         await EventoAsync(Hoje.AddDays(-1), "Passado", 4);
         await EventoAsync(Hoje.AddDays(5), "Excluído", 4, ativo: false);
@@ -252,7 +254,7 @@ public sealed class DashboardTests : IAsyncLifetime
         var eventos = (await ObterAsync(Periodo(Base, Base))).ProximosEventos;
 
         Assert.Equal(new[] { hoje, futuro }, eventos.Select(e => e.EventoGrupoId));
-        Assert.Equal((Hoje, "Clube", 3), (eventos[0].Data, eventos[0].Local, eventos[0].QuantidadeParticipantes));
+        Assert.Equal((Hoje, "Reunião", "Clube", 3), (eventos[0].Data, eventos[0].Titulo, eventos[0].Local, eventos[0].QuantidadeParticipantes));
         Assert.Equal((Hoje.AddDays(30), "Acampamento", 1), (eventos[1].Data, eventos[1].Local, eventos[1].QuantidadeParticipantes));
     }
 
@@ -292,6 +294,100 @@ public sealed class DashboardTests : IAsyncLifetime
 
         Assert.Equal(Almirante.Api.Services.DashboardService.LimiteProximosEventos, eventos.Count);
         Assert.Equal(Enumerable.Range(1, 5).Select(i => Hoje.AddDays(i)), eventos.Select(e => e.Data));
+    }
+
+    [Fact]
+    public async Task AtividadesPlanejadas_ContaDeHojeAteHojeMais29_ExcluiForaDaJanelaEExcluidos_EIgnoraOFiltroFinanceiro()
+    {
+        await EventoAsync(Hoje, "Hoje", 1);
+        await EventoAsync(Hoje.AddDays(29), "Último dia", 1);
+        await EventoAsync(Hoje.AddDays(-1), "Ontem", 1);
+        await EventoAsync(Hoje.AddDays(30), "Depois da janela", 1);
+        await EventoAsync(Hoje.AddDays(10), "Excluído", 1, ativo: false);
+
+        var planejadas = (await ObterAsync(Periodo(Base, Base))).AtividadesPlanejadas;
+
+        Assert.Equal(new DashboardAtividadesPlanejadasDto(Hoje, Hoje.AddDays(29), 2), planejadas);
+    }
+
+    [Fact]
+    public async Task AtividadesPlanejadas_CadaPasseioContaUmaVez_InclusiveAlemDosCincoProximosEventos()
+    {
+        for (var i = 1; i <= 7; i++) await EventoAsync(Hoje.AddDays(i), $"Local {i}", 1);
+        var campori = await EventoAsync(Hoje.AddDays(20), "Campori", 3);
+        await EventoAsync(Hoje.AddDays(20), "Campori", 2, grupoId: campori);
+        await EventoAsync(Hoje.AddDays(20), "Campori", 2, grupoId: campori, ativo: false);
+        var trilha = await EventoAsync(Hoje.AddDays(25), "Trilha", 1, ativo: false);
+        await EventoAsync(Hoje.AddDays(25), "Trilha", 1, grupoId: trilha);
+        var divisa = await EventoAsync(Hoje.AddDays(29), "Divisa", 1);
+        await EventoAsync(Hoje.AddDays(30), "Divisa", 1, grupoId: divisa);
+
+        var dashboard = await ObterAsync();
+
+        Assert.Equal(10, dashboard.AtividadesPlanejadas.Quantidade);
+        Assert.Equal(Almirante.Api.Services.DashboardService.LimiteProximosEventos, dashboard.ProximosEventos.Count);
+    }
+
+    [Fact]
+    public async Task AtividadesRecentes_UltimosTrintaDiasAntesDeHoje_ExcluiHojeAntigosEExcluidos()
+    {
+        var ontem = await EventoAsync(Hoje.AddDays(-1), "Clube", 2, participantesInativos: 1, titulo: "Reunião");
+        var limite = await EventoAsync(Hoje.AddDays(-30), "Acampamento", 1);
+        await EventoAsync(Hoje.AddDays(-31), "Antigo", 1);
+        await EventoAsync(Hoje, "Hoje", 1);
+        await EventoAsync(Hoje.AddDays(-5), "Excluído", 1, ativo: false);
+
+        var recentes = (await ObterAsync(Periodo(Base, Base))).AtividadesRecentes;
+
+        Assert.Equal(new[] { ontem, limite }, recentes.Select(r => r.EventoGrupoId));
+        Assert.Equal((Hoje.AddDays(-1), "Reunião", "Clube", 2),
+            (recentes[0].Data, recentes[0].Titulo, recentes[0].Local, recentes[0].QuantidadeParticipantes));
+        Assert.Equal(new[] { ontem }, recentes[0].EventoIds);
+        Assert.Equal((Hoje.AddDays(-30), "Acampamento"), (recentes[1].Data, recentes[1].Local));
+    }
+
+    [Fact]
+    public async Task AtividadesRecentes_MaisRecentesPrimeiro_DesempatePorLocal_ELimitadasACinco()
+    {
+        for (var i = 1; i <= 7; i++) await EventoAsync(Hoje.AddDays(-i), $"Local {i}", 1);
+        await EventoAsync(Hoje.AddDays(-1), "A local", 1);
+
+        var recentes = (await ObterAsync()).AtividadesRecentes;
+
+        Assert.Equal(Almirante.Api.Services.DashboardService.LimiteAtividadesRecentes, recentes.Count);
+        Assert.Equal(new[] { "A local", "Local 1", "Local 2", "Local 3", "Local 4" }, recentes.Select(r => r.Local));
+        Assert.Equal(new[] { -1, -1, -2, -3, -4 }.Select(d => Hoje.AddDays(d)), recentes.Select(r => r.Data));
+        Assert.Equal(recentes.Select(r => r.EventoGrupoId), (await ObterAsync()).AtividadesRecentes.Select(r => r.EventoGrupoId));
+    }
+
+    [Fact]
+    public async Task AtividadesRecentes_PasseioRepetidoApareceUmaVez_SomandoCadastrosAtivos()
+    {
+        var data = Hoje.AddDays(-3);
+        var raiz = await EventoAsync(data, "Campori", 4, titulo: "Campori 2026");
+        var segundo = await EventoAsync(data, "Campori", 2, grupoId: raiz, titulo: "Campori 2026 - Unidade");
+        await EventoAsync(data, "Campori", 9, grupoId: raiz, ativo: false, titulo: "Aaa");
+
+        var evento = Assert.Single((await ObterAsync()).AtividadesRecentes);
+
+        Assert.Equal((raiz, data, "Campori 2026", "Campori", 6),
+            (evento.EventoGrupoId, evento.Data, evento.Titulo, evento.Local, evento.QuantidadeParticipantes));
+        Assert.Equal(new[] { raiz, segundo }.Order(), evento.EventoIds);
+    }
+
+    [Fact]
+    public async Task AtividadesRecentes_CadastrosDoPasseioEmDatasDiferentes_UsaAMaisRecenteDentroDaJanela()
+    {
+        var raiz = await EventoAsync(Hoje.AddDays(-10), "Trilha", 1);
+        await EventoAsync(Hoje.AddDays(-2), "Trilha", 1, grupoId: raiz);
+        await EventoAsync(Hoje.AddDays(4), "Trilha", 1, grupoId: raiz);
+
+        var dashboard = await ObterAsync();
+
+        var recente = Assert.Single(dashboard.AtividadesRecentes);
+        Assert.Equal((raiz, Hoje.AddDays(-2), 3), (recente.EventoGrupoId, recente.Data, recente.QuantidadeParticipantes));
+        Assert.Equal(Hoje.AddDays(4), Assert.Single(dashboard.ProximosEventos).Data);
+        Assert.Equal(1, dashboard.AtividadesPlanejadas.Quantidade);
     }
 
     [Theory]
@@ -352,6 +448,7 @@ public sealed class DashboardTests : IAsyncLifetime
         await PagoAsync(TipoFluxoLancamento.Saida, 30m, Hoje);
         await TestHelpers.AddUsuarioAsync(_factory, "Desbravador contado", "DS");
         await EventoAsync(Hoje.AddDays(3), "Acampamento", participantes: 2);
+        await EventoAsync(Hoje.AddDays(-3), "Trilha", participantes: 1);
         var (cliente, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, role);
         var completo = await ObterAsync();
 
@@ -365,6 +462,10 @@ public sealed class DashboardTests : IAsyncLifetime
         Assert.Equal((completo.Periodo, completo.Desbravadores), (dashboard.Periodo, dashboard.Desbravadores));
         Assert.Equal(completo.ProximosEventos.Select(e => (e.EventoGrupoId, e.QuantidadeParticipantes)),
             dashboard.ProximosEventos.Select(e => (e.EventoGrupoId, e.QuantidadeParticipantes)));
-        Assert.Equal((1, 1), (dashboard.Desbravadores.QuantidadeAtivos, dashboard.ProximosEventos.Count));
+        Assert.Equal(completo.AtividadesPlanejadas, dashboard.AtividadesPlanejadas);
+        Assert.Equal(completo.AtividadesRecentes.Select(e => (e.EventoGrupoId, e.Data, e.Titulo, e.Local)),
+            dashboard.AtividadesRecentes.Select(e => (e.EventoGrupoId, e.Data, e.Titulo, e.Local)));
+        Assert.Equal((1, 1, 1, 1), (dashboard.Desbravadores.QuantidadeAtivos, dashboard.ProximosEventos.Count,
+            dashboard.AtividadesPlanejadas.Quantidade, dashboard.AtividadesRecentes.Count));
     }
 }
