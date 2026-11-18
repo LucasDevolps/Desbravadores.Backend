@@ -181,18 +181,42 @@ public class UsuariosController(UsuariosService usuariosService, ISender mediato
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUsuarioRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUsuarioRequest request, CancellationToken cancellationToken) =>
+        PrepararEdicao(id, request) ? Ok(await Mediator.Send(request, cancellationToken)) : IdentidadeInvalida();
+
+    [HttpPatch("{id:guid}")]
+    [RequerPermissao(Permissoes.UsuariosEditar)]
+    [EndpointSummary("Altera só os campos enviados de um usuário ativo; os omitidos, inclusive nome, e-mail e cargo, mantêm o valor gravado (estado anterior completo auditado em _usuarios_hist).")]
+    [EndpointDescription("Edição parcial com os mesmos campos, validações, permissões e transação auditada do PUT /api/Usuarios/{id}. " +
+        "Todo campo omitido mantém o valor lido do banco dentro da transação, com a linha travada: salvar só o telefone nunca regrava nome, " +
+        "e-mail ou cargo lidos antes por um formulário, e uma alteração concorrente de outro campo é preservada. " +
+        "nome, email e cargoId: enviados, seguem as regras do PUT; null ou \"\" é recusado (400), porque não podem ser removidos. " +
+        "Nos demais campos, null (ou \"\" nos textos) remove, com as mesmas exceções do PUT (cpf gravado não sai; ehCin só aceita true ou false). " +
+        "As regras de documento completo, responsável, CEP, inatividade e unicidade de e-mail e CPF são verificadas sobre o estado resultante; " +
+        "qualquer falha recusa a requisição inteira, sem gravar parte dela. Corpo sem nenhum campo: 400 em errors[\"corpo\"]. " +
+        "Exige usuarios.editar e regra por alvo (CargoRegrasAlvo) para o cargo atual do usuário e, se cargoId for enviado, também para o novo (403). " +
+        "404 se inexistente; 409 se inativo, se o e-mail ou CPF pertencer a outro usuário ou se for o último usuário do perfil de sistema protegido sendo reclassificado. " +
+        "O PUT continua disponível com o contrato completo.")]
+    [ProducesResponseType<UsuarioListItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> Patch(Guid id, [FromBody] PatchUsuarioRequest request, CancellationToken cancellationToken) =>
+        PrepararEdicao(id, request) ? Ok(await Mediator.Send(request, cancellationToken)) : IdentidadeInvalida();
+
+    private bool PrepararEdicao(Guid id, EdicaoAdministrativaRequest request)
     {
         if (!User.TentarObterUsuarioId(out var usuarioId))
         {
-            return IdentidadeInvalida();
+            return false;
         }
 
         request.Id = id;
         request.UsuarioResponsavelId = usuarioId;
         request.IpResponsavel = HttpContext.IpDeOrigem();
         request.SolicitanteRole = User.Role();
-        return Ok(await Mediator.Send(request, cancellationToken));
+        return true;
     }
 
     [HttpDelete("{id:guid}")]

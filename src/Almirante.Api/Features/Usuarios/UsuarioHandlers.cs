@@ -14,6 +14,11 @@ public sealed class UpdateUsuarioHandler(UsuariosService service) : IRequestHand
     public Task<UsuarioListItemDto> Handle(UpdateUsuarioRequest request, CancellationToken ct) => service.UpdateAsync(request, ct);
 }
 
+public sealed class PatchUsuarioHandler(UsuariosService service) : IRequestHandler<PatchUsuarioRequest, UsuarioListItemDto>
+{
+    public Task<UsuarioListItemDto> Handle(PatchUsuarioRequest request, CancellationToken ct) => service.PatchAsync(request, ct);
+}
+
 public sealed class DeleteUsuarioHandler(UsuariosService service) : IRequestHandler<DeleteUsuarioRequest, Unit>
 {
     public async Task<Unit> Handle(DeleteUsuarioRequest request, CancellationToken ct)

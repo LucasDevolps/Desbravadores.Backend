@@ -156,7 +156,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .ToListAsync(cancellationToken);
     }
 
-    /// <summary>Usuários ativos com o mínimo para identificá-los (id, nome, cargo), para seletores de participantes e cobrados.</summary>
     public async Task<IReadOnlyList<MembroResumoDto>> ListarMembrosAsync(CancellationToken ct) =>
         await db.Usuarios.AsNoTracking()
             .Where(u => u.Ativo)
@@ -164,7 +163,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .Select(u => new MembroResumoDto(u.Id, u.Nome, u.Cargo!.Nome, u.Cargo.Role))
             .ToListAsync(ct);
 
-    /// <summary>Dados do próprio usuário ativo; null se ele foi desativado entre a validação do token e a consulta.</summary>
     public Task<MeusDadosDto?> ObterMeusDadosAsync(Guid id, CancellationToken ct) =>
         db.Usuarios.AsNoTracking().Where(u => u.Id == id && u.Ativo).Select(ParaMeusDados).SingleOrDefaultAsync(ct);
 
@@ -253,18 +251,24 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         return await ObterDtoAsync(usuario.Id, ct);
     }
 
-    public async Task<UsuarioListItemDto> UpdateAsync(UpdateUsuarioRequest request, CancellationToken ct)
+    public Task<UsuarioListItemDto> UpdateAsync(UpdateUsuarioRequest request, CancellationToken ct) =>
+        EditarAsync(request, new CadastroAdministrativo(request.Nome!.Trim(), request.Email!.Trim(), request.CargoId!.Value, request.SolicitanteRole), ct);
+
+    // Edição parcial: nome, e-mail e cargo omitidos ficam com o valor da linha travada (como os dados pessoais omitidos).
+    public Task<UsuarioListItemDto> PatchAsync(PatchUsuarioRequest request, CancellationToken ct) =>
+        EditarAsync(request, new CadastroAdministrativo(
+            request.NomeInformado ? request.Nome!.Trim() : null,
+            request.EmailInformado ? request.Email!.Trim() : null,
+            request.CargoIdInformado ? request.CargoId!.Value : null,
+            request.SolicitanteRole), ct);
+
+    private async Task<UsuarioListItemDto> EditarAsync(EdicaoAdministrativaRequest request, CadastroAdministrativo cadastro, CancellationToken ct)
     {
-        var cadastro = new CadastroAdministrativo(request.Nome!.Trim(), request.Email!.Trim(), request.CargoId!.Value, request.SolicitanteRole);
         await AlterarAsync(request.Id, request, cadastro, request.UsuarioResponsavelId, request.IpResponsavel, ct);
         logger.LogInformation("Usuário {UsuarioId} alterado por {ResponsavelId}.", request.Id, request.UsuarioResponsavelId);
         return await ObterDtoAsync(request.Id, ct);
     }
 
-    /// <summary>
-    /// Autoatendimento: o próprio usuário altera só os dados pessoais. Nome, e-mail e cargo são mantidos a partir da linha travada
-    /// na mesma transação (uma troca de cargo concorrente nunca é desfeita). Auditado em _usuarios_hist como qualquer alteração.
-    /// </summary>
     public async Task<MeusDadosDto> AtualizarMeusDadosAsync(AtualizarMeusDadosRequest request, CancellationToken ct)
     {
         await AlterarAsync(request.UsuarioId, request, null, request.UsuarioId, request.IpResponsavel, ct);
@@ -272,8 +276,8 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         return await db.Usuarios.AsNoTracking().Where(u => u.Id == request.UsuarioId).Select(ParaMeusDados).SingleAsync(ct);
     }
 
-    /// <summary>Nome, e-mail e cargo do PUT administrativo, com o cargo de quem pede (regras por alvo de usuarios.editar).</summary>
-    private sealed record CadastroAdministrativo(string Nome, string Email, Guid CargoId, string SolicitanteRole);
+    // Nome, e-mail e cargo da edição administrativa (null = mantém o gravado, só no PATCH), com o cargo de quem pede.
+    private sealed record CadastroAdministrativo(string? Nome, string? Email, Guid? CargoId, string SolicitanteRole);
 
     private async Task AlterarAsync(Guid id, DadosPessoaisRequest request, CadastroAdministrativo? cadastro, Guid responsavelId,
         string ipResponsavel, CancellationToken ct)
@@ -298,17 +302,26 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             if (cadastro is not null)
             {
                 await ExigirRegraSobreCargoAsync(cadastro.SolicitanteRole, Permissoes.UsuariosEditar, atual.Role, ct);
-                var cargo = await ObterCargoAtivoAsync(cadastro.CargoId, ct);
-                await ExigirRegraSobreCargoAsync(cadastro.SolicitanteRole, Permissoes.UsuariosEditar, cargo.Role, ct);
-                if (cargo.Id != atual.CargoId)
+                if (cadastro.CargoId is { } novoCargoId)
                 {
-                    await ExigirOutroUsuarioNoPerfilProtegidoAsync(id, atual.CargoId, "reclassificado", ct);
-                }
-                (nome, email, emailNormalizado, cargoId) = (cadastro.Nome, cadastro.Email, NormalizarEmail(cadastro.Email), cargo.Id);
+                    var cargo = await ObterCargoAtivoAsync(novoCargoId, ct);
+                    await ExigirRegraSobreCargoAsync(cadastro.SolicitanteRole, Permissoes.UsuariosEditar, cargo.Role, ct);
+                    if (cargo.Id != atual.CargoId)
+                    {
+                        await ExigirOutroUsuarioNoPerfilProtegidoAsync(id, atual.CargoId, "reclassificado", ct);
+                    }
 
-                if (await db.Usuarios.AnyAsync(u => u.Id != id && u.EmailNormalizado == emailNormalizado, ct))
+                    cargoId = cargo.Id;
+                }
+
+                nome = cadastro.Nome ?? nome;
+                if (cadastro.Email is { } novoEmail)
                 {
-                    throw EmailDeOutroUsuario();
+                    (email, emailNormalizado) = (novoEmail, NormalizarEmail(novoEmail));
+                    if (await db.Usuarios.AnyAsync(u => u.Id != id && u.EmailNormalizado == emailNormalizado, ct))
+                    {
+                        throw EmailDeOutroUsuario();
+                    }
                 }
             }
 
@@ -477,10 +490,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         (await consultaCep.ConsultarAsync(cep, ct)).ExigirEndereco(
             () => ApiProblemException.Invalid(Cep.CampoErro, $"endereco.cep não encontrado no ViaCEP. {consequencia}"), consequencia);
 
-    /// <summary>
-    /// Consulta o ViaCEP antes da transação (sem segurar o lock da linha durante a chamada HTTP), só quando o PUT troca o CEP de um
-    /// usuário ativo. CEP igual ao gravado não é consultado: os dados do CEP já gravados são mantidos.
-    /// </summary>
     private async Task<CepDto?> PreConsultarCepAlteradoAsync(Guid id, DadosPessoaisRequest request, CancellationToken ct)
     {
         if (!request.EnderecoInformado || request.Endereco is not { CepInformado: true } pedido || Cep.Normalizar(pedido.Cep) is not { } cep)
@@ -493,11 +502,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         return gravado is null || gravado.EnderecoCep == cep ? null : await ConsultarCepAsync(cep, NadaAlterado, ct);
     }
 
-    /// <summary>
-    /// Endereço resultante do PUT. Omitido mantém tudo; null ou cep vazio remove tudo; CEP igual mantém os dados do CEP gravados; CEP
-    /// novo substitui todos os dados do CEP pelos do ViaCEP e, se número ou complemento forem omitidos, eles ficam vazios (eram do
-    /// endereço anterior). Falha do ViaCEP recusa o PUT inteiro, sem tocar no endereço gravado.
-    /// </summary>
     private async Task<EnderecoGravado> EnderecoEfetivoAsync(DadosPessoaisRequest request, EnderecoGravado atual, CepDto? cepPreConsultado,
         CancellationToken ct)
     {
@@ -541,10 +545,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
             .SingleOrDefaultAsync(ct)
         ?? throw ApiProblemException.Invalid("CargoId", "cargoId inexistente ou inativo.");
 
-    /// <summary>
-    /// Permissão da operação e regra por alvo (CargoRegrasAlvo) do cargo de quem pede para o cargo do usuário, relidas do banco. Ausência de
-    /// regra nega: não há hierarquia implícita, e um cargo novo só é gerenciado por quem recebeu uma regra explícita para ele.
-    /// </summary>
     internal async Task ExigirRegraSobreCargoAsync(string solicitanteRole, string permissao, string alvoRole, CancellationToken ct)
     {
         if (!await permissoes.PodeSobreAlvoAsync(solicitanteRole, permissao, alvoRole, ct))
@@ -554,10 +554,6 @@ public class UsuariosService(AlmiranteDbContext db, IPasswordHasher<Usuario> pas
         }
     }
 
-    /// <summary>
-    /// O último usuário ativo de um perfil de sistema protegido (o administrador) não é excluído nem reclassificado. Trava as linhas ativas do
-    /// perfil até o commit (UPDLOCK, HOLDLOCK): duas requisições paralelas não esvaziam o perfil uma pela outra.
-    /// </summary>
     private async Task ExigirOutroUsuarioNoPerfilProtegidoAsync(Guid usuarioId, Guid cargoId, string acao, CancellationToken ct)
     {
         var protegido = await db.Cargos.AsNoTracking().Where(c => c.Id == cargoId).Select(c => c.SistemaProtegido).SingleAsync(ct);
