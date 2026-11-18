@@ -143,6 +143,46 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     public Task<IActionResult> AtualizarPagamento(Guid id, [FromBody] AtualizarPagamentoRequest request, CancellationToken cancellationToken) =>
         EnviarPagamentoAsync(id, request, cancellationToken);
 
+    [HttpPost("{id:guid}/Devolucao")]
+    [RequerPermissao(Permissoes.PagamentosRegistrar)]
+    [EndpointSummary("Dá baixa em uma devolução de evento (o tesoureiro devolveu o dinheiro ao membro).")]
+    [EndpointDescription("Só para devoluções (lançamentos com lancamentoOrigemId). Corpo: dataPagamento (yyyy-MM-dd, até hoje no fuso do clube), " +
+        "valorPago (valor efetivamente devolvido: > 0, 2 casas, no máximo o valor esperado) e justificativa. A justificativa é obrigatória quando " +
+        "valorPago difere do valor esperado e opcional quando é igual; quando informada, precisa de pelo menos 3 caracteres sem contar os espaços " +
+        "(máx. 255). Marca a devolução como Paga. 409 se o lançamento não é devolução, se a baixa já foi registrada (use PUT) ou se mudou durante a requisição.")]
+    [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public Task<IActionResult> RegistrarDevolucao(Guid id, [FromBody] RegistrarDevolucaoRequest request, CancellationToken cancellationToken) =>
+        EnviarDevolucaoAsync(id, request, cancellationToken);
+
+    [HttpPut("{id:guid}/Devolucao")]
+    [RequerPermissao(Permissoes.PagamentosRegistrar)]
+    [EndpointSummary("Corrige data, valor e/ou justificativa de uma devolução já baixada.")]
+    [EndpointDescription("Mesmas regras do POST (a justificativa enviada substitui a anterior). 409 se a devolução ainda não tem baixa registrada.")]
+    [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public Task<IActionResult> AtualizarDevolucao(Guid id, [FromBody] AtualizarDevolucaoRequest request, CancellationToken cancellationToken) =>
+        EnviarDevolucaoAsync(id, request, cancellationToken);
+
+    private async Task<IActionResult> EnviarDevolucaoAsync(Guid id, DevolucaoLancamentoRequest request, CancellationToken cancellationToken)
+    {
+        if (!User.TentarObterUsuarioId(out var usuarioResponsavelId))
+        {
+            return IdentidadeInvalida();
+        }
+
+        request.Id = id;
+        request.UsuarioResponsavelId = usuarioResponsavelId;
+        var lancamento = await mediator.Send(request, cancellationToken);
+        return lancamento is null
+            ? NotFound(new ProblemDetails { Title = "Lançamento não encontrado.", Status = StatusCodes.Status404NotFound })
+            : Ok(lancamento);
+    }
+
     private async Task<IActionResult> EnviarPagamentoAsync(Guid id, PagamentoLancamentoRequest request, CancellationToken cancellationToken)
     {
         if (!User.TentarObterUsuarioId(out var usuarioResponsavelId))

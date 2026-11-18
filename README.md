@@ -652,7 +652,7 @@ A rotina `LancamentosAtrasadosService` (`BackgroundService`) marca como `Atrasad
   (o enviado no mesmo pedido ou o atual) é anterior a hoje no fuso do clube: a rotina o marcaria de
   novo. Reenviar o status atual e mudar só o vencimento continuam aceitos. O registro de pagamento
   aceita lançamentos `Atrasado`, como antes.
-- Eventos: só lançamento `Pago` trava o cadastro (ver [Eventos](#eventos)).
+- Eventos: só lançamento `Pago` trava o cadastro, e ainda assim o valor pode diminuir com devolução (ver [Eventos](#eventos)).
 
 O JSON continua retornando nomes textuais; criação e atualização aceitam tanto nomes quanto
 os códigos numéricos correspondentes e rejeitam valores fora do enum. `status` na listagem
@@ -736,8 +736,10 @@ em `/api/Me/Eventos`. Contrato completo, exemplos e códigos no Swagger.
 | `GET` | `/api/Eventos[?dataInicial=yyyy-MM-dd&dataFinal=yyyy-MM-dd]` | `200` `{ items, dataInicial, dataFinal, dataMinimaCadastro }` |
 | `GET` | `/api/Eventos/{id}` | `200` / `404` (destino do `Location`) |
 | `POST` | `/api/Eventos` (header `Idempotency-Key: <UUID>`) | `201` criado, `200` reenvio idempotente |
-| `PUT` | `/api/Eventos/{id}` | `200` com cadastro e lançamentos atualizados |
+| `PUT` | `/api/Eventos/{id}` | `200` com cadastro, lançamentos e devoluções atualizados |
 | `DELETE` | `/api/Eventos/{id}` | `204` após exclusão lógica auditada |
+| `POST` | `/api/Eventos/{id}/Participantes/{membroId}/Estorno` | `200` com a devolução do valor retido do membro (issue #209) |
+| `POST`/`PUT` | `/api/Lancamentos/{id}/Devolucao` | `200` baixa/correção da devolução (`financeiro.pagamentos.registrar`) |
 
 **Campo `membros` = `GUID | GUID[]`.** Um único GUID (`"membros": "1111…"`) e um array
 (`"membros": ["1111…", "2222…"]`) são a mesma operação: o `MembrosJsonConverter` normaliza para
@@ -827,16 +829,62 @@ participantes, agora sem lançamento. Participantes adicionados a um evento sem 
 `Atrasado` é só um
 `Pendente` vencido (issue #184): acompanha o novo valor e a nova data e volta a `Pendente` se a nova data
 ainda não passou (com data passada, o `Pendente` fica para a rotina de vencimento). Com algum lançamento
-`Pago`: `409` para qualquer mudança na **composição** de custos (transporte, `ehGratis`, alimentação,
-`individual`, seguro — não só o total), participantes ou data (pagamentos nunca voltam a pendente nem
-geram estorno); só **local**, **título** e **descrição** podem ser corrigidos (a descrição de todos os
-lançamentos, inclusive `Pago`/`Atrasado`, acompanha o novo título; valor, vencimento e status do pagamento
-não mudam). Data/local não mudam por PUT isolado quando o passeio
+`Pago` (issue #209): o valor por membro **pode diminuir** (inclusive a zero) e gera devoluções (ver
+[Devoluções](#devoluções-issue-209)); **aumento**, outra composição de custos com o **mesmo total**
+(transporte, `ehGratis`, alimentação, `individual`, seguro), **inclusão** de participantes e mudança de
+**data** continuam em `409`. Quem **não pagou** pode ser removido normalmente; quem **pagou** só sai antes da
+data do evento depois do estorno concluído, e no dia do evento ou depois sai sem devolução. **Local**,
+**título** e **descrição** podem ser corrigidos (a descrição de todos os lançamentos e devoluções acompanha o
+novo título; valor, vencimento e status do pagamento não mudam). Pagamentos nunca voltam a pendente.
+Data/local não mudam por PUT isolado quando o passeio
 tem mais de um cadastro ativo (`409`). A data só é validada contra o mês atual se for alterada.
 
 **DELETE** `{ "motivo": "...", "versao": "..." }`: exclusão lógica (`Ativo = false`) do cadastro, das
-participações e dos lançamentos (`Pendente` ou `Atrasado`), na mesma transação; outros grupos do passeio
-permanecem. `Pago` → `409` sem alterar nada; inexistente/já excluído → `404`.
+participações e dos lançamentos em aberto (`Pendente` ou `Atrasado`), na mesma transação; outros grupos do
+passeio permanecem. Enquanto houver **valor retido** (pagamento que não foi devolvido por inteiro, ou
+devolução ainda não baixada) → `409` sem alterar nada. Com todos os estornos concluídos a exclusão passa, e
+os pagamentos e devoluções baixadas **continuam ativos**: são entrada e saída que aconteceram de fato e
+seguem no caixa. Inexistente/já excluído → `404`.
+
+#### Devoluções (issue #209)
+
+Quando quem já pagou deve receber dinheiro de volta, o sistema cria uma **devolução**: um lançamento de
+`Saida` do mesmo membro e do mesmo evento, `Categoria = Evento`, `Status = Pendente`, `Vencimento` = hoje no
+fuso do clube, descrição `Devolução - Evento - {titulo} - {dd/MM/yyyy}`, ligado ao pagamento de origem por
+`lancamentoOrigemId` e com o `motivo` informado (`devolucaoMotivo`). O pagamento original **nunca muda**.
+Cada devolução notifica o membro (`DevolucaoEvento`, ver [`docs/notificacoes.md`](docs/notificacoes.md)).
+
+- **Redução do valor** (`PUT /api/Eventos/{id}` com valor por membro menor, `motivo` obrigatório): para cada
+  pagamento ativo do cadastro, `devolução = max(0, valorPago − novo valor por membro − devoluções já geradas
+  para ele)`. Reduções seguidas somam (50 → 30 devolve 20; 30 → 0 devolve mais 30). Pagamento parcial: se
+  o `valorPago` não passa do novo valor, o saldo que faltava é cancelado (o lançamento continua `Pago`) e não
+  há devolução; na zeragem, devolve tudo o que foi pago. As cobranças em aberto acompanham o novo valor, ou
+  são canceladas no zero.
+- **Estorno do participante** (`POST /api/Eventos/{id}/Participantes/{membroId}/Estorno`, corpo
+  `{ "motivo", "versao" }`, `eventos.editar`): gera a devolução de tudo o que o membro ainda tem retido
+  (`valorPago − devoluções já geradas`), sem mexer no valor do evento nem nos demais. `409` se não há nada a
+  devolver; `404` se o membro não participa nem tem lançamento ativo no cadastro. Vale também para quem já
+  foi removido e ainda tem pagamento ativo.
+- **Baixa** (`POST /api/Lancamentos/{id}/Devolucao`, `financeiro.pagamentos.registrar`): o tesoureiro informa
+  `dataPagamento` (até hoje) e `valorPago`, o valor efetivamente devolvido, de 0,01 até o valor esperado (acima
+  disso, `400`). A `justificativa` é **obrigatória** quando o valor difere do esperado e **opcional** quando é
+  igual; quando informada, precisa de pelo menos **3 caracteres sem contar os espaços** (`"a b"` não passa,
+  `"abc"` passa), no máximo 255, página 1252. `PUT` corrige data, valor e justificativa com as mesmas regras
+  (a justificativa enviada substitui a anterior). A baixa trava a linha do evento e muda a `versao`, como o
+  pagamento.
+- **Estorno concluído** = nada retido e todas as devoluções daquele pagamento baixadas (mesmo que o valor
+  devolvido tenha sido menor, com justificativa). É o que libera a remoção de quem pagou antes da data do
+  evento e a exclusão do cadastro.
+- `"Pago"` histórico sem dados de pagamento não diz quanto entrou: a redução ou o estorno sobre ele dá `409`
+  pedindo o registro do pagamento antes. Depois que uma devolução existe, o `valorPago` do pagamento de origem
+  não pode mais ser corrigido (`409`); a data ainda pode.
+- A rotina de vencimento marca como `Atrasado` uma devolução não baixada depois do vencimento, sem notificar
+  (é uma `Saida`, não um débito do membro).
+
+`GET /api/Eventos` traz `devolucoes` (id, membro, pagamento de origem, valor esperado, vencimento, status,
+`valorDevolvido`, `dataDevolucao`, motivo e justificativa). `lancamentos` continua listando só as cobranças, e
+um pagamento continua ali mesmo depois de o valor ser zerado ou o participante removido. Em `/api/Me/Eventos`,
+o participante vê as próprias devoluções em `minhasDevolucoes`.
 
 **Auditoria (`historico_eventos`).** Trigger `TR_eventos_AuditoriaExclusaoLogica` (`AFTER UPDATE`, só na
 transição `Ativo 1 → 0`, várias linhas) grava snapshot completo (IDs, grupo/referência, título,
@@ -850,7 +898,8 @@ limpo no `finally` na mesma conexão física e, se a limpeza falhar, o pool dess
 
 **Lançamentos vinculados a evento** (`EventoId != null`): `PUT /api/Lancamentos/{id}` só aceita mudar
 `status` (exceto para `Pago`) e `descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
-`409` orientando o uso de `/api/Eventos`. O pagamento é registrado por `POST /api/Lancamentos/{id}/Pagamento`,
+`409` orientando o uso de `/api/Eventos`. Uma **devolução** (`lancamentoOrigemId` preenchido) não muda por
+`PUT /api/Lancamentos/{id}` nem por `/Pagamento` (`409`): a baixa é em `/api/Lancamentos/{id}/Devolucao`. O pagamento é registrado por `POST /api/Lancamentos/{id}/Pagamento`,
 que também atualiza a linha do evento (muda a `versao`). As exceções de eventos (finalidade nula, valor zero, data
 passada no mês) **não** se aplicam a `POST /api/Lancamentos/Registrar`. `Lancamento.Finalidade` e
 `lancamentos_deletados.Finalidade` agora aceitam `NULL`; ambos ganharam `EventoId`.
@@ -872,6 +921,13 @@ existentes recebem o próprio local como título (os primeiros 150 caracteres), 
 aparece na descrição dos lançamentos deles; exclusões já auditadas ficam com título e descrição nulos.
 O `Down` remove título e descrição e é recusado (`THROW 50196`) enquanto houver participante sem
 lançamento, para não inventar cobrança.
+
+**Migration `AddDevolucoesEvento`** (issue #209, incremental): adiciona em `Lancamentos` as colunas
+`LancamentoOrigemId` (FK para o próprio `Lancamentos`, índice filtrado), `DevolucaoMotivo` e
+`DevolucaoJustificativa` (`varchar(255)`), com `CK_Lancamentos_Devolucao`: só uma `Saida` de membro ligada a
+evento, com motivo, pode ser devolução, e a justificativa só existe depois da baixa. `CK_notificacoes_Tipo`
+passa a aceitar `5` (`DevolucaoEvento`). Nenhuma linha existente muda. O `Down` é recusado
+(`THROW 50209`) enquanto houver devolução gravada.
 
 **Frontend (issue #57).** Use `GET /api/Membros` (id, nome e cargo, disponível também ao Tesoureiro) para os IDs; envie `membros` como GUID ou array;
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
@@ -1066,7 +1122,10 @@ Gatilhos desta versão, gravados na mesma transação do cadastro:
 - débito geral (`aplicarATodosOsMembros`, `Entrada`) notifica cada usuário que recebeu um lançamento,
   cada um com a própria notificação;
 - novo cadastro de evento (`POST /api/Eventos`) notifica cada participante uma vez, com o valor do
-  lançamento do evento (sem uma segunda notificação de débito).
+  lançamento do evento (sem uma segunda notificação de débito);
+- devolução de evento (redução do valor com pagamento, ou estorno do participante, issue #209) notifica o
+  membro: "Seu valor de R$ X referente ao evento {título} será devolvido." É a primeira notificação com texto
+  em arquivo de recurso (`Resources/NotificacoesTextos.resx`, neutro pt-BR).
 
 `Saida` não é cobrança ao membro e não notifica. Reenvios idempotentes e concorrência não duplicam
 notificações (índice único `UX_notificacoes_destinatario_origem`). O aviso em tempo real é gravado na

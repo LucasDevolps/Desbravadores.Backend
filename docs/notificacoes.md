@@ -25,6 +25,7 @@ seguir. O frontend ainda não foi implementado nem validado.
 | `POST /api/Lancamentos/Registrar` com `aplicarATodosOsMembros: true`, `Entrada` | cada usuário que recebeu um lançamento na operação (a regra atual não mudou: todos os usuários cadastrados), cada um com a própria notificação | `DebitoCadastrado` | `lancamentoId` do lançamento daquele usuário |
 | `POST /api/Eventos` (novo cadastro) | cada participante (`membros`) daquele cadastro, uma vez | `EventoCadastrado` | `eventoId` e `lancamentoId` (nulo em evento sem valor a pagar, que não gera lançamento) |
 | Rotina de vencimento (issue #184): o lançamento passa de `Pendente` a `Atrasado` | o `membroId` do débito (`Entrada` com membro), uma vez por vencimento | `DebitoAtrasado` | `lancamentoId` (e `eventoId` no lançamento de evento); `ChaveOrigem` = `atraso:{lancamentoId}:{vencimento yyyyMMdd}` |
+| Devolução de evento (issue #209): `PUT /api/Eventos/{id}` que reduz o valor com pagamento, ou `POST /api/Eventos/{id}/Participantes/{membroId}/Estorno` | o membro que vai receber, uma por devolução | `DevolucaoEvento` | `eventoId` e `lancamentoId` da devolução; `ChaveOrigem` = `devolucao:{lancamentoId}` |
 | `POST /api/Usuarios/{id}/alterar-senha` e `POST /api/Auth/recuperacao-senha/confirmar` (issue #159) | só o titular da senha alterada, quando quem agiu foi outra pessoa (a troca própria não notifica) | `SenhaAlterada` | nenhuma (`ChaveOrigem` = `senha:{id da auditoria}`) — ver [`senhas.md`](senhas.md#notificação-interna) |
 
 Regras:
@@ -42,8 +43,16 @@ Regras:
 - Reenvios idempotentes (mesma `Idempotency-Key`), concorrência e repetição de processamento não
   recriam notificações. O banco garante isso com o índice único `(DestinatarioId, ChaveOrigem)`.
 - Não há notificações retroativas para registros anteriores à migration `AddNotificacoes`.
+- **Devolução de evento** (issue #209): título `Devolução: {título do evento}` e mensagem
+  `Seu valor de R$ {valor} referente ao evento {título} será devolvido.`, com o valor no formato brasileiro
+  (`R$ 1.234,50`). É a primeira notificação cujo texto vem de **arquivo de recurso com suporte a
+  multilinguagem**: `src/Almirante.Api/Resources/NotificacoesTextos.resx`, lido por
+  `IStringLocalizer<NotificacoesTextos>` (`AddLocalization`). O recurso neutro é pt-BR (`NeutralLanguage` do
+  projeto), então qualquer cultura cai no português. Outro idioma entra como `NotificacoesTextos.{cultura}.resx`.
+  As demais notificações continuam com o texto no código e serão migradas para o mesmo padrão em outra issue.
+  O texto é gravado na notificação no momento da criação.
 - Fora do escopo desta versão: pagamento, alteração ou exclusão de evento (inclusive membros adicionados
-  por `PUT /api/Eventos/{id}`), lembretes e comunicados. O modelo (`Tipo`, `ChaveOrigem`, referências
+  por `PUT /api/Eventos/{id}`; a exceção é a devolução gerada por ele), lembretes e comunicados. O modelo (`Tipo`, `ChaveOrigem`, referências
   opcionais) já comporta novos tipos.
 
 ### Idempotência do débito individual

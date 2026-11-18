@@ -149,6 +149,11 @@ public sealed class LancamentosService(
             return null;
         }
 
+        if (entity.LancamentoOrigemId is not null)
+        {
+            throw DevolucaoConflito();
+        }
+
         if (entity.EventoId is not null)
         {
             ExigirSemAlteracaoDeEvento(entity, request);
@@ -192,10 +197,23 @@ public sealed class LancamentosService(
             return null;
         }
 
+        if (entity.LancamentoOrigemId is not null)
+        {
+            throw DevolucaoConflito();
+        }
+
         var dataPagamento = request.DataPagamento!.Value;
         var valorPago = request.ValorPago!.Value;
         var usuarioId = request.UsuarioResponsavelId;
         ValidarPagamento(entity, valorPago, registro);
+
+        // Issue #209: as devoluções foram calculadas sobre o valor pago; mudá-lo depois deixaria a devolução maior que o que entrou.
+        if (!registro && valorPago != entity.ValorPago &&
+            await db.Lancamentos.AnyAsync(l => l.LancamentoOrigemId == entity.Id && l.Ativo, ct))
+        {
+            throw ApiProblemException.Conflict("Pagamento com devolução.",
+                "O valor pago não pode ser corrigido depois que uma devolução foi gerada sobre ele. A data do pagamento ainda pode ser corrigida.");
+        }
 
         void Aplicar(Lancamento lancamento, DateTime agora)
         {
@@ -222,12 +240,101 @@ public sealed class LancamentosService(
         return LancamentoMapping.ToDto(entity);
     }
 
+    public Task<LancamentoDto?> RegistrarDevolucaoAsync(RegistrarDevolucaoRequest request, CancellationToken ct) =>
+        AplicarDevolucaoAsync(request, registro: true, ct);
+
+    public Task<LancamentoDto?> AtualizarDevolucaoAsync(AtualizarDevolucaoRequest request, CancellationToken ct) =>
+        AplicarDevolucaoAsync(request, registro: false, ct);
+
+    /// <summary>
+    /// Issue #209: baixa (ou correção da baixa) de uma devolução de evento. O tesoureiro digita o valor devolvido, até o esperado; quando
+    /// ele difere do esperado, a justificativa é obrigatória. Formato da justificativa e data são conferidos no validador.
+    /// </summary>
+    private async Task<LancamentoDto?> AplicarDevolucaoAsync(DevolucaoLancamentoRequest request, bool registro, CancellationToken ct)
+    {
+        var entity = await db.Lancamentos.Include(l => l.Membro).SingleOrDefaultAsync(l => l.Id == request.Id && l.Ativo, ct);
+        if (entity is null)
+        {
+            return null;
+        }
+
+        var dataDevolucao = request.DataPagamento!.Value;
+        var valorDevolvido = request.ValorPago!.Value;
+        var justificativa = DevolucaoRegras.NormalizarJustificativa(request.Justificativa);
+        var usuarioId = request.UsuarioResponsavelId;
+        ValidarDevolucao(entity, valorDevolvido, justificativa, registro);
+
+        void Aplicar(Lancamento lancamento, DateTime agora)
+        {
+            ValidarDevolucao(lancamento, valorDevolvido, justificativa, registro);
+            lancamento.Status = StatusLancamento.Pago;
+            lancamento.DataPagamento = dataDevolucao;
+            lancamento.ValorPago = valorDevolvido;
+            lancamento.DevolucaoJustificativa = justificativa;
+            lancamento.PagamentoRegistradoPorUsuarioId = usuarioId;
+            lancamento.PagamentoRegistradoEmUtc = agora;
+        }
+
+        if (db.Database.IsRelational())
+        {
+            return await AtualizarComTravaDoEventoAsync(entity.Id, entity.EventoId!.Value, usuarioId, Aplicar,
+                l => l.Status == StatusLancamento.Pago && l.DataPagamento == dataDevolucao && l.ValorPago == valorDevolvido
+                    && l.DevolucaoJustificativa == justificativa && l.PagamentoRegistradoPorUsuarioId == usuarioId, ct, exigirParticipante: false);
+        }
+
+        var agora = clock.GetUtcNow().UtcDateTime;
+        Aplicar(entity, agora);
+        entity.DataAtualizacao = agora;
+        entity.AtualizadoPorUsuarioId = usuarioId;
+        await SalvarAsync(ct);
+        return LancamentoMapping.ToDto(entity);
+    }
+
+    private static void ValidarDevolucao(Lancamento lancamento, decimal valorDevolvido, string? justificativa, bool registro)
+    {
+        if (lancamento.LancamentoOrigemId is null)
+        {
+            throw ApiProblemException.Conflict("Lançamento não é uma devolução.",
+                "Só devoluções de evento recebem baixa por este endpoint. Para registrar um pagamento, use POST /api/Lancamentos/{id}/Pagamento.");
+        }
+
+        if (registro && lancamento.DataPagamento is not null)
+        {
+            throw ApiProblemException.Conflict("Devolução já registrada.",
+                "Esta devolução já tem baixa registrada. Para corrigir data, valor ou justificativa, use PUT /api/Lancamentos/{id}/Devolucao.");
+        }
+
+        if (!registro && lancamento.DataPagamento is null)
+        {
+            throw ApiProblemException.Conflict("Devolução não registrada.",
+                "Esta devolução ainda não tem baixa registrada. Use POST /api/Lancamentos/{id}/Devolucao.");
+        }
+
+        if (valorDevolvido > lancamento.Valor)
+        {
+            throw ApiProblemException.Invalid("valorPago",
+                $"valorPago não pode ser maior que o valor esperado da devolução ({lancamento.Valor.ToString("F2", CultureInfo.InvariantCulture)}).");
+        }
+
+        if (justificativa is null && DevolucaoRegras.ExigeJustificativa(lancamento.Valor, valorDevolvido))
+        {
+            throw ApiProblemException.Invalid("justificativa",
+                $"justificativa é obrigatória quando o valor devolvido é diferente do esperado ({lancamento.Valor.ToString("F2", CultureInfo.InvariantCulture)}).");
+        }
+    }
+
+    internal static ApiProblemException DevolucaoConflito() => ApiProblemException.Conflict("Lançamento de devolução.",
+        "Devolução de evento não muda por este endpoint: a baixa e a correção são feitas em /api/Lancamentos/{id}/Devolucao, e valor, " +
+        "membro e vencimento vêm do evento.");
+
     /// <summary>
     /// Altera um lançamento de evento depois de travar a linha do evento (mesma ordem de locks de /api/Eventos),
-    /// com retentativa segura: se o commit ficou incerto, devolve o estado gravado em vez de repetir.
+    /// com retentativa segura: se o commit ficou incerto, devolve o estado gravado em vez de repetir. Cobrança precisa estar
+    /// ligada a um participante ativo; devolução (<paramref name="exigirParticipante"/> false) só precisa estar ativa no evento.
     /// </summary>
     private async Task<LancamentoDto> AtualizarComTravaDoEventoAsync(Guid lancamentoId, Guid eventoId, Guid usuarioId,
-        Action<Lancamento, DateTime> alterar, Expression<Func<Lancamento, bool>> jaEfetivado, CancellationToken ct)
+        Action<Lancamento, DateTime> alterar, Expression<Func<Lancamento, bool>> jaEfetivado, CancellationToken ct,
+        bool exigirParticipante = true)
     {
         var agora = clock.GetUtcNow().UtcDateTime;
         var commitIncerto = false;
@@ -264,8 +371,8 @@ public sealed class LancamentosService(
 
                 var entity = await db.Lancamentos.Include(l => l.Membro)
                     .SingleOrDefaultAsync(l => l.Id == lancamentoId && l.Ativo && l.EventoId == eventoId, ct);
-                if (entity is null ||
-                    !await db.EventosMembros.AsNoTracking().AnyAsync(m => m.EventoId == eventoId && m.LancamentoId == lancamentoId && m.Ativo, ct))
+                if (entity is null || (exigirParticipante &&
+                    !await db.EventosMembros.AsNoTracking().AnyAsync(m => m.EventoId == eventoId && m.LancamentoId == lancamentoId && m.Ativo, ct)))
                 {
                     throw ApiProblemException.NotFound("Lançamento não encontrado.");
                 }

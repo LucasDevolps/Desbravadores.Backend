@@ -14,6 +14,13 @@ public static class TestHelpers
 {
     public const string SenhaPadraoTeste = "senha123";
 
+    /// <summary>Textos de notificação do .resx real (neutro pt-BR), como a API os resolve em produção.</summary>
+    public static Microsoft.Extensions.Localization.IStringLocalizer<Almirante.Api.Resources.NotificacoesTextos> TextosNotificacoes() =>
+        new Microsoft.Extensions.Localization.StringLocalizer<Almirante.Api.Resources.NotificacoesTextos>(
+            new Microsoft.Extensions.Localization.ResourceManagerStringLocalizerFactory(
+                Microsoft.Extensions.Options.Options.Create(new Microsoft.Extensions.Localization.LocalizationOptions()),
+                Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance));
+
     /// <summary>Ontem em UTC: nunca é futura no fuso do clube, qualquer que seja a hora da execução.</summary>
     public static DateOnly DataPagamentoPassada => DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
 

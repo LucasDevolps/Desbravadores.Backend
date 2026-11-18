@@ -757,6 +757,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
         Assert.Equal(mesPassado, (await EventosTestKit.LerAsync(corrigido)).DataEvento);
     }
 
+    /// <summary>Issue #209: com Pago, o aumento, a inclusão, a remoção de quem pagou (antes da data, sem estorno) e a data seguem travados.</summary>
     [Fact]
     public async Task Put_ComLancamentoPago_BloqueiaValorParticipantesEData_PreservandoOPagamento()
     {
@@ -768,7 +769,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, dto.Membros, transporte: 99m))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { m[0], m[1], m[2] }))).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { dto.Membros[0] }, motivo: "remover"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, new[] { dto.Membros.Single(x => x != pago.MembroId) }, motivo: "remover"))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await EventosTestKit.PutAsync(Client, dto.Id, Editar(dto, dto.Membros, data: dto.DataEvento.AddDays(1)))).StatusCode);
 
         var lancamentos = await LancamentosDe(dto.Id);

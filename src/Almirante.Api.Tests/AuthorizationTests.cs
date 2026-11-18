@@ -75,6 +75,8 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("PUT /api/Lancamentos/{id}", Modulo.Financeiro, () => Json(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}", new { status = "Pago" })),
         new("POST /api/Lancamentos/{id}/Pagamento", Modulo.Financeiro, () => Json(HttpMethod.Post, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento", new { dataPagamento = "2026-10-01", valorPago = 10m })),
         new("PUT /api/Lancamentos/{id}/Pagamento", Modulo.Financeiro, () => Json(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}/Pagamento", new { dataPagamento = "2026-10-01", valorPago = 10m })),
+        new("POST /api/Lancamentos/{id}/Devolucao", Modulo.Financeiro, () => Json(HttpMethod.Post, $"/api/Lancamentos/{Guid.NewGuid()}/Devolucao", new { dataPagamento = "2026-10-01", valorPago = 10m })),
+        new("PUT /api/Lancamentos/{id}/Devolucao", Modulo.Financeiro, () => Json(HttpMethod.Put, $"/api/Lancamentos/{Guid.NewGuid()}/Devolucao", new { dataPagamento = "2026-10-01", valorPago = 10m })),
         new("DELETE /api/Lancamentos/{id}", Modulo.Financeiro, () => Json(HttpMethod.Delete, $"/api/Lancamentos/{Guid.NewGuid()}", new { motivo = "rbac" })),
         new("GET /api/Tesouraria/Resumo", Modulo.Financeiro, () => new(HttpMethod.Get, "/api/Tesouraria/Resumo")),
 
@@ -83,6 +85,7 @@ public sealed class AuthorizationTests(AlmiranteApiFactory factory) : IClassFixt
         new("POST /api/Eventos", Modulo.Eventos, () => Json(HttpMethod.Post, "/api/Eventos", EventosTestKit.Corpo(Guid.NewGuid()))),
         new("PUT /api/Eventos/{id}", Modulo.Eventos, () => Json(HttpMethod.Put, $"/api/Eventos/{Guid.NewGuid()}", EventosTestKit.Corpo(Guid.NewGuid(), versao: "AAAAAAAAB9E="))),
         new("DELETE /api/Eventos/{id}", Modulo.Eventos, () => Json(HttpMethod.Delete, $"/api/Eventos/{Guid.NewGuid()}", new { motivo = "rbac", versao = "AAAAAAAAB9E=" })),
+        new("POST /api/Eventos/{id}/Participantes/{membroId}/Estorno", Modulo.Eventos, () => Json(HttpMethod.Post, $"/api/Eventos/{Guid.NewGuid()}/Participantes/{Guid.NewGuid()}/Estorno", new { motivo = "rbac", versao = "AAAAAAAAB9E=" })),
 
         new("GET /api/Membros", Modulo.Membros, () => new(HttpMethod.Get, "/api/Membros")),
         new("GET /api/Dashboard", Modulo.Painel, () => new(HttpMethod.Get, "/api/Dashboard")),

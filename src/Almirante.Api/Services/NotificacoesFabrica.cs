@@ -1,6 +1,8 @@
 using System.Globalization;
 using Almirante.Api.Entities;
+using Almirante.Api.Resources;
 using Almirante.Api.Validation.Usuarios;
+using Microsoft.Extensions.Localization;
 
 namespace Almirante.Api.Services;
 
@@ -92,6 +94,19 @@ public static class NotificacoesFabrica
             $"O débito de {Moeda(lancamento.Valor)}{referente} venceu em {Data(lancamento.Vencimento)} e ainda não tem pagamento registrado.",
             lancamento.EventoId, lancamento.Id);
     }
+
+    public static string ChaveDevolucao(Guid devolucaoId) => $"devolucao:{devolucaoId:N}";
+
+    /// <summary>
+    /// Aviso ao membro de que uma devolução foi gerada para ele (redução do valor do evento ou estorno do participante). Primeira
+    /// notificação com texto em arquivo de recurso: título e mensagem vêm de <see cref="NotificacoesTextos"/> (neutro pt-BR).
+    /// </summary>
+    public static Notificacao DevolucaoEvento(IStringLocalizer<NotificacoesTextos> textos, Lancamento devolucao, string tituloEvento,
+        DateTime agoraUtc) =>
+        Nova(devolucao.MembroId!.Value, TipoNotificacao.DevolucaoEvento, ChaveDevolucao(devolucao.Id), agoraUtc,
+            textos[NotificacoesTextos.DevolucaoEventoTitulo, tituloEvento],
+            textos[NotificacoesTextos.DevolucaoEventoMensagem, Moeda(devolucao.Valor), tituloEvento],
+            devolucao.EventoId, devolucao.Id);
 
     public static string ChaveSenhaAlterada(Guid alteracaoSenhaId) => $"senha:{alteracaoSenhaId:N}";
 

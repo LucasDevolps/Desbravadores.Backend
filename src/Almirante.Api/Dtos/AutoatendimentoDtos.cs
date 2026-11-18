@@ -77,10 +77,17 @@ public sealed record EventoParticipanteDto
 
     /// <summary>Nula quando o evento não tem valor a pagar (valor por membro zero): o membro participa sem cobrança.</summary>
     public MinhaCobrancaDto? MinhaCobranca { get; init; }
+
+    /// <summary>Devoluções do próprio participante neste evento (redução do valor ou estorno); vazio quando não há nenhuma.</summary>
+    public IReadOnlyList<MinhaDevolucaoDto> MinhasDevolucoes { get; init; } = [];
 }
 
 /// <summary>Lançamento do próprio participante gerado pelo evento.</summary>
 public sealed record MinhaCobrancaDto(decimal Valor, DateOnly Vencimento, StatusLancamento Status);
+
+/// <summary>Devolução ao próprio participante: valor esperado e, depois da baixa, o valor efetivamente devolvido, a data e a justificativa.</summary>
+public sealed record MinhaDevolucaoDto(decimal Valor, DateOnly Vencimento, StatusLancamento Status, decimal? ValorDevolvido,
+    DateOnly? DataDevolucao, string? Justificativa);
 
 /// <summary>GET /api/Membros: usuários ativos para selecionar participantes e cobrados.</summary>
 public sealed record ListarMembrosQuery : IRequest<IReadOnlyList<MembroResumoDto>>;

@@ -65,14 +65,28 @@ public sealed class UpdateEventoRequest : EventoConteudoRequest, IRequest<Evento
     public string? Versao { get; set; }
 
     /// <summary>
-    /// Obrigatório (1–255) quando a alteração remove participantes ou zera o valor por membro de um evento com cobranças;
-    /// alimenta a auditoria dos lançamentos desativados.
+    /// Obrigatório (1–255) quando a alteração remove participantes, zera o valor por membro de um evento com cobranças ou gera
+    /// devoluções (redução do valor com lançamento Pago); alimenta a auditoria dos lançamentos desativados e fica gravado na devolução.
     /// </summary>
     public string? Motivo { get; set; }
 
     [JsonIgnore] public Guid Id { get; set; }
     [JsonIgnore] public Guid UsuarioResponsavelId { get; set; }
     [JsonIgnore] public string IpResponsavel { get; set; } = string.Empty;
+}
+
+/// <summary>POST /api/Eventos/{id}/Participantes/{membroId}/Estorno: devolve ao membro tudo o que ele ainda tem retido no evento.</summary>
+public sealed class EstornarParticipanteRequest : IRequest<EventoDto>
+{
+    /// <summary>Obrigatório, 1–255 caracteres; fica gravado na devolução.</summary>
+    public string? Motivo { get; set; }
+
+    /// <summary>Versão (rowversion) devolvida pela API no cadastro.</summary>
+    public string? Versao { get; set; }
+
+    [JsonIgnore] public Guid Id { get; set; }
+    [JsonIgnore] public Guid MembroId { get; set; }
+    [JsonIgnore] public Guid UsuarioResponsavelId { get; set; }
 }
 
 public sealed class DeleteEventoRequest : IRequest<Unit>
@@ -100,6 +114,13 @@ public sealed record AlimentacaoDto(bool Individual, decimal Valor);
 
 public sealed record EventoLancamentoDto(Guid Id, Guid MembroId, decimal Valor, StatusLancamento Status);
 
+/// <summary>
+/// Devolução de um pagamento do evento (issue #209): Saída para o membro com o valor esperado; valorDevolvido, dataDevolucao e
+/// justificativa vêm da baixa feita pelo tesoureiro em /api/Lancamentos/{id}/Devolucao.
+/// </summary>
+public sealed record EventoDevolucaoDto(Guid Id, Guid MembroId, Guid LancamentoOrigemId, decimal Valor, DateOnly Vencimento,
+    StatusLancamento Status, decimal? ValorDevolvido, DateOnly? DataDevolucao, string? Motivo, string? Justificativa);
+
 public sealed record EventoDto
 {
     public Guid Id { get; init; }
@@ -123,8 +144,14 @@ public sealed record EventoDto
     /// <summary>Token de concorrência (base64 do rowversion). Devolva-o em PUT/DELETE.</summary>
     public required string Versao { get; init; }
 
-    /// <summary>Um por participante quando valorPorMembro &gt; 0; vazio quando o evento não tem valor a pagar.</summary>
+    /// <summary>
+    /// Cobranças: uma por participante quando valorPorMembro &gt; 0; vazio quando o evento não tem valor a pagar. Um lançamento Pago
+    /// continua aqui mesmo depois de o valor ser zerado ou de o participante ser removido (histórico do caixa).
+    /// </summary>
     public required IReadOnlyList<EventoLancamentoDto> Lancamentos { get; init; }
+
+    /// <summary>Devoluções geradas por redução do valor ou estorno de participante; vazio quando não há nenhuma.</summary>
+    public IReadOnlyList<EventoDevolucaoDto> Devolucoes { get; init; } = [];
 }
 
 public sealed record EventosResponse

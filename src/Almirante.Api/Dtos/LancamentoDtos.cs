@@ -29,6 +29,15 @@ public sealed record LancamentoDto
 
     public Guid? PagamentoRegistradoPorUsuarioId { get; init; }
     public DateTime? PagamentoRegistradoEmUtc { get; init; }
+
+    /// <summary>Só nas devoluções de evento: o lançamento Pago de origem. A baixa é feita em /api/Lancamentos/{id}/Devolucao.</summary>
+    public Guid? LancamentoOrigemId { get; init; }
+
+    /// <summary>Só nas devoluções: motivo da alteração do evento ou do estorno que gerou a devolução.</summary>
+    public string? DevolucaoMotivo { get; init; }
+
+    /// <summary>Só nas devoluções baixadas: justificativa do tesoureiro (obrigatória quando o valor devolvido difere do esperado).</summary>
+    public string? DevolucaoJustificativa { get; init; }
 }
 
 /// <summary>Corpo de POST/PUT /api/Lancamentos/{id}/Pagamento.</summary>
@@ -49,6 +58,31 @@ public sealed class RegistrarPagamentoRequest : PagamentoLancamentoRequest;
 
 /// <summary>Corrige data e/ou valor de um pagamento já registrado.</summary>
 public sealed class AtualizarPagamentoRequest : PagamentoLancamentoRequest;
+
+/// <summary>Corpo de POST/PUT /api/Lancamentos/{id}/Devolucao (baixa de devolução de evento).</summary>
+public abstract class DevolucaoLancamentoRequest : IRequest<LancamentoDto?>
+{
+    /// <summary>Data efetiva da devolução (yyyy-MM-dd), até hoje no fuso do clube.</summary>
+    public DateOnly? DataPagamento { get; set; }
+
+    /// <summary>Valor efetivamente devolvido, digitado pelo tesoureiro: maior que zero, até 2 casas e no máximo o valor esperado.</summary>
+    public decimal? ValorPago { get; set; }
+
+    /// <summary>
+    /// Obrigatória quando valorPago difere do valor esperado; opcional quando é igual. Quando informada: pelo menos 3 caracteres sem
+    /// contar os espaços e no máximo 255.
+    /// </summary>
+    public string? Justificativa { get; set; }
+
+    [JsonIgnore] public Guid Id { get; set; }
+    [JsonIgnore] public Guid UsuarioResponsavelId { get; set; }
+}
+
+/// <summary>Registra a devolução (Pendente ou Atrasada) ao membro.</summary>
+public sealed class RegistrarDevolucaoRequest : DevolucaoLancamentoRequest;
+
+/// <summary>Corrige data, valor e/ou justificativa de uma devolução já baixada.</summary>
+public sealed class AtualizarDevolucaoRequest : DevolucaoLancamentoRequest;
 
 public sealed record LancamentosResponse
 {
