@@ -6,7 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Almirante.Api.Services;
 
-/// <summary>Consulta e leitura das notificações do próprio usuário: toda consulta filtra pelo destinatário vindo do token.</summary>
 public sealed class NotificacoesService(AlmiranteDbContext db, TimeProvider clock, SinalAvisosNotificacoes sinal)
 {
     public const int PageSizePadrao = 20;
@@ -91,11 +90,6 @@ public sealed class NotificacoesService(AlmiranteDbContext db, TimeProvider cloc
         return (itens, CursorNotificacoes.Criar(itens[^1].CriadaEmUtc, itens[^1].Id));
     }
 
-    /// <summary>
-    /// Grava a primeira leitura e o aviso para as outras conexões do usuário na mesma instrução. Repetir (ou ler em paralelo)
-    /// devolve a data já gravada: LidaEmUtc é token de concorrência, então só uma leitura vence e as demais releem.
-    /// Nula para notificação inexistente ou de outro destinatário (mesma resposta nos dois casos).
-    /// </summary>
     public async Task<LeituraNotificacaoResponse?> MarcarComoLidaAsync(MarcarNotificacaoLidaCommand command, CancellationToken ct)
     {
         for (var tentativa = 1; ; tentativa++)
@@ -110,11 +104,7 @@ public sealed class NotificacoesService(AlmiranteDbContext db, TimeProvider cloc
 
             if (notificacao.LidaEmUtc is null)
             {
-                var agora = clock.GetUtcNow().UtcDateTime;
-                notificacao.LidaEmUtc = agora;
-                notificacao.AvisoPendente = AvisoNotificacao.Lida;
-                notificacao.AvisoTentativas = 0;
-                notificacao.AvisoProximaTentativaEmUtc = agora;
+                MarcarLida(notificacao, clock.GetUtcNow().UtcDateTime);
                 try
                 {
                     await db.SaveChangesAsync(ct);
@@ -127,8 +117,46 @@ public sealed class NotificacoesService(AlmiranteDbContext db, TimeProvider cloc
                 sinal.Sinalizar();
             }
 
-            var naoLidas = await db.Notificacoes.CountAsync(n => n.DestinatarioId == command.UsuarioId && n.LidaEmUtc == null, ct);
-            return new LeituraNotificacaoResponse(ToDto(notificacao), naoLidas);
+            return new LeituraNotificacaoResponse(ToDto(notificacao), await ContarNaoLidasAsync(command.UsuarioId, ct));
         }
     }
+
+    public async Task<LeituraTodasNotificacoesResponse> MarcarTodasComoLidasAsync(MarcarTodasNotificacoesLidasCommand command, CancellationToken ct)
+    {
+        var limite = clock.GetUtcNow().UtcDateTime;
+        for (var tentativa = 1; ; tentativa++)
+        {
+            db.ChangeTracker.Clear();
+            var pendentes = await db.Notificacoes
+                .Where(n => n.DestinatarioId == command.UsuarioId && n.LidaEmUtc == null && n.CriadaEmUtc <= limite)
+                .ToListAsync(ct);
+            if (pendentes.Count > 0)
+            {
+                pendentes.ForEach(n => MarcarLida(n, limite));
+                try
+                {
+                    await db.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateConcurrencyException) when (tentativa < TentativasDeLeitura)
+                {
+                    continue;
+                }
+
+                sinal.Sinalizar();
+            }
+
+            return new LeituraTodasNotificacoesResponse(pendentes.Count, await ContarNaoLidasAsync(command.UsuarioId, ct), limite);
+        }
+    }
+
+    private static void MarcarLida(Notificacao notificacao, DateTime agora)
+    {
+        notificacao.LidaEmUtc = agora;
+        notificacao.AvisoPendente = AvisoNotificacao.Lida;
+        notificacao.AvisoTentativas = 0;
+        notificacao.AvisoProximaTentativaEmUtc = agora;
+    }
+
+    private Task<int> ContarNaoLidasAsync(Guid usuarioId, CancellationToken ct) =>
+        db.Notificacoes.CountAsync(n => n.DestinatarioId == usuarioId && n.LidaEmUtc == null, ct);
 }

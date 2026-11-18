@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Almirante.Api.Controllers;
 
-/// <summary>Notificações do próprio usuário autenticado (qualquer cargo ativo, inclusive desbravadores).</summary>
 [ApiController]
 [Route("api/Notificacoes")]
 [Authorize]
@@ -79,6 +78,25 @@ public sealed class NotificacoesController(ISender mediator) : ControllerBase
         return leitura is null
             ? NotFound(new ProblemDetails { Title = "Notificação não encontrada.", Status = StatusCodes.Status404NotFound })
             : Ok(leitura);
+    }
+
+    [HttpPost("Leitura/Todas")]
+    [EndpointSummary("Marca como lidas, de uma vez, todas as notificações pendentes do usuário autenticado.")]
+    [EndpointDescription("Ação do botão Limpar. Somente do usuário do token (sem corpo e sem parâmetro de usuário). Abrange todas as " +
+        "pendências criadas até limiteUtc, o instante em que a ação começou, em qualquer página; as marcadas recebem limiteUtc em lidaEmUtc. " +
+        "Notificações criadas depois do limite continuam pendentes e entram em naoLidas. O 200 só é enviado depois da gravação, com marcadas " +
+        "(quantas esta chamada marcou) e naoLidas (total depois dela). Repetir é seguro: as já lidas mantêm a data original e marcadas vem 0. " +
+        "As notificações continuam no histórico (GET /api/Notificacoes). As demais conexões do usuário recebem um evento NotificacaoLida por " +
+        "notificação marcada pelo hub. A leitura individual (POST /{id}/Leitura) continua igual.")]
+    [ProducesResponseType<LeituraTodasNotificacoesResponse>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> MarcarTodasComoLidas(CancellationToken cancellationToken)
+    {
+        if (!User.TentarObterUsuarioId(out var usuarioId))
+        {
+            return IdentidadeInvalida();
+        }
+
+        return Ok(await mediator.Send(new MarcarTodasNotificacoesLidasCommand(usuarioId), cancellationToken));
     }
 
     private UnauthorizedObjectResult IdentidadeInvalida() => Unauthorized(new ProblemDetails
