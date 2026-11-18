@@ -201,6 +201,43 @@ Histórico vazio: `{ "items": [], "filtro": "Todas", "naoLidas": 0, "pageSize": 
 }
 ```
 
+### Marcar todas como lidas
+
+`POST /api/Notificacoes/Leitura/Todas` (sem corpo; issue #192)
+
+Ação do botão **Limpar**: uma única chamada marca todas as pendências do usuário, e não só as da página
+carregada.
+
+- O destinatário vem do token. Não há parâmetro de usuário (um `usuarioId` na query é ignorado), e as
+  notificações de outros destinatários nunca mudam.
+- **Limite:** `limiteUtc` é o instante em que a ação começou. Entram todas as pendências criadas até ele,
+  em qualquer página, e cada uma recebe esse instante em `lidaEmUtc`. Uma notificação criada depois do
+  limite (durante a chamada ou depois dela) continua pendente e entra em `naoLidas`.
+- `200` só depois de gravar. `marcadas` diz quantas notificações **esta** chamada marcou, e `naoLidas` é o
+  total de não lidas depois dela. Use `naoLidas` no contador.
+- Repetir é seguro. As já lidas mantêm a data original, inclusive as lidas antes pela leitura
+  individual, e uma repetição sem pendências devolve `marcadas: 0`. Sem nenhuma pendência:
+  `{ "marcadas": 0, "naoLidas": 0, "limiteUtc": "…" }`.
+- As notificações continuam disponíveis no histórico (`GET /api/Notificacoes`, filtro `Lidas` ou `Todas`).
+- A leitura individual (`POST /api/Notificacoes/{id}/Leitura`) continua igual. Abrir depois uma
+  notificação já limpa devolve `200` com a mesma `lidaEmUtc`.
+- As demais conexões do usuário recebem, depois do commit, um evento `NotificacaoLida` por notificação
+  marcada, o mesmo da leitura individual (ver [Eventos](#eventos)). Não há evento novo.
+
+```json
+{
+  "marcadas": 23,
+  "naoLidas": 0,
+  "limiteUtc": "2026-11-18T13:20:05.4410000Z"
+}
+```
+
+Concorrência: o lote grava todas as linhas numa só transação, com `LidaEmUtc` como token de concorrência,
+igual à leitura individual. Se outra aba ou outro lote ler uma das notificações antes, a gravação inteira é
+desfeita e repetida com o mesmo limite, e só o que ainda está pendente entra. Assim cada notificação é marcada
+uma única vez e guarda a data de quem leu primeiro. Depois de três conflitos seguidos a chamada devolve `500`
+sem marcar nada, e repetir é seguro.
+
 Erros seguem Problem Details: `401` sem token ou sessão inválida, `400` validação, `404` não encontrada.
 
 ## Hub SignalR
@@ -224,7 +261,7 @@ Erros seguem Problem Details: `401` sem token ou sessão inválida, `400` valida
 | Evento | Quando | Payload |
 |---|---|---|
 | `NotificacaoCriada` | uma notificação nova foi gravada para o usuário | `{ "notificacao": <mesmo objeto da API>, "naoLidas": 3 }` |
-| `NotificacaoLida` | uma notificação do usuário foi marcada como lida (em qualquer aba ou dispositivo) | `{ "notificacaoId": "<guid>", "lidaEmUtc": "2026-10-20T14:05:42.011Z", "naoLidas": 2 }` |
+| `NotificacaoLida` | uma notificação do usuário foi marcada como lida (em qualquer aba ou dispositivo), pela leitura individual ou pelo lote de `/Leitura/Todas` (um evento por notificação) | `{ "notificacaoId": "<guid>", "lidaEmUtc": "2026-10-20T14:05:42.011Z", "naoLidas": 2 }` |
 
 `naoLidas` é o total no momento da emissão. Se outra mudança aconteceu depois, o próximo aviso ou a
 próxima consulta à API corrige o valor.
@@ -279,10 +316,22 @@ await recarregarPendencias();
    `filtro=Lidas` ou `Todas`). Abrir de novo uma notificação lida pode chamar a leitura outra vez sem
    efeito (mesma `lidaEmUtc`).
 
+### Botão Limpar
+
+1. Chamar `POST /api/Notificacoes/Leitura/Todas` uma vez. Não percorra a lista chamando a leitura
+   individual por item.
+2. Somente após o `200`, atualizar o contador com `naoLidas` da resposta e tirar da lista local as
+   pendências com `criadaEmUtc` até `limiteUtc`. Se `naoLidas` não for zero, chegou notificação depois
+   do limite: consulte `/Pendentes` de novo.
+3. Se a chamada falhar (rede, `5xx`), manter a lista como está e permitir nova tentativa. Repetir é
+   seguro.
+4. As outras abas se atualizam pelos avisos `NotificacaoLida`, sem tratamento novo.
+
 ## Confiabilidade
 
 - Ao gravar a notificação, a API grava junto, na mesma linha, um **aviso pendente** (outbox na própria
-  tabela `notificacoes`). A leitura grava o aviso `Lida` na mesma instrução que grava `LidaEmUtc`.
+  tabela `notificacoes`). A leitura grava o aviso `Lida` na mesma instrução que grava `LidaEmUtc`. A leitura
+  em lote faz o mesmo em cada linha marcada, na mesma transação.
 - O serviço `PublicadorAvisosNotificacoes` reserva os avisos pendentes já confirmados no banco
   (`UPDATE ... OUTPUT` com `READPAST`), emite pelo hub e limpa o aviso. Um commit acorda o serviço na
   hora; sem isso, ele varre o banco a cada `Notificacoes:VarreduraAvisosMs` (5 s). Em condições normais
