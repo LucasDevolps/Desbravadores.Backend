@@ -14,8 +14,10 @@ public sealed class TesourariaController(ISender mediator) : ControllerBase
 {
     [HttpGet("Resumo")]
     [RequerPermissao(Permissoes.TesourariaConsultar)]
-    [EndpointSummary("Resumo da Tesouraria: série mensal de receitas e despesas realizadas.")]
-    [EndpointDescription("receitasDespesas: seis competências (ano, mes) em ordem cronológica, dos cinco meses anteriores ao mês atual " +
+    [EndpointSummary("Resumo da Tesouraria: despesas do mês e série mensal de receitas e despesas realizadas.")]
+    [EndpointDescription("despesasMes: total das saídas pagas no mês civil atual do clube (do dia 1 até o fim do mês), igual a saidas da " +
+        "última competência de receitasDespesas e a financeiro.saidas de GET /api/Dashboard sem parâmetros; zero em mês sem despesas. " +
+        "receitasDespesas: seis competências (ano, mes) em ordem cronológica, dos cinco meses anteriores ao mês atual " +
         "no fuso do clube (Clube:FusoHorario), inclusive na virada do ano; mês sem movimento vem com entradas e saidas zero. " +
         "Cada competência soma o valorPago dos lançamentos ativos com pagamento registrado e dataPagamento no mês, separado por tipoFluxo " +
         "(entradas = Entrada, saidas = Saida): a mesma regra do financeiro de GET /api/Dashboard, então o mês atual coincide com o " +

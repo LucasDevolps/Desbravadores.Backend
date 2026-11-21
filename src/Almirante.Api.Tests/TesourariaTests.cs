@@ -8,7 +8,7 @@ using Almirante.Api.Services;
 
 namespace Almirante.Api.Tests;
 
-/// <summary>Issue #190 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.</summary>
+// Issues #190 e #199 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
 public sealed class TesourariaTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -16,7 +16,7 @@ public sealed class TesourariaTests : IAsyncLifetime
     private HttpClient _client = null!;
     private Guid _membroId;
 
-    /// <summary>Hoje no fuso do clube (Clube:FusoHorario padrão), a mesma referência da API.</summary>
+    // Hoje no fuso do clube (Clube:FusoHorario padrão), a mesma referência da API.
     private static DateOnly Hoje => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow,
         TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo")).DateTime);
 
@@ -80,6 +80,7 @@ public sealed class TesourariaTests : IAsyncLifetime
 
         //Assert
         Assert.Equal(esperado, resumo.ReceitasDespesas);
+        Assert.Equal(0m, resumo.DespesasMes);
     }
 
     [Fact(DisplayName = "Resumo soma o valorPago por mês de dataPagamento e tipoFluxo, com zero nos meses sem movimento")]
@@ -198,14 +199,76 @@ public sealed class TesourariaTests : IAsyncLifetime
             (emJaneiro.ReceitasDespesas[^1].Ano, emJaneiro.ReceitasDespesas[^1].Mes)));
     }
 
-    [Fact(DisplayName = "Resumo exige GestaoFinanceira: sem token 401, Secretário e cargos sem financeiro 403, ADM, DIR, DIRA e TES 200")]
+    [Fact(DisplayName = "despesasMes soma o valorPago das saídas pagas no mês atual, não o valor previsto, e coincide com as saídas do Dashboard")]
+    public async Task TesourariaResumo_DespesasMes_SomaValorPagoDasSaidasDoMesAtualAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Saida, 18.9m, MesAtual, valor: 20m);
+        await PagoAsync(TipoFluxoLancamento.Saida, 0.1m, Hoje);
+        await PagoAsync(TipoFluxoLancamento.Saida, 31m, MesAtual.AddMonths(1).AddDays(-1));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 500m, MesAtual);
+
+        //Act
+        var resumo = await ObterAsync();
+        var dashboard = await _client.GetFromJsonAsync<DashboardResponse>("/api/Dashboard", Json);
+
+        //Assert
+        Assert.Equal(50m, resumo.DespesasMes);
+        Assert.Equal(resumo.ReceitasDespesas[^1].Saidas, resumo.DespesasMes);
+        Assert.Equal(dashboard!.Financeiro!.Saidas, resumo.DespesasMes);
+    }
+
+    [Fact(DisplayName = "despesasMes ignora entradas, outros meses, excluídos, despesas em aberto e \"Pago\" legados sem data ou valor")]
+    public async Task TesourariaResumo_DespesasMes_IgnoraLancamentosForaDaRegraAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 70m, MesAtual);
+        await PagoAsync(TipoFluxoLancamento.Saida, 60m, MesAtual.AddDays(-1));
+        await PagoAsync(TipoFluxoLancamento.Saida, 55m, MesAtual.AddMonths(1));
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 50m, StatusLancamento.Pago, MesAtual, 50m, ativo: false);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 40m);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 30m, StatusLancamento.Atrasado);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 20m, StatusLancamento.Pago);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 15m, StatusLancamento.Pago, dataPagamento: MesAtual);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 10m, StatusLancamento.Pago, valorPago: 10m);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(0m, resumo.DespesasMes);
+    }
+
+    [Fact(DisplayName = "Na virada do mês, despesasMes passa a contar só o mês novo, segundo o fuso do clube")]
+    public async Task TesourariaResumo_DespesasMes_ViradaDoMesSegueOFusoDoClubeAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Saida, 12.5m, new DateOnly(2026, 12, 1));
+        await PagoAsync(TipoFluxoLancamento.Saida, 7.5m, new DateOnly(2026, 12, 31));
+        await PagoAsync(TipoFluxoLancamento.Saida, 3m, new DateOnly(2027, 1, 1));
+        // 02:30 UTC de 01/01/2027 ainda é 23:30 de 31/12/2026 em São Paulo.
+        var aindaDezembroNoClube = new DateTimeOffset(2027, 1, 1, 2, 30, 0, TimeSpan.Zero);
+        var janeiroNoClube = new DateTimeOffset(2027, 1, 1, 3, 0, 0, TimeSpan.Zero);
+
+        //Act
+        var emDezembro = await ObterNoInstanteAsync(aindaDezembroNoClube);
+        var emJaneiro = await ObterNoInstanteAsync(janeiroNoClube);
+
+        //Assert
+        Assert.Equal(20m, emDezembro.DespesasMes);
+        Assert.Equal(3m, emJaneiro.DespesasMes);
+    }
+
+    [Fact(DisplayName = "Resumo exige financeiro.tesouraria.consultar: sem token 401, Secretário e cargos sem financeiro 403, ADM, DIR, DIRA e TES 200")]
     public async Task TesourariaResumo_ObterResumo_SoParaQuemTemGestaoFinanceiraAsync()
     {
         //Arrange
         await PagoAsync(TipoFluxoLancamento.Entrada, 80m, MesAtual);
+        await PagoAsync(TipoFluxoLancamento.Saida, 25m, MesAtual);
         using var anonimo = _factory.CreateClient();
         var negados = new Dictionary<string, HttpResponseMessage>();
         var permitidos = new Dictionary<string, HttpStatusCode>();
+        var despesasPorRole = new Dictionary<string, decimal?>();
 
         //Act
         var semToken = await anonimo.GetAsync("/api/Tesouraria/Resumo");
@@ -218,7 +281,11 @@ public sealed class TesourariaTests : IAsyncLifetime
         foreach (var role in new[] { "ADM", "DIR", "DIRA", "TES" })
         {
             var (cliente, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, role);
-            permitidos[role] = (await cliente.GetAsync("/api/Tesouraria/Resumo")).StatusCode;
+            var resposta = await cliente.GetAsync("/api/Tesouraria/Resumo");
+            permitidos[role] = resposta.StatusCode;
+            despesasPorRole[role] = resposta.IsSuccessStatusCode
+                ? (await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json))!.DespesasMes
+                : null;
         }
 
         //Assert
@@ -226,9 +293,12 @@ public sealed class TesourariaTests : IAsyncLifetime
         foreach (var (role, resposta) in negados)
         {
             Assert.True(resposta.StatusCode == HttpStatusCode.Forbidden, $"{role}: {(int)resposta.StatusCode}");
-            Assert.DoesNotContain("receitasDespesas", await resposta.Content.ReadAsStringAsync());
+            var corpo = await resposta.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("receitasDespesas", corpo);
+            Assert.DoesNotContain("despesasMes", corpo);
         }
 
         Assert.All(permitidos, p => Assert.Equal(HttpStatusCode.OK, p.Value));
+        Assert.All(despesasPorRole, d => Assert.Equal(25m, d.Value));
     }
 }

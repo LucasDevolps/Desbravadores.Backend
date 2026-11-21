@@ -286,5 +286,6 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
         Assert.Equal((100m, 40m), (resumo.ReceitasDespesas.Sum(c => c.Entradas), resumo.ReceitasDespesas.Sum(c => c.Saidas)));
         var mesAtual = resumo.ReceitasDespesas[^1];
         Assert.Equal((dashboard.Financeiro!.Entradas, dashboard.Financeiro.Saidas), (mesAtual.Entradas, mesAtual.Saidas));
+        Assert.Equal(dashboard.Financeiro.Saidas, resumo.DespesasMes);
     }
 }

@@ -7,7 +7,7 @@ namespace Almirante.Api.Services;
 
 public sealed class TesourariaService(AlmiranteDbContext db, DataCivil dataCivil)
 {
-    /// <summary>Competências de receitasDespesas: os cinco meses anteriores e o mês atual.</summary>
+    // Competências de receitasDespesas: os cinco meses anteriores e o mês atual.
     public const int MESES_RECEITAS_DESPESAS = 6;
 
     public async Task<TesourariaResumoResponse> ObterResumoAsync(CancellationToken ct)
@@ -30,6 +30,7 @@ public sealed class TesourariaService(AlmiranteDbContext db, DataCivil dataCivil
                 Total(mes, TipoFluxoLancamento.Entrada), Total(mes, TipoFluxoLancamento.Saida)))
             .ToList();
 
-        return new TesourariaResumoResponse { ReceitasDespesas = receitasDespesas };
+        // A última competência é o mês atual: despesasMes reaproveita a mesma soma, sem outra consulta.
+        return new TesourariaResumoResponse { DespesasMes = receitasDespesas[^1].Saidas, ReceitasDespesas = receitasDespesas };
     }
 }
