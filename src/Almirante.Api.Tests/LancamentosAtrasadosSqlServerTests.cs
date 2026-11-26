@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Almirante.Api.Data;
+using Almirante.Api.Dtos;
 using Almirante.Api.Entities;
 using Almirante.Api.Options;
 using Almirante.Api.Services;
@@ -327,5 +328,26 @@ public sealed class LancamentosAtrasadosSqlServerTests
             var foraDoDominio = await Assert.ThrowsAsync<SqlException>(() => db.Database.ExecuteSqlRawAsync("UPDATE dbo.notificacoes SET Tipo = 5"));
             Assert.Equal(547, foraDoDominio.Number);
         }
+    }
+
+    [Fact(DisplayName = "Mensalidade pendente vencida continua em mensalidadesPendentes depois que a rotina a marca como Atrasado")]
+    public async Task Rotina_MarcaMensalidadeComoAtrasado_EElaContinuaNasMensalidadesPendentesDaTesouraria()
+    {
+        using var factory = Fabrica();
+        using var rotina = new Rotina(factory, AntesDaVirada);
+        var dataCivil = new DataCivil(rotina.Relogio, Microsoft.Extensions.Options.Options.Create(new ClubeOptions()));
+        Task<TesourariaResumoResponse> ResumoAsync() =>
+            TestHelpers.WithDbAsync(factory, db => new TesourariaService(db, dataCivil).ObterResumoAsync(CancellationToken.None));
+        var doSeed = (await ResumoAsync()).MensalidadesPendentes;
+        var membro = await MembroAsync(factory);
+        var vencida = await InserirAsync(factory, membro, Hoje.AddDays(-1));
+        await InserirAsync(factory, membro, Hoje.AddDays(10));
+
+        var antes = await ResumoAsync();
+        Assert.Equal(1, await rotina.ExecutarAsync());
+        var depois = await ResumoAsync();
+
+        Assert.Equal(StatusLancamento.Atrasado, (await LerAsync(factory, vencida.Id)).Status);
+        Assert.Equal((doSeed + 2, doSeed + 2), (antes.MensalidadesPendentes, depois.MensalidadesPendentes));
     }
 }

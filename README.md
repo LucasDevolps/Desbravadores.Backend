@@ -1021,7 +1021,7 @@ de a Secretaria definir esses estados. O status dos lançamentos do evento é da
 
 ## Tesouraria
 
-`GET /api/Tesouraria/Resumo` (issues #190, #197, #198 e #199) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
+`GET /api/Tesouraria/Resumo` (issues #190, #197, #198, #199 e #200) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
 (inicialmente `ADM`, `DIR`, `DIRA`, `TES`): sem token `401`, outro cargo (inclusive o Secretário) `403`. Não recebe parâmetros.
 
 ```json
@@ -1029,6 +1029,7 @@ de a Secretaria definir esses estados. O status dos lançamentos do evento é da
   "saldoEmCaixa": 1350.00,
   "receitaMes": 210.00,
   "despesasMes": 280.00,
+  "mensalidadesPendentes": 7,
   "receitasDespesas": [
     { "ano": 2026, "mes": 6, "entradas": 0.00, "saidas": 0.00 },
     { "ano": 2026, "mes": 7, "entradas": 390.00, "saidas": 220.00 },
@@ -1070,6 +1071,14 @@ soma o `valorPago` (o valor efetivamente pago, não o previsto) dos lançamentos
 valor de pagamento não entram, e o valor é zero em mês sem despesas. É o mesmo número de `saidas` na última competência
 de `receitasDespesas` e de `financeiro.saidas` em `GET /api/Dashboard` sem parâmetros. A virada do mês segue o fuso do
 clube, não o UTC.
+
+**Mensalidades pendentes.** `mensalidadesPendentes` é a quantidade de lançamentos ativos de `Entrada` com finalidade
+`Mensalidade` e status `Pendente` ou `Atrasado`, de qualquer vencimento (passado, atual ou futuro). A contagem é por
+lançamento: duas mensalidades em aberto do mesmo membro contam duas. A mensalidade continua contada quando a rotina da
+[issue #184](#atualização-automática-para-atrasado-issue-184) a marca como `Atrasado` e sai da contagem quando o pagamento
+é registrado (inclusive parcial, que deixa o status `Pago`) ou quando é excluída. Saídas e outras finalidades não
+entram, e o valor é zero sem mensalidades em aberto. Mensalidades de membros desativados continuam contando enquanto o
+lançamento estiver ativo.
 
 ## Perfis e autoatendimento (issue #127)
 

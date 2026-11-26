@@ -12,6 +12,8 @@ public sealed record TesourariaResumoResponse
 
     public required decimal DespesasMes { get; init; }
 
+    public required int MensalidadesPendentes { get; init; }
+
     public required IReadOnlyList<TesourariaCompetenciaDto> ReceitasDespesas { get; init; }
 }
 
