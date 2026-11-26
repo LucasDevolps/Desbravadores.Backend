@@ -8,7 +8,7 @@ using Almirante.Api.Services;
 
 namespace Almirante.Api.Tests;
 
-// Issues #190, #197, #198 e #199 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
+// Issues #190, #197, #198, #199 e #200 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
 public sealed class TesourariaTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -26,7 +26,16 @@ public sealed class TesourariaTests : IAsyncLifetime
     {
         _client = await TestHelpers.CreateAuthenticatedClientAsync(_factory);
         _membroId = (await TestHelpers.AddUsuarioAsync(_factory, "Membro da tesouraria", "CONS")).Id;
+        await DesativarLancamentoDemonstrativoDoSeedAsync();
     }
+
+    private Task DesativarLancamentoDemonstrativoDoSeedAsync() =>
+        TestHelpers.WithDbAsync(_factory, async db =>
+        {
+            foreach (var lancamento in db.Lancamentos)
+                lancamento.Ativo = false;
+            return await db.SaveChangesAsync();
+        });
 
     public Task DisposeAsync()
     {
@@ -49,13 +58,14 @@ public sealed class TesourariaTests : IAsyncLifetime
     }
 
     private Task<Guid> LancamentoAsync(TipoFluxoLancamento fluxo, decimal valor, StatusLancamento status = StatusLancamento.Pendente,
-        DateOnly? dataPagamento = null, decimal? valorPago = null, bool ativo = true) =>
+        DateOnly? dataPagamento = null, decimal? valorPago = null, bool ativo = true, string finalidade = LancamentoFinalidades.Outros,
+        DateOnly? vencimento = null, Guid? membroId = null) =>
         TestHelpers.WithDbAsync(_factory, async db =>
         {
             var lancamento = new Lancamento
             {
-                Id = Guid.NewGuid(), MembroId = _membroId, Finalidade = LancamentoFinalidades.Outros, Categoria = CategoriaLancamento.Clube,
-                TipoFluxo = fluxo, Valor = valor, Vencimento = dataPagamento ?? MesAtual, Status = status, Ativo = ativo,
+                Id = Guid.NewGuid(), MembroId = membroId ?? _membroId, Finalidade = finalidade, Categoria = CategoriaLancamento.Clube,
+                TipoFluxo = fluxo, Valor = valor, Vencimento = vencimento ?? dataPagamento ?? MesAtual, Status = status, Ativo = ativo,
                 DataPagamento = dataPagamento, ValorPago = valorPago,
                 PagamentoRegistradoPorUsuarioId = dataPagamento is null ? null : _membroId,
                 PagamentoRegistradoEmUtc = dataPagamento is null ? null : DateTime.UtcNow,
@@ -64,6 +74,10 @@ public sealed class TesourariaTests : IAsyncLifetime
             await db.SaveChangesAsync();
             return lancamento.Id;
         });
+
+    private Task<Guid> MensalidadeAsync(StatusLancamento status, DateOnly vencimento, Guid? membroId = null) =>
+        LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, status, vencimento: vencimento, finalidade: LancamentoFinalidades.Mensalidade,
+            membroId: membroId);
 
     private Task<Guid> PagoAsync(TipoFluxoLancamento fluxo, decimal valorPago, DateOnly data, decimal? valor = null) =>
         LancamentoAsync(fluxo, valor ?? valorPago, StatusLancamento.Pago, data, valorPago);
@@ -81,6 +95,7 @@ public sealed class TesourariaTests : IAsyncLifetime
         //Assert
         Assert.Equal(esperado, resumo.ReceitasDespesas);
         Assert.Equal(0m, resumo.SaldoEmCaixa);
+        Assert.Equal(0, resumo.MensalidadesPendentes);
         Assert.Equal(0m, resumo.ReceitaMes);
         Assert.Equal(0m, resumo.DespesasMes);
     }
@@ -406,16 +421,83 @@ public sealed class TesourariaTests : IAsyncLifetime
         Assert.Equal(200m, resumo.SaldoEmCaixa);
     }
 
+    [Fact(DisplayName = "mensalidadesPendentes conta pendentes e atrasadas de qualquer vencimento, e duas do mesmo membro contam duas")]
+    public async Task TesourariaResumo_MensalidadesPendentes_ContaPendentesEAtrasadasPorLancamentoAsync()
+    {
+        //Arrange
+        var outroMembro = (await TestHelpers.AddUsuarioAsync(_factory, "Outro membro", "DS")).Id;
+        await MensalidadeAsync(StatusLancamento.Atrasado, MesAtual.AddYears(-1));
+        await MensalidadeAsync(StatusLancamento.Atrasado, MesAtual.AddMonths(-2));
+        await MensalidadeAsync(StatusLancamento.Pendente, MesAtual);
+        await MensalidadeAsync(StatusLancamento.Pendente, MesAtual.AddMonths(1));
+        await MensalidadeAsync(StatusLancamento.Pendente, MesAtual, outroMembro);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(5, resumo.MensalidadesPendentes);
+    }
+
+    [Fact(DisplayName = "mensalidadesPendentes ignora pagas (inclusive parcial e legado), excluídas, saídas e outras finalidades")]
+    public async Task TesourariaResumo_MensalidadesPendentes_IgnoraLancamentosForaDaRegraAsync()
+    {
+        //Arrange
+        const string mensalidade = LancamentoFinalidades.Mensalidade;
+        await MensalidadeAsync(StatusLancamento.Pendente, MesAtual);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Pago, MesAtual, 25m, finalidade: mensalidade);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Pago, MesAtual, 10m, finalidade: mensalidade);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Pago, finalidade: mensalidade);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Pendente, ativo: false, finalidade: mensalidade);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Atrasado, ativo: false, finalidade: mensalidade);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 25m, StatusLancamento.Pendente, finalidade: mensalidade);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Pendente, finalidade: LancamentoFinalidades.Campori);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 25m, StatusLancamento.Atrasado);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(1, resumo.MensalidadesPendentes);
+    }
+
+    [Fact(DisplayName = "Mensalidade continua contada ao virar Atrasado e sai da contagem ao ser paga ou excluída pela API")]
+    public async Task TesourariaResumo_MensalidadesPendentes_AtrasoMantemEPagamentoOuExclusaoTiramAsync()
+    {
+        //Arrange
+        var paga = await MensalidadeAsync(StatusLancamento.Pendente, MesAtual);
+        var excluida = await MensalidadeAsync(StatusLancamento.Pendente, MesAtual);
+        var inicial = (await ObterAsync()).MensalidadesPendentes;
+
+        //Act
+        await TestHelpers.WithDbAsync(_factory, async db =>
+        {
+            var lancamento = await db.Lancamentos.FindAsync(paga);
+            lancamento!.Status = StatusLancamento.Atrasado;
+            return await db.SaveChangesAsync();
+        });
+        var aposAtraso = (await ObterAsync()).MensalidadesPendentes;
+        Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, paga, 25m, Hoje)).StatusCode);
+        var aposPagamento = (await ObterAsync()).MensalidadesPendentes;
+        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{excluida}") { Content = JsonContent.Create(new { motivo = "cobrada em duplicidade" }) };
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(delete)).StatusCode);
+        var aposExclusao = (await ObterAsync()).MensalidadesPendentes;
+
+        //Assert
+        Assert.Equal((2, 2, 1, 0), (inicial, aposAtraso, aposPagamento, aposExclusao));
+    }
+
     [Fact(DisplayName = "Resumo exige financeiro.tesouraria.consultar: sem token 401, Secretário e cargos sem financeiro 403, ADM, DIR, DIRA e TES 200")]
     public async Task TesourariaResumo_ObterResumo_SoParaQuemTemGestaoFinanceiraAsync()
     {
         //Arrange
         await PagoAsync(TipoFluxoLancamento.Entrada, 80m, MesAtual);
         await PagoAsync(TipoFluxoLancamento.Saida, 25m, MesAtual);
+        await MensalidadeAsync(StatusLancamento.Atrasado, MesAtual.AddMonths(-1));
         using var anonimo = _factory.CreateClient();
         var negados = new Dictionary<string, HttpResponseMessage>();
         var permitidos = new Dictionary<string, HttpStatusCode>();
-        var kpisPorRole = new Dictionary<string, (decimal SaldoEmCaixa, decimal ReceitaMes, decimal DespesasMes)?>();
+        var kpisPorRole = new Dictionary<string, (decimal SaldoEmCaixa, decimal ReceitaMes, decimal DespesasMes, int MensalidadesPendentes)?>();
 
         //Act
         var semToken = await anonimo.GetAsync("/api/Tesouraria/Resumo");
@@ -433,7 +515,7 @@ public sealed class TesourariaTests : IAsyncLifetime
             var resumo = resposta.IsSuccessStatusCode
                 ? await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json)
                 : null;
-            kpisPorRole[role] = resumo is null ? null : (resumo.SaldoEmCaixa, resumo.ReceitaMes, resumo.DespesasMes);
+            kpisPorRole[role] = resumo is null ? null : (resumo.SaldoEmCaixa, resumo.ReceitaMes, resumo.DespesasMes, resumo.MensalidadesPendentes);
         }
 
         //Assert
@@ -444,11 +526,12 @@ public sealed class TesourariaTests : IAsyncLifetime
             var corpo = await resposta.Content.ReadAsStringAsync();
             Assert.DoesNotContain("receitasDespesas", corpo);
             Assert.DoesNotContain("saldoEmCaixa", corpo);
+            Assert.DoesNotContain("mensalidadesPendentes", corpo);
             Assert.DoesNotContain("receitaMes", corpo);
             Assert.DoesNotContain("despesasMes", corpo);
         }
 
         Assert.All(permitidos, p => Assert.Equal(HttpStatusCode.OK, p.Value));
-        Assert.All(kpisPorRole, k => Assert.Equal((55m, 80m, 25m), k.Value));
+        Assert.All(kpisPorRole, k => Assert.Equal((55m, 80m, 25m, 1), k.Value));
     }
 }

@@ -268,6 +268,7 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
     public async Task TesourariaResumo_GetResumo_SomaPagamentosEMesAtualCoincideComDashboardAsync()
     {
         //Arrange
+        var doSeed = (await _client.GetFromJsonAsync<TesourariaResumoResponse>("/api/Tesouraria/Resumo", Json))!.MensalidadesPendentes;
         var entrada = await CriarAsync(120m);
         var saida = await CriarAsync(40m, "Saida");
         Assert.Equal(HttpStatusCode.OK, (await TestHelpers.RegistrarPagamentoAsync(_client, entrada.Id, 100m, Ontem)).StatusCode);
@@ -290,5 +291,6 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
         Assert.Equal(dashboard.Financeiro.Entradas, resumo.ReceitaMes);
         Assert.Equal(dashboard.Financeiro.Saidas, resumo.DespesasMes);
         Assert.Equal(60m, resumo.SaldoEmCaixa);
+        Assert.Equal(doSeed + 1, resumo.MensalidadesPendentes);
     }
 }
