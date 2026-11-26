@@ -33,11 +33,16 @@ public sealed class TesourariaService(AlmiranteDbContext db, DataCivil dataCivil
         var saldoEmCaixa = await PagamentosRegistrados.Ate(db.Lancamentos.AsNoTracking(), hoje)
             .SumAsync(l => l.TipoFluxo == TipoFluxoLancamento.Entrada ? l.ValorPago!.Value : -l.ValorPago!.Value, ct);
 
+        var mensalidadesPendentes = await db.Lancamentos.AsNoTracking()
+            .CountAsync(l => l.Ativo && l.TipoFluxo == TipoFluxoLancamento.Entrada && l.Finalidade == LancamentoFinalidades.Mensalidade
+                && (l.Status == StatusLancamento.Pendente || l.Status == StatusLancamento.Atrasado), ct);
+
         // A última competência é o mês atual: receitaMes e despesasMes reaproveitam a mesma soma, sem outra consulta.
         var mes = receitasDespesas[^1];
         return new TesourariaResumoResponse
         {
-            SaldoEmCaixa = saldoEmCaixa, ReceitaMes = mes.Entradas, DespesasMes = mes.Saidas, ReceitasDespesas = receitasDespesas,
+            SaldoEmCaixa = saldoEmCaixa, ReceitaMes = mes.Entradas, DespesasMes = mes.Saidas, MensalidadesPendentes = mensalidadesPendentes,
+            ReceitasDespesas = receitasDespesas,
         };
     }
 }

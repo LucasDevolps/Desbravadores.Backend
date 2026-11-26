@@ -14,7 +14,7 @@ public sealed class TesourariaController(ISender mediator) : ControllerBase
 {
     [HttpGet("Resumo")]
     [RequerPermissao(Permissoes.TesourariaConsultar)]
-    [EndpointSummary("Resumo da Tesouraria: saldo em caixa, receita e despesas do mês e série mensal de receitas e despesas realizadas.")]
+    [EndpointSummary("Resumo da Tesouraria: saldo em caixa, receita e despesas do mês, mensalidades pendentes e série mensal de receitas e despesas realizadas.")]
     [EndpointDescription("saldoEmCaixa: saldo acumulado de todo o histórico até hoje no fuso do clube, o valorPago das entradas menos o das " +
         "saídas pagas, com a mesma regra de pagamentos registrados; pode ser negativo e é zero sem movimentação. Ainda não há saldo de " +
         "abertura: o saldo parte de zero no primeiro pagamento registrado no sistema. " +
@@ -22,6 +22,9 @@ public sealed class TesourariaController(ISender mediator) : ControllerBase
         "última competência de receitasDespesas e a financeiro.entradas de GET /api/Dashboard sem parâmetros; zero em mês sem receitas. " +
         "despesasMes: total das saídas pagas no mês civil atual do clube (do dia 1 até o fim do mês), igual a saidas da " +
         "última competência de receitasDespesas e a financeiro.saidas de GET /api/Dashboard sem parâmetros; zero em mês sem despesas. " +
+        "mensalidadesPendentes: quantidade de lançamentos ativos de Entrada com finalidade Mensalidade e status Pendente ou Atrasado, " +
+        "de qualquer vencimento; cada lançamento conta uma vez, então duas mensalidades em aberto do mesmo membro contam duas; zero sem " +
+        "mensalidades em aberto. Pago (inclusive parcial), excluídos, saídas e outras finalidades não entram. " +
         "receitasDespesas: seis competências (ano, mes) em ordem cronológica, dos cinco meses anteriores ao mês atual " +
         "no fuso do clube (Clube:FusoHorario), inclusive na virada do ano; mês sem movimento vem com entradas e saidas zero. " +
         "Cada competência soma o valorPago dos lançamentos ativos com pagamento registrado e dataPagamento no mês, separado por tipoFluxo " +
