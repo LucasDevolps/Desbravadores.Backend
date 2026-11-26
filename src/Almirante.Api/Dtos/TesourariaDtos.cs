@@ -6,6 +6,8 @@ public sealed record GetTesourariaResumoQuery : IRequest<TesourariaResumoRespons
 
 public sealed record TesourariaResumoResponse
 {
+    public required decimal SaldoEmCaixa { get; init; }
+
     public required decimal ReceitaMes { get; init; }
 
     public required decimal DespesasMes { get; init; }
