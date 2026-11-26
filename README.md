@@ -1021,11 +1021,12 @@ de a Secretaria definir esses estados. O status dos lançamentos do evento é da
 
 ## Tesouraria
 
-`GET /api/Tesouraria/Resumo` (issues #190 e #199) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
+`GET /api/Tesouraria/Resumo` (issues #190, #198 e #199) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
 (inicialmente `ADM`, `DIR`, `DIRA`, `TES`): sem token `401`, outro cargo (inclusive o Secretário) `403`. Não recebe parâmetros.
 
 ```json
 {
+  "receitaMes": 210.00,
   "despesasMes": 280.00,
   "receitasDespesas": [
     { "ano": 2026, "mes": 6, "entradas": 0.00, "saidas": 0.00 },
@@ -1045,6 +1046,13 @@ dos lançamentos ativos com status `Pago` e `dataPagamento` no mês, separado po
 financeiro do [Dashboard](#dashboard) (`PagamentosRegistrados`): pendentes, atrasados, excluídos e "Pago" históricos
 sem data ou valor de pagamento não entram. Por isso o mês atual coincide com `entradas` e `saidas` de
 `GET /api/Dashboard` sem parâmetros.
+
+**Receita do mês.** `receitaMes` é o total das entradas pagas no mês civil atual do clube, do dia 1 até o fim do mês:
+soma o `valorPago` (o valor efetivamente recebido, não o previsto) dos lançamentos ativos com `tipoFluxo` `Entrada`,
+status `Pago` e `dataPagamento` no mês. Saídas, outros meses, excluídos, pendências e "Pago" históricos sem data ou valor
+de pagamento não entram, e o valor é zero em mês sem receitas. É o mesmo número de `entradas` na última competência de
+`receitasDespesas` e de `financeiro.entradas` em `GET /api/Dashboard` sem parâmetros. A virada do mês segue o fuso do
+clube, não o UTC.
 
 **Despesas do mês.** `despesasMes` é o total das saídas pagas no mês civil atual do clube, do dia 1 até o fim do mês:
 soma o `valorPago` (o valor efetivamente pago, não o previsto) dos lançamentos ativos com `tipoFluxo` `Saida`, status

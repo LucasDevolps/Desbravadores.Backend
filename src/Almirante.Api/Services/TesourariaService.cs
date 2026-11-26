@@ -30,7 +30,8 @@ public sealed class TesourariaService(AlmiranteDbContext db, DataCivil dataCivil
                 Total(mes, TipoFluxoLancamento.Entrada), Total(mes, TipoFluxoLancamento.Saida)))
             .ToList();
 
-        // A última competência é o mês atual: despesasMes reaproveita a mesma soma, sem outra consulta.
-        return new TesourariaResumoResponse { DespesasMes = receitasDespesas[^1].Saidas, ReceitasDespesas = receitasDespesas };
+        // A última competência é o mês atual: receitaMes e despesasMes reaproveitam a mesma soma, sem outra consulta.
+        var mes = receitasDespesas[^1];
+        return new TesourariaResumoResponse { ReceitaMes = mes.Entradas, DespesasMes = mes.Saidas, ReceitasDespesas = receitasDespesas };
     }
 }

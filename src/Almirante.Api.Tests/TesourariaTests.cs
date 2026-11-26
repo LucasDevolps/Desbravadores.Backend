@@ -8,7 +8,7 @@ using Almirante.Api.Services;
 
 namespace Almirante.Api.Tests;
 
-// Issues #190 e #199 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
+// Issues #190, #198 e #199 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
 public sealed class TesourariaTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -80,6 +80,7 @@ public sealed class TesourariaTests : IAsyncLifetime
 
         //Assert
         Assert.Equal(esperado, resumo.ReceitasDespesas);
+        Assert.Equal(0m, resumo.ReceitaMes);
         Assert.Equal(0m, resumo.DespesasMes);
     }
 
@@ -199,6 +200,65 @@ public sealed class TesourariaTests : IAsyncLifetime
             (emJaneiro.ReceitasDespesas[^1].Ano, emJaneiro.ReceitasDespesas[^1].Mes)));
     }
 
+    [Fact(DisplayName = "receitaMes soma o valorPago das entradas pagas no mês atual, não o valor previsto, e coincide com as entradas do Dashboard")]
+    public async Task TesourariaResumo_ReceitaMes_SomaValorPagoDasEntradasDoMesAtualAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 45m, MesAtual, valor: 50m);
+        await PagoAsync(TipoFluxoLancamento.Entrada, 0.1m, Hoje);
+        await PagoAsync(TipoFluxoLancamento.Entrada, 54.9m, MesAtual.AddMonths(1).AddDays(-1));
+        await PagoAsync(TipoFluxoLancamento.Saida, 500m, MesAtual);
+
+        //Act
+        var resumo = await ObterAsync();
+        var dashboard = await _client.GetFromJsonAsync<DashboardResponse>("/api/Dashboard", Json);
+
+        //Assert
+        Assert.Equal(100m, resumo.ReceitaMes);
+        Assert.Equal(resumo.ReceitasDespesas[^1].Entradas, resumo.ReceitaMes);
+        Assert.Equal(dashboard!.Financeiro!.Entradas, resumo.ReceitaMes);
+    }
+
+    [Fact(DisplayName = "receitaMes ignora saídas, outros meses, excluídos, pendências e \"Pago\" legados sem data ou valor")]
+    public async Task TesourariaResumo_ReceitaMes_IgnoraLancamentosForaDaRegraAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Saida, 70m, MesAtual);
+        await PagoAsync(TipoFluxoLancamento.Entrada, 60m, MesAtual.AddDays(-1));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 55m, MesAtual.AddMonths(1));
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 50m, StatusLancamento.Pago, MesAtual, 50m, ativo: false);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 40m);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 30m, StatusLancamento.Atrasado);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 20m, StatusLancamento.Pago);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 15m, StatusLancamento.Pago, dataPagamento: MesAtual);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 10m, StatusLancamento.Pago, valorPago: 10m);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(0m, resumo.ReceitaMes);
+    }
+
+    [Fact(DisplayName = "Na virada do mês, receitaMes passa a contar só o mês novo, segundo o fuso do clube")]
+    public async Task TesourariaResumo_ReceitaMes_ViradaDoMesSegueOFusoDoClubeAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 12.5m, new DateOnly(2026, 12, 1));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 7.5m, new DateOnly(2026, 12, 31));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 3m, new DateOnly(2027, 1, 1));
+        var aindaDezembroNoClube = new DateTimeOffset(2027, 1, 1, 2, 30, 0, TimeSpan.Zero);
+        var janeiroNoClube = new DateTimeOffset(2027, 1, 1, 3, 0, 0, TimeSpan.Zero);
+
+        //Act
+        var emDezembro = await ObterNoInstanteAsync(aindaDezembroNoClube);
+        var emJaneiro = await ObterNoInstanteAsync(janeiroNoClube);
+
+        //Assert
+        Assert.Equal(20m, emDezembro.ReceitaMes);
+        Assert.Equal(3m, emJaneiro.ReceitaMes);
+    }
+
     [Fact(DisplayName = "despesasMes soma o valorPago das saídas pagas no mês atual, não o valor previsto, e coincide com as saídas do Dashboard")]
     public async Task TesourariaResumo_DespesasMes_SomaValorPagoDasSaidasDoMesAtualAsync()
     {
@@ -268,7 +328,7 @@ public sealed class TesourariaTests : IAsyncLifetime
         using var anonimo = _factory.CreateClient();
         var negados = new Dictionary<string, HttpResponseMessage>();
         var permitidos = new Dictionary<string, HttpStatusCode>();
-        var despesasPorRole = new Dictionary<string, decimal?>();
+        var kpisPorRole = new Dictionary<string, (decimal ReceitaMes, decimal DespesasMes)?>();
 
         //Act
         var semToken = await anonimo.GetAsync("/api/Tesouraria/Resumo");
@@ -283,9 +343,10 @@ public sealed class TesourariaTests : IAsyncLifetime
             var (cliente, _) = await TestHelpers.CreateAuthenticatedClientForRoleAsync(_factory, role);
             var resposta = await cliente.GetAsync("/api/Tesouraria/Resumo");
             permitidos[role] = resposta.StatusCode;
-            despesasPorRole[role] = resposta.IsSuccessStatusCode
-                ? (await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json))!.DespesasMes
+            var resumo = resposta.IsSuccessStatusCode
+                ? await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json)
                 : null;
+            kpisPorRole[role] = resumo is null ? null : (resumo.ReceitaMes, resumo.DespesasMes);
         }
 
         //Assert
@@ -295,10 +356,11 @@ public sealed class TesourariaTests : IAsyncLifetime
             Assert.True(resposta.StatusCode == HttpStatusCode.Forbidden, $"{role}: {(int)resposta.StatusCode}");
             var corpo = await resposta.Content.ReadAsStringAsync();
             Assert.DoesNotContain("receitasDespesas", corpo);
+            Assert.DoesNotContain("receitaMes", corpo);
             Assert.DoesNotContain("despesasMes", corpo);
         }
 
         Assert.All(permitidos, p => Assert.Equal(HttpStatusCode.OK, p.Value));
-        Assert.All(despesasPorRole, d => Assert.Equal(25m, d.Value));
+        Assert.All(kpisPorRole, k => Assert.Equal((80m, 25m), k.Value));
     }
 }
