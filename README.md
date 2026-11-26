@@ -1021,11 +1021,12 @@ de a Secretaria definir esses estados. O status dos lançamentos do evento é da
 
 ## Tesouraria
 
-`GET /api/Tesouraria/Resumo` (issues #190, #198 e #199) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
+`GET /api/Tesouraria/Resumo` (issues #190, #197, #198 e #199) alimenta a tela da Tesouraria. Permissão `financeiro.tesouraria.consultar`
 (inicialmente `ADM`, `DIR`, `DIRA`, `TES`): sem token `401`, outro cargo (inclusive o Secretário) `403`. Não recebe parâmetros.
 
 ```json
 {
+  "saldoEmCaixa": 1350.00,
   "receitaMes": 210.00,
   "despesasMes": 280.00,
   "receitasDespesas": [
@@ -1046,6 +1047,15 @@ dos lançamentos ativos com status `Pago` e `dataPagamento` no mês, separado po
 financeiro do [Dashboard](#dashboard) (`PagamentosRegistrados`): pendentes, atrasados, excluídos e "Pago" históricos
 sem data ou valor de pagamento não entram. Por isso o mês atual coincide com `entradas` e `saidas` de
 `GET /api/Dashboard` sem parâmetros.
+
+**Saldo em caixa.** `saldoEmCaixa` é o saldo acumulado de todo o histórico até hoje no fuso do clube: a soma do
+`valorPago` das entradas menos a soma do `valorPago` das saídas, com a mesma regra de pagamentos registrados
+(lançamentos ativos, status `Pago`, `dataPagamento` e `valorPago` preenchidos). Pagamentos de qualquer mês entram,
+inclusive anteriores às seis competências de `receitasDespesas`. Pendências, atrasos, excluídos e "Pago" históricos sem
+data ou valor de pagamento ficam de fora: esses só passam a contar depois de regularizados por
+`POST /api/Lancamentos/{id}/Pagamento`. O valor pode ser negativo e é zero sem movimentação. **Saldo de abertura:** por
+enquanto não existe; o saldo parte de zero no primeiro pagamento registrado no sistema. O registro de um saldo inicial
+fica para a issue #239, que depende da confirmação da Tesouraria.
 
 **Receita do mês.** `receitaMes` é o total das entradas pagas no mês civil atual do clube, do dia 1 até o fim do mês:
 soma o `valorPago` (o valor efetivamente recebido, não o previsto) dos lançamentos ativos com `tipoFluxo` `Entrada`,

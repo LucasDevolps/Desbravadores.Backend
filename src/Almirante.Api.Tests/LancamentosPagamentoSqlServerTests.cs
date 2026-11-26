@@ -261,6 +261,7 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
             new(2026, 9, 0m, 0m), new(2026, 10, 0m, 0m), new(2026, 11, 0m, 0m),
             new(2026, 12, 100m, 0m), new(2027, 1, 80m, 33.33m), new(2027, 2, 0m, 0m),
         }, resumo.ReceitasDespesas);
+        Assert.Equal(646.67m, resumo.SaldoEmCaixa);
     }
 
     [Fact(DisplayName = "GET /api/Tesouraria/Resumo no SQL Server soma os pagamentos registrados e o mês atual coincide com o Dashboard")]
@@ -288,5 +289,6 @@ public sealed class LancamentosPagamentoSqlServerTests : IAsyncLifetime
         Assert.Equal((dashboard.Financeiro!.Entradas, dashboard.Financeiro.Saidas), (mesAtual.Entradas, mesAtual.Saidas));
         Assert.Equal(dashboard.Financeiro.Entradas, resumo.ReceitaMes);
         Assert.Equal(dashboard.Financeiro.Saidas, resumo.DespesasMes);
+        Assert.Equal(60m, resumo.SaldoEmCaixa);
     }
 }

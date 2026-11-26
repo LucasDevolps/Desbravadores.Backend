@@ -8,7 +8,7 @@ using Almirante.Api.Services;
 
 namespace Almirante.Api.Tests;
 
-// Issues #190, #198 e #199 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
+// Issues #190, #197, #198 e #199 sem SQL Server. Cada teste usa uma fábrica própria: os totais da Tesouraria são globais.
 public sealed class TesourariaTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -80,6 +80,7 @@ public sealed class TesourariaTests : IAsyncLifetime
 
         //Assert
         Assert.Equal(esperado, resumo.ReceitasDespesas);
+        Assert.Equal(0m, resumo.SaldoEmCaixa);
         Assert.Equal(0m, resumo.ReceitaMes);
         Assert.Equal(0m, resumo.DespesasMes);
     }
@@ -319,6 +320,92 @@ public sealed class TesourariaTests : IAsyncLifetime
         Assert.Equal(3m, emJaneiro.DespesasMes);
     }
 
+    [Fact(DisplayName = "saldoEmCaixa acumula o valorPago das entradas menos o das saídas de todo o histórico, inclusive fora das seis competências")]
+    public async Task TesourariaResumo_SaldoEmCaixa_AcumulaEntradasMenosSaidasDeTodoOHistoricoAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 1000m, MesAtual.AddYears(-2));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 45m, MesAtual.AddMonths(-7), valor: 50m);
+        await PagoAsync(TipoFluxoLancamento.Saida, 300m, MesAtual.AddMonths(-3));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 0.1m, Hoje);
+        await PagoAsync(TipoFluxoLancamento.Saida, 18.9m, MesAtual, valor: 20m);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(726.2m, resumo.SaldoEmCaixa);
+    }
+
+    [Fact(DisplayName = "saldoEmCaixa fica negativo quando as saídas pagas superam as entradas recebidas")]
+    public async Task TesourariaResumo_SaldoEmCaixa_SaidasMaioresQueEntradasDaoSaldoNegativoAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 80m, MesAtual.AddMonths(-1));
+        await PagoAsync(TipoFluxoLancamento.Saida, 120.5m, MesAtual);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(-40.5m, resumo.SaldoEmCaixa);
+    }
+
+    [Fact(DisplayName = "saldoEmCaixa ignora pendentes, atrasados, excluídos e \"Pago\" legados sem data ou valor")]
+    public async Task TesourariaResumo_SaldoEmCaixa_IgnoraLancamentosSemPagamentoRegistradoAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 10m, MesAtual.AddYears(-1));
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 300m);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 200m, StatusLancamento.Atrasado);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 90m, StatusLancamento.Pago, MesAtual, 90m, ativo: false);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 70m, StatusLancamento.Pago, MesAtual.AddYears(-1), 70m, ativo: false);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 60m, StatusLancamento.Pago);
+        await LancamentoAsync(TipoFluxoLancamento.Saida, 50m, StatusLancamento.Pago, dataPagamento: MesAtual);
+        await LancamentoAsync(TipoFluxoLancamento.Entrada, 40m, StatusLancamento.Pago, valorPago: 40m);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(10m, resumo.SaldoEmCaixa);
+    }
+
+    [Fact(DisplayName = "saldoEmCaixa conta só pagamentos até hoje no fuso do clube")]
+    public async Task TesourariaResumo_SaldoEmCaixa_ContaAteHojeNoFusoDoClubeAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 100m, new DateOnly(2026, 6, 15));
+        await PagoAsync(TipoFluxoLancamento.Saida, 7.5m, new DateOnly(2026, 12, 31));
+        await PagoAsync(TipoFluxoLancamento.Entrada, 3m, new DateOnly(2027, 1, 1));
+        var aindaDezembroNoClube = new DateTimeOffset(2027, 1, 1, 2, 30, 0, TimeSpan.Zero);
+        var janeiroNoClube = new DateTimeOffset(2027, 1, 1, 3, 0, 0, TimeSpan.Zero);
+
+        //Act
+        var emDezembro = await ObterNoInstanteAsync(aindaDezembroNoClube);
+        var emJaneiro = await ObterNoInstanteAsync(janeiroNoClube);
+
+        //Assert
+        Assert.Equal(92.5m, emDezembro.SaldoEmCaixa);
+        Assert.Equal(95.5m, emJaneiro.SaldoEmCaixa);
+    }
+
+    [Fact(DisplayName = "Lançamento pago excluído pela API sai do saldoEmCaixa")]
+    public async Task TesourariaResumo_SaldoEmCaixa_LancamentoExcluidoPelaApiNaoEntraAsync()
+    {
+        //Arrange
+        await PagoAsync(TipoFluxoLancamento.Entrada, 200m, MesAtual.AddMonths(-8));
+        var excluido = await PagoAsync(TipoFluxoLancamento.Saida, 150m, MesAtual.AddMonths(-8));
+        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{excluido}") { Content = JsonContent.Create(new { motivo = "lançado em duplicidade" }) };
+        Assert.Equal(HttpStatusCode.NoContent, (await _client.SendAsync(delete)).StatusCode);
+
+        //Act
+        var resumo = await ObterAsync();
+
+        //Assert
+        Assert.Equal(200m, resumo.SaldoEmCaixa);
+    }
+
     [Fact(DisplayName = "Resumo exige financeiro.tesouraria.consultar: sem token 401, Secretário e cargos sem financeiro 403, ADM, DIR, DIRA e TES 200")]
     public async Task TesourariaResumo_ObterResumo_SoParaQuemTemGestaoFinanceiraAsync()
     {
@@ -328,7 +415,7 @@ public sealed class TesourariaTests : IAsyncLifetime
         using var anonimo = _factory.CreateClient();
         var negados = new Dictionary<string, HttpResponseMessage>();
         var permitidos = new Dictionary<string, HttpStatusCode>();
-        var kpisPorRole = new Dictionary<string, (decimal ReceitaMes, decimal DespesasMes)?>();
+        var kpisPorRole = new Dictionary<string, (decimal SaldoEmCaixa, decimal ReceitaMes, decimal DespesasMes)?>();
 
         //Act
         var semToken = await anonimo.GetAsync("/api/Tesouraria/Resumo");
@@ -346,7 +433,7 @@ public sealed class TesourariaTests : IAsyncLifetime
             var resumo = resposta.IsSuccessStatusCode
                 ? await resposta.Content.ReadFromJsonAsync<TesourariaResumoResponse>(Json)
                 : null;
-            kpisPorRole[role] = resumo is null ? null : (resumo.ReceitaMes, resumo.DespesasMes);
+            kpisPorRole[role] = resumo is null ? null : (resumo.SaldoEmCaixa, resumo.ReceitaMes, resumo.DespesasMes);
         }
 
         //Assert
@@ -356,11 +443,12 @@ public sealed class TesourariaTests : IAsyncLifetime
             Assert.True(resposta.StatusCode == HttpStatusCode.Forbidden, $"{role}: {(int)resposta.StatusCode}");
             var corpo = await resposta.Content.ReadAsStringAsync();
             Assert.DoesNotContain("receitasDespesas", corpo);
+            Assert.DoesNotContain("saldoEmCaixa", corpo);
             Assert.DoesNotContain("receitaMes", corpo);
             Assert.DoesNotContain("despesasMes", corpo);
         }
 
         Assert.All(permitidos, p => Assert.Equal(HttpStatusCode.OK, p.Value));
-        Assert.All(kpisPorRole, k => Assert.Equal((80m, 25m), k.Value));
+        Assert.All(kpisPorRole, k => Assert.Equal((55m, 80m, 25m), k.Value));
     }
 }
