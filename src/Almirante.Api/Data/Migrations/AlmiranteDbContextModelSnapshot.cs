@@ -1195,6 +1195,9 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("EventoReferenciaId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal>("ItensAdicionaisValor")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<string>("Local")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1244,12 +1247,55 @@ namespace Almirante.Api.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_eventos_grupo", "[EventoReferenciaId] IS NOT NULL OR [EventoGrupoId] = [Id]");
 
-                            t.HasCheckConstraint("CK_eventos_valores_nao_negativos", "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ValorPorMembro] >= 0");
+                            t.HasCheckConstraint("CK_eventos_valores_nao_negativos", "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ItensAdicionaisValor] >= 0 AND [ValorPorMembro] >= 0");
 
-                            t.HasCheckConstraint("CK_eventos_valores_normalizados", "([TransporteEhGratis] = 0 OR [TransporteValor] = 0) AND ([AlimentacaoIndividual] = 0 OR [AlimentacaoValor] = 0) AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio]");
+                            t.HasCheckConstraint("CK_eventos_valores_normalizados", "([TransporteEhGratis] = 0 OR [TransporteValor] = 0) AND ([AlimentacaoIndividual] = 0 OR [AlimentacaoValor] = 0) AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio] + [ItensAdicionaisValor]");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.EventoItemAdicional", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DesativadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("EventoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Ordem")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Titulo")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<decimal>("Valor")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventoId", "Ordem")
+                        .IsUnique()
+                        .HasDatabaseName("UX_evento_itens_adicionais_evento_ordem_ativo")
+                        .HasFilter("[Ativo] = 1");
+
+                    b.ToTable("evento_itens_adicionais", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_evento_itens_adicionais_Valor", "[Valor] > 0");
+                        });
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.EventoMembro", b =>
@@ -1273,6 +1319,23 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid>("EventoId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("IsencaoLancamentoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("IsencaoMotivo")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<bool>("Isento")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("IsentoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("IsentoPorUsuarioId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid?>("LancamentoId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1282,6 +1345,11 @@ namespace Almirante.Api.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("EventoId");
+
+                    b.HasIndex("IsencaoLancamentoId")
+                        .HasFilter("[IsencaoLancamentoId] IS NOT NULL");
+
+                    b.HasIndex("IsentoPorUsuarioId");
 
                     b.HasIndex("LancamentoId");
 
@@ -1294,7 +1362,10 @@ namespace Almirante.Api.Data.Migrations
 
                     b.HasIndex("EventoId", "EventoGrupoId");
 
-                    b.ToTable("evento_membros", (string)null);
+                    b.ToTable("evento_membros", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_evento_membros_Isencao", "([Isento] = 0 AND [IsencaoLancamentoId] IS NULL AND [IsencaoMotivo] IS NULL AND [IsentoPorUsuarioId] IS NULL AND [IsentoEmUtc] IS NULL) OR ([Isento] = 1 AND [LancamentoId] IS NULL AND [IsencaoLancamentoId] IS NOT NULL AND [IsencaoMotivo] IS NOT NULL AND [IsentoPorUsuarioId] IS NOT NULL AND [IsentoEmUtc] IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.EventoOperacao", b =>
@@ -1843,6 +1914,9 @@ namespace Almirante.Api.Data.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<bool>("ValorAjustado")
+                        .HasColumnType("bit");
+
                     b.Property<decimal?>("ValorPago")
                         .IsConcurrencyToken()
                         .HasColumnType("decimal(18,2)");
@@ -1889,6 +1963,8 @@ namespace Almirante.Api.Data.Migrations
                             t.HasCheckConstraint("CK_Lancamentos_Status", "[Status] IN (0, 1, 2)");
 
                             t.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
+
+                            t.HasCheckConstraint("CK_Lancamentos_ValorAjustado", "[ValorAjustado] = 0 OR ([EventoId] IS NOT NULL AND [LancamentoOrigemId] IS NULL AND [TipoFluxo] = 0)");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
@@ -4094,8 +4170,27 @@ namespace Almirante.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("Almirante.Api.Entities.EventoItemAdicional", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Evento", null)
+                        .WithMany()
+                        .HasForeignKey("EventoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Almirante.Api.Entities.EventoMembro", b =>
                 {
+                    b.HasOne("Almirante.Api.Entities.Lancamento", null)
+                        .WithMany()
+                        .HasForeignKey("IsencaoLancamentoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Almirante.Api.Entities.Usuario", null)
+                        .WithMany()
+                        .HasForeignKey("IsentoPorUsuarioId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Almirante.Api.Entities.Lancamento", null)
                         .WithMany()
                         .HasForeignKey("LancamentoId")

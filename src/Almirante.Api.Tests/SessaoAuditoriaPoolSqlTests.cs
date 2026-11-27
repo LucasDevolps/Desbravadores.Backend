@@ -85,7 +85,7 @@ public sealed class SessaoAuditoriaPoolSqlTests
         }
         else
         {
-            Assert.True(await new LancamentoExclusaoService(db, NullLogger<LancamentoExclusaoService>.Instance)
+            Assert.True(await new LancamentoExclusaoService(db, TimeProvider.System, NullLogger<LancamentoExclusaoService>.Instance)
                 .DeleteAsync(new DeleteLancamentoRequest
                 {
                     Id = lancamentoId, Motivo = motivo, UsuarioResponsavelId = usuarioId, IpResponsavel = ip,

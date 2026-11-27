@@ -154,26 +154,49 @@ public sealed class LancamentosService(
             throw DevolucaoConflito();
         }
 
+        var statusMudou = request.Status.HasValue && request.Status.Value != entity.Status;
+        var valorMudou = request.Valor.HasValue && request.Valor.Value != entity.Valor;
         if (entity.EventoId is not null)
         {
             ExigirSemAlteracaoDeEvento(entity, request);
+            if (valorMudou)
+            {
+                if (!EventoRegras.ValorValido(request.Valor!.Value))
+                {
+                    throw ApiProblemException.Invalid("valor",
+                        "valor da cobrança de evento deve ter no máximo 2 casas decimais e caber em decimal(18,2).");
+                }
+
+                ExigirCobrancaAjustavel(entity);
+            }
         }
 
         ExigirSemAlteracaoDePagamento(entity, request);
         var hoje = dataCivil.Hoje();
         ExigirPendenteNaoVencido(entity, request, hoje);
 
-        var statusMudou = request.Status.HasValue && request.Status.Value != entity.Status;
-        if (entity.EventoId is { } eventoId && statusMudou && db.Database.IsRelational())
+        if (entity.EventoId is { } eventoId && (statusMudou || valorMudou) && db.Database.IsRelational())
         {
-            var status = request.Status!.Value;
-            return await AtualizarComTravaDoEventoAsync(id, eventoId, request.UsuarioResponsavelId, (lancamento, _) =>
+            var status = request.Status ?? entity.Status;
+            var valor = request.Valor ?? entity.Valor;
+            return await AtualizarComTravaDoEventoAsync(id, eventoId, request.UsuarioResponsavelId, (lancamento, _, valorPorMembro) =>
             {
                 ExigirSemAlteracaoDeEvento(lancamento, request);
+                var ajustaValor = request.Valor.HasValue && request.Valor.Value != lancamento.Valor;
+                if (ajustaValor)
+                {
+                    ExigirCobrancaAjustavel(lancamento);
+                }
+
                 ExigirSemAlteracaoDePagamento(lancamento, request);
                 ExigirPendenteNaoVencido(lancamento, request, hoje);
+                if (ajustaValor)
+                {
+                    lancamento.ValorAjustado = request.Valor!.Value != valorPorMembro;
+                }
+
                 AplicarAlteracoes(lancamento, request);
-            }, l => l.Status == status, ct);
+            }, l => l.Status == status && l.Valor == valor, ct);
         }
 
         AplicarAlteracoes(entity, request);
@@ -227,7 +250,7 @@ public sealed class LancamentosService(
 
         if (entity.EventoId is { } eventoId && db.Database.IsRelational())
         {
-            return await AtualizarComTravaDoEventoAsync(entity.Id, eventoId, usuarioId, Aplicar,
+            return await AtualizarComTravaDoEventoAsync(entity.Id, eventoId, usuarioId, (l, a, _) => Aplicar(l, a),
                 l => l.Status == StatusLancamento.Pago && l.DataPagamento == dataPagamento && l.ValorPago == valorPago
                     && l.PagamentoRegistradoPorUsuarioId == usuarioId, ct);
         }
@@ -277,7 +300,7 @@ public sealed class LancamentosService(
 
         if (db.Database.IsRelational())
         {
-            return await AtualizarComTravaDoEventoAsync(entity.Id, entity.EventoId!.Value, usuarioId, Aplicar,
+            return await AtualizarComTravaDoEventoAsync(entity.Id, entity.EventoId!.Value, usuarioId, (l, a, _) => Aplicar(l, a),
                 l => l.Status == StatusLancamento.Pago && l.DataPagamento == dataDevolucao && l.ValorPago == valorDevolvido
                     && l.DevolucaoJustificativa == justificativa && l.PagamentoRegistradoPorUsuarioId == usuarioId, ct, exigirParticipante: false);
         }
@@ -333,7 +356,7 @@ public sealed class LancamentosService(
     /// ligada a um participante ativo; devolução (<paramref name="exigirParticipante"/> false) só precisa estar ativa no evento.
     /// </summary>
     private async Task<LancamentoDto> AtualizarComTravaDoEventoAsync(Guid lancamentoId, Guid eventoId, Guid usuarioId,
-        Action<Lancamento, DateTime> alterar, Expression<Func<Lancamento, bool>> jaEfetivado, CancellationToken ct,
+        Action<Lancamento, DateTime, decimal> alterar, Expression<Func<Lancamento, bool>> jaEfetivado, CancellationToken ct,
         bool exigirParticipante = true)
     {
         var agora = clock.GetUtcNow().UtcDateTime;
@@ -377,7 +400,9 @@ public sealed class LancamentosService(
                     throw ApiProblemException.NotFound("Lançamento não encontrado.");
                 }
 
-                alterar(entity, agora);
+                var valorPorMembro = await db.Eventos.AsNoTracking().Where(e => e.Id == eventoId)
+                    .Select(e => e.ValorPorMembro).SingleAsync(ct);
+                alterar(entity, agora, valorPorMembro);
                 entity.DataAtualizacao = agora;
                 entity.AtualizadoPorUsuarioId = usuarioId;
                 await SalvarAsync(ct);
@@ -460,12 +485,24 @@ public sealed class LancamentosService(
         }
     }
 
+    private static void ExigirCobrancaAjustavel(Lancamento cobranca)
+    {
+        if (cobranca.Status == StatusLancamento.Pago || cobranca.DataPagamento is not null)
+        {
+            throw ApiProblemException.Conflict("Cobrança com pagamento registrado.",
+                "O valor de uma cobrança de evento só pode ser ajustado antes de qualquer pagamento, inclusive parcial. Para devolver valores " +
+                "já pagos, use o estorno do participante (POST /api/Eventos/{id}/Participantes/{membroId}/Estorno) ou a redução do evento.",
+                new Dictionary<string, object?> { ["codigo"] = CodigoCobrancaComPagamento, ["lancamentoId"] = cobranca.Id });
+        }
+    }
+
+    public const string CodigoCobrancaComPagamento = "COBRANCA_EVENTO_COM_PAGAMENTO";
+
     private static void ExigirSemAlteracaoDeEvento(Lancamento entity, UpdateLancamentoRequest request)
     {
         var altera = (request.Finalidade is not null && request.Finalidade != entity.Finalidade)
             || (request.Categoria.HasValue && request.Categoria.Value != entity.Categoria)
             || (request.TipoFluxo.HasValue && request.TipoFluxo.Value != entity.TipoFluxo)
-            || (request.Valor.HasValue && request.Valor.Value != entity.Valor)
             || (request.Vencimento.HasValue && request.Vencimento.Value != entity.Vencimento);
         if (altera)
         {
@@ -475,7 +512,8 @@ public sealed class LancamentosService(
 
     internal static ApiProblemException LancamentoDeEventoConflito() => ApiProblemException.Conflict(
         "Lançamento vinculado a um evento.",
-        "Valor, membro, vencimento, finalidade, categoria e exclusão de um lançamento gerado por evento devem ser feitos por meio de /api/Eventos. Apenas o status pode ser alterado aqui.");
+        "Membro, vencimento, finalidade, categoria e tipo de fluxo de um lançamento gerado por evento vêm de /api/Eventos. Aqui só mudam o status, " +
+        "o valor da cobrança antes de qualquer pagamento (ajuste individual) e a exclusão da cobrança sem pagamento (isenção individual).");
 
     public Task<bool> DeleteAsync(DeleteLancamentoRequest request, CancellationToken ct) => exclusao.DeleteAsync(request, ct);
 

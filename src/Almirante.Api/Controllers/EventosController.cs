@@ -1,4 +1,4 @@
-using Almirante.Api.Dtos;
+﻿using Almirante.Api.Dtos;
 using Almirante.Api.Infrastructure;
 using Almirante.Api.Security;
 using MediatR;
@@ -52,7 +52,9 @@ public sealed class EventosController(ISender mediator) : ControllerBase
     [EndpointDescription("Exige o header Idempotency-Key (UUID). O campo membros aceita um GUID OU um array de GUIDs (mesma operação). " +
         "A data mínima é o primeiro dia do mês atual (referência UTC do servidor, não a data de hoje). " +
         "titulo é obrigatório (1–150) e descricao é opcional (até 2000, aceita quebras de linha). " +
-        "Cada membro recebe um lançamento com valorPorMembro = transporte efetivo + alimentação efetiva + seguro; total = valorPorMembro × membros. " +
+        "Cada membro recebe um lançamento com valorPorMembro = transporte efetivo + alimentação efetiva + seguro + itens adicionais; " +
+        "total = soma das cobranças ativas (valorPorMembro × membros sem ajuste ou isenção). itensAdicionais (opcional, até 20): " +
+        "[{ titulo (1–100), valor (> 0, 2 casas) }], componentes da cobrança de cada participante, sem lançamento próprio; erro de item vem como itensAdicionais[i].campo. " +
         "Com valorPorMembro zero (ex.: reunião de clube), os membros participam e são notificados, mas nenhum lançamento é gerado (lancamentos: []). " +
         "201: criado. 200: reenvio idempotente (mesma chave e mesma operação normalizada) — devolve o RESULTADO ORIGINAL do POST, com a versao original, " +
         "não o estado atual (consulte o GET antes de editar; um PUT com a versao original recebe 409 se o cadastro mudou). O reenvio vale mesmo depois da virada do mês; " +
@@ -98,7 +100,10 @@ public sealed class EventosController(ISender mediator) : ControllerBase
         "sai sem devolução e o pagamento continua no histórico. Quem não pagou sai normalmente (motivo obrigatório). " +
         "Pago histórico sem dados de pagamento não gera devolução: registre o pagamento antes (409). " +
         "Local, título e descrição ainda podem ser corrigidos (a descrição dos lançamentos e devoluções acompanha o título). " +
-        "membros aceita GUID ou GUID[] como no POST. Data e local não mudam quando o passeio tem mais de um cadastro ativo (409).")]
+        "membros aceita GUID ou GUID[] como no POST. Data e local não mudam quando o passeio tem mais de um cadastro ativo (409). " +
+        "itensAdicionais: omitido preserva os itens atuais; [] remove todos; uma lista substitui todos (renomear não muda o valor; mudar valor ou " +
+        "remover recalcula o valor por membro). Com lançamento Pago, mudar valores de itens segue a regra de custo: só pode diminuir. " +
+        "Cobranças com valor ajustado e isenções individuais (issue #223) são preservadas.")]
     [ProducesResponseType<EventoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]

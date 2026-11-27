@@ -6,6 +6,8 @@ using Almirante.Api.Dtos;
 
 namespace Almirante.Api.Services;
 
+public sealed record EventoItemNormalizado(string Titulo, decimal Valor);
+
 public sealed record EventoNormalizado(
     string Titulo,
     string? Descricao,
@@ -16,10 +18,13 @@ public sealed record EventoNormalizado(
     bool AlimentacaoIndividual,
     decimal AlimentacaoValor,
     decimal SeguroObrigatorio,
-    IReadOnlyList<Guid> Membros)
+    IReadOnlyList<Guid> Membros,
+    IReadOnlyList<EventoItemNormalizado> Itens,
+    bool ItensInformados)
 {
-    /// <summary>transporte efetivo + alimentação efetiva + seguro.</summary>
-    public decimal ValorPorMembro => TransporteValor + AlimentacaoValor + SeguroObrigatorio;
+    public decimal ItensAdicionaisValor => Itens.Sum(i => i.Valor);
+
+    public decimal ValorPorMembro => TransporteValor + AlimentacaoValor + SeguroObrigatorio + ItensAdicionaisValor;
 
     /// <summary>valorPorMembro × quantidade de membros.</summary>
     public decimal Total => ValorPorMembro * Membros.Count;
@@ -28,6 +33,8 @@ public sealed record EventoNormalizado(
     public bool GeraCobranca => EventoRegras.GeraCobranca(ValorPorMembro);
 }
 
+public sealed record EventoTotais(decimal Estimado, decimal Pago, decimal AReceber, decimal Devolvido);
+
 public static class EventoRegras
 {
     public const decimal ValorMaximo = 9_999_999_999_999_999.99m;
@@ -35,6 +42,8 @@ public static class EventoRegras
     public const int DescricaoMaximo = 2000;
     public const int LocalMaximo = 200;
     public const int MotivoMaximo = 255;
+    public const int ItemTituloMaximo = 100;
+    public const int ItensMaximo = 20;
 
     public static DateOnly PrimeiroDiaDoMes(DateTimeOffset agoraUtc) => new(agoraUtc.UtcDateTime.Year, agoraUtc.UtcDateTime.Month, 1);
 
@@ -84,8 +93,13 @@ public static class EventoRegras
             individual,
             individual ? 0m : request.Alimentacao.Valor!.Value,
             request.SeguroObrigatorio!.Value,
-            request.Membros!.OrderBy(m => m).ToArray());
+            request.Membros!.OrderBy(m => m).ToArray(),
+            (request.ItensAdicionais ?? []).Select(i => new EventoItemNormalizado(NormalizarTitulo(i.Titulo), i.Valor!.Value)).ToArray(),
+            request.ItensAdicionais is not null);
     }
+
+    public static bool MesmaComposicaoDeValores(IEnumerable<EventoItemNormalizado> a, IEnumerable<EventoItemNormalizado> b) =>
+        a.Select(i => i.Valor).Order().SequenceEqual(b.Select(i => i.Valor).Order());
 
     /// <summary>Texto do lançamento de cada participante: "Evento - {título} - {dd/MM/yyyy}".</summary>
     public static string DescricaoLancamento(string titulo, DateOnly data)
@@ -109,8 +123,29 @@ public static class EventoRegras
             e.SeguroObrigatorio.ToString("F2", CultureInfo.InvariantCulture),
             eventoReferenciaId?.ToString("D") ?? "-",
             string.Join(',', e.Membros.OrderBy(m => m).Select(m => m.ToString("D"))));
+        if (e.Itens.Count > 0)
+        {
+            canonical += "|itens:" + string.Join(',', e.Itens.Select(i =>
+                JsonSerializer.Serialize(i.Titulo) + "=" + i.Valor.ToString("F2", CultureInfo.InvariantCulture)));
+        }
+
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
+
+    public static decimal ValorDevido(decimal valorPorMembro, EventoLancamentoDto cobranca) =>
+        cobranca.ValorAjustado ? cobranca.Valor : Math.Min(cobranca.Valor, valorPorMembro);
+
+    public static decimal ValorAReceber(decimal valorPorMembro, EventoLancamentoDto cobranca) =>
+        cobranca is { Status: Entities.StatusLancamento.Pago, ValorPago: null }
+            ? 0m
+            : Math.Max(0m, ValorDevido(valorPorMembro, cobranca) - (cobranca.ValorPago ?? 0m));
+
+    public static EventoTotais Totais(decimal valorPorMembro, IReadOnlyCollection<EventoLancamentoDto> cobrancas,
+        IReadOnlyCollection<EventoDevolucaoDto> devolucoes) => new(
+        cobrancas.Sum(c => ValorDevido(valorPorMembro, c)),
+        cobrancas.Sum(c => c.ValorPago ?? 0m),
+        cobrancas.Sum(c => ValorAReceber(valorPorMembro, c)),
+        devolucoes.Sum(d => d.ValorDevolvido ?? 0m));
 
     public static string VersaoParaTexto(byte[] versao) => Convert.ToBase64String(versao);
 

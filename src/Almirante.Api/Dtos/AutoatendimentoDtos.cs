@@ -73,6 +73,7 @@ public sealed record EventoParticipanteDto
     public required TransporteDto Transporte { get; init; }
     public required AlimentacaoDto Alimentacao { get; init; }
     public decimal SeguroObrigatorio { get; init; }
+    public IReadOnlyList<EventoItemAdicionalDto> ItensAdicionais { get; init; } = [];
     public decimal ValorPorMembro { get; init; }
 
     /// <summary>Nula quando o evento não tem valor a pagar (valor por membro zero): o membro participa sem cobrança.</summary>

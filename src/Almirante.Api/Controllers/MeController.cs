@@ -1,4 +1,4 @@
-using Almirante.Api.Dtos;
+﻿using Almirante.Api.Dtos;
 using Almirante.Api.Infrastructure;
 using Almirante.Api.Options;
 using Almirante.Api.Security;
@@ -103,9 +103,9 @@ public sealed class MeController(ISender mediator, LimitadorEnvioFotos limitador
 
     [HttpGet("Eventos")]
     [EndpointSummary("Lista os eventos dos quais o usuário autenticado participa.")]
-    [EndpointDescription("Somente cadastros ativos em que o usuário é participante ativo, passados e futuros, em ordem de data. Cada item traz data, " +
-        "local, composição do valor por membro e a própria cobrança (valor, vencimento, status); nunca os demais participantes, o total ou os " +
-        "lançamentos de outros. Sem eventos: items: [].")]
+    [EndpointDescription("Somente cadastros ativos em que o usuário é participante ativo, passados e futuros, em ordem de data. Cada item traz titulo, descricao, data, " +
+        "local, composição do valor por membro (inclusive itensAdicionais), a própria cobrança (minhaCobranca, nula sem valor ou isenta) e as próprias devoluções " +
+        "(minhasDevolucoes, [] sem nenhuma); nunca os demais participantes, o total ou os lançamentos de outros. Sem eventos: items: [].")]
     [ProducesResponseType<MeusEventosResponse>(StatusCodes.Status200OK)]
     public async Task<ActionResult<MeusEventosResponse>> ListarEventos(CancellationToken cancellationToken) =>
         Ok(await Mediator.Send(new ListarMeusEventosQuery(User.UsuarioId()), cancellationToken));

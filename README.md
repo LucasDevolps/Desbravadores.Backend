@@ -774,8 +774,12 @@ podem ter título próprio.
 ```text
 valorPorMembro = (transporte.ehGratis ? 0 : transporte.valor)
                + (alimentacao.individual ? 0 : alimentacao.valor) + seguroObrigatorio
-total          = valorPorMembro × quantidadeMembros        # nunca gravado no lançamento individual
+               + Σ itensAdicionais[].valor
+total          = totalEstimado                              # nunca gravado no lançamento individual
 ```
+
+Sem ajuste individual nem isenção, `total = valorPorMembro × quantidadeMembros`; com eles, `total` passa a ser a
+soma das cobranças ativas (ver [Ajustes individuais, isenções e totais](#ajustes-individuais-isenções-e-totais-issue-223)).
 
 Os cinco campos (`ehGratis`, `individual` e os três valores) são obrigatórios no corpo — zero/`false`
 são válidos; valor ignorado por um booleano é normalizado para zero antes das validações.
@@ -908,9 +912,76 @@ motivo e horário UTC do banco. A aplicação **nunca** insere nessa tabela (o u
 (depois do middleware de proxies confiáveis; `X-Forwarded-For` nunca é lido à mão). O contexto é
 limpo no `finally` na mesma conexão física e, se a limpeza falhar, o pool dessa conexão é descartado.
 
-**Lançamentos vinculados a evento** (`EventoId != null`): `PUT /api/Lancamentos/{id}` só aceita mudar
-`status` (exceto para `Pago`) e `descricao` — valor, vencimento, finalidade, categoria e fluxo, bem como o `DELETE`, retornam
-`409` orientando o uso de `/api/Eventos`. Uma **devolução** (`lancamentoOrigemId` preenchido) não muda por
+#### Itens adicionais por participante (issue #225)
+
+`itensAdicionais` (opcional no POST e no PUT, devolvido em `GET /api/Eventos`, `GET /api/Eventos/{id}` e `/api/Me/Eventos`)
+discrimina outros custos por participante além de transporte, alimentação e seguro:
+
+```json
+"itensAdicionais": [ { "titulo": "Inscrição", "valor": 30.00 }, { "titulo": "Material", "valor": 12.50 } ]
+```
+
+- Até 20 itens por cadastro; `titulo` de 1 a 100 caracteres depois do trim (espaços colapsados, página 1252) e `valor` > 0
+  com no máximo 2 casas (`decimal(18,2)`). Erro de um item vem identificado pelo índice (`ItensAdicionais[1].Valor`) e nada é
+  salvo. Cadastros antigos devolvem `itensAdicionais: []`.
+- Os itens são **componentes da cobrança** de cada participante: entram no `valorPorMembro` (base R$ 100 + inscrição R$ 30
+  + material R$ 12,50 = R$ 142,50; dois participantes sem ajuste = R$ 285 estimados) e **não** geram lançamento próprio.
+- No PUT, **omitir** o campo preserva os itens atuais (clientes antigos continuam funcionando); `[]` remove todos; uma lista
+  substitui todos, na ordem enviada. Renomear não muda o valor; mudar o valor ou remover um item recalcula o valor por membro
+  e as cobranças em aberto uma única vez. Os itens substituídos ficam inativos em `evento_itens_adicionais` (histórico; a
+  identidade de runtime não apaga linhas).
+- Com lançamento `Pago`, valem as regras de custo da [#209](#devoluções-issue-209): renomear passa; aumentar, ou trocar a
+  composição mantendo o total, dá `409`; reduzir gera devolução para quem pagou acima do novo valor. Cobranças ajustadas e
+  isenções individuais (#223) são preservadas.
+- Idempotência: os itens (título normalizado, valor e ordem) entram no hash da criação só quando existem, então o hash de
+  operações sem itens continua o mesmo de antes.
+
+#### Ajustes individuais, isenções e totais (issue #223)
+
+A Tesouraria (`financeiro.lancamentos.editar`/`excluir`: inicialmente `ADM`, `DIR`, `DIRA` e `TES`; os demais
+cargos recebem `403` também em chamadas diretas) atua sobre a cobrança de um participante pelo id do lançamento,
+sem mudar o valor padrão do evento nem as cobranças dos demais:
+
+- **Ajuste de valor** — `PUT /api/Lancamentos/{id}` com `{ "valor": 200.00 }` (> 0, no máximo 2 casas,
+  `decimal(18,2)`; fora disso, `400`). A cobrança fica com `valorAjustado = true` enquanto o valor diferir do
+  valor por membro; ajustar de volta ao valor padrão volta a acompanhar o evento. Edições posteriores do evento
+  mudam vencimento e descrição da cobrança ajustada, mas não o valor; uma redução do evento com pagamento não
+  gera devolução para ela; zerar o evento cancela as cobranças em aberto, ajustadas ou não.
+- **Isenção** — `DELETE /api/Lancamentos/{id}` com `{ "motivo": "..." }` (1–255) em cobrança **sem nenhum
+  pagamento**: a cobrança é desativada com auditoria do trigger (`lancamentos_deletados`, com responsável, IP e
+  motivo), o membro continua inscrito (`evento_membros.Isento = 1`, `IsencaoLancamentoId`, `IsencaoMotivo`,
+  `IsentoPorUsuarioId`, `IsentoEmUtc`; `LancamentoId` fica nulo) e aparece em `isencoes` do evento. Edições do
+  evento, inclusive zerar e voltar a ter valor, **não recriam** a cobrança do isento. Remover e incluir o membro de
+  novo cria uma participação nova, com cobrança.
+- **Com pagamento registrado, inclusive parcial**, ajuste e isenção retornam `409` com
+  `codigo = COBRANCA_EVENTO_COM_PAGAMENTO`; nenhum pagamento é apagado nem alterado. Para devolver o que foi
+  pago, use o estorno do participante ou a redução do evento (#209).
+- **Concorrência**: ajuste e isenção travam a linha do evento (mesma ordem de locks do pagamento e de
+  `/api/Eventos`) e mudam a `versao`, então um PUT/DELETE do evento com a versão anterior recebe `409`. Entre
+  pagamento e isenção da mesma cobrança só um vence: pagamento primeiro → isenção `409`; isenção primeiro →
+  pagamento `404`.
+
+Totais do cadastro em `EventoDto` (`decimal`, 2 casas, só deste cadastro, nunca do grupo inteiro):
+
+```text
+valorDevido(c)  = c.valorAjustado ? c.valor : min(c.valor, valorPorMembro)
+totalEstimado   = Σ valorDevido(c)                         # cobranças ativas; isentas ficam de fora
+totalPago       = Σ c.valorPago                            # pagamentos efetivos, inclusive parciais
+valorAReceber   = Σ max(0, valorDevido(c) − c.valorPago)   # inclusive Atrasado; "Pago" histórico sem valorPago conta 0
+totalDevolvido  = Σ valorDevolvido das devoluções baixadas  # saídas separadas: não abatem totalPago nem reabrem dívida
+total           = totalEstimado
+```
+
+O `min` cobre o pagamento que ficou acima do valor por membro depois de uma redução (#209): o excedente sai
+como devolução e o membro não volta a dever. Exemplo: dez cobranças de R$ 252 e a da Ana ajustada para R$ 200 →
+`totalEstimado = 2468`; com R$ 80 pagos pela Ana → `totalPago = 80` e `valorAReceber = 2388`. Isentando a Ana em
+vez de ajustar → dez membros, nove cobranças e `totalEstimado = 2268`. Cada item de `lancamentos` traz também
+`valorPago` e `valorAjustado`, e `GET /api/Lancamentos` expõe `valorAjustado`.
+
+**Lançamentos vinculados a evento** (`EventoId != null`): `PUT /api/Lancamentos/{id}` aceita mudar
+`status` (exceto para `Pago`), `descricao` e, antes de qualquer pagamento, o `valor` (ajuste individual);
+vencimento, finalidade, categoria e fluxo retornam `409` orientando o uso de `/api/Eventos`, e o `DELETE` de uma
+cobrança sem pagamento é a isenção individual. Uma **devolução** (`lancamentoOrigemId` preenchido) não muda por
 `PUT /api/Lancamentos/{id}` nem por `/Pagamento` (`409`): a baixa é em `/api/Lancamentos/{id}/Devolucao`. O pagamento é registrado por `POST /api/Lancamentos/{id}/Pagamento`,
 que também atualiza a linha do evento (muda a `versao`). As exceções de eventos (finalidade nula, valor zero, data
 passada no mês) **não** se aplicam a `POST /api/Lancamentos/Registrar`. `Lancamento.Finalidade` e
@@ -940,6 +1011,20 @@ lançamento, para não inventar cobrança.
 evento, com motivo, pode ser devolução, e a justificativa só existe depois da baixa. `CK_notificacoes_Tipo`
 passa a aceitar `5` (`DevolucaoEvento`). Nenhuma linha existente muda. O `Down` é recusado
 (`THROW 50209`) enquanto houver devolução gravada.
+
+**Migration `AddAjusteIsencaoCobrancasEvento`** (issue #223, incremental): adiciona `Lancamentos.ValorAjustado`
+(`bit`, padrão `0`, com `CK_Lancamentos_ValorAjustado`: só cobrança de evento, de entrada e que não é devolução) e,
+em `evento_membros`, `Isento` (`bit`, padrão `0`), `IsencaoLancamentoId` (FK para `Lancamentos`, índice filtrado),
+`IsencaoMotivo` (`varchar(255)`), `IsentoPorUsuarioId` (FK para `Usuarios`) e `IsentoEmUtc`, com
+`CK_evento_membros_Isencao` (isento sem cobrança ativa e com todos os dados da isenção; não isento sem nenhum).
+Nenhuma linha existente muda. O `Down` é recusado (`THROW 50223`) enquanto houver cobrança ajustada ou isenta.
+
+**Migration `AddEventosItensAdicionais`** (issue #225, incremental): cria `evento_itens_adicionais` (`EventoId` FK,
+`Ordem`, `Titulo` `varchar(100)`, `Valor` `decimal(18,2)` com `CK_evento_itens_adicionais_Valor` > 0, `Ativo`,
+`CriadoEmUtc`, `DesativadoEmUtc`; índice único filtrado `EventoId + Ordem` entre os ativos) e adiciona
+`eventos.ItensAdicionaisValor` (`decimal(18,2)`, padrão `0`). `CK_eventos_valores_normalizados` passa a exigir
+`ValorPorMembro = TransporteValor + AlimentacaoValor + SeguroObrigatorio + ItensAdicionaisValor`. Nenhuma linha
+existente muda. O `Down` é recusado (`THROW 50225`) enquanto houver item adicional gravado.
 
 **Frontend (issue #57).** Use `GET /api/Membros` (id, nome e cargo, disponível também ao Tesoureiro) para os IDs; envie `membros` como GUID ou array;
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em
@@ -1119,11 +1204,30 @@ e nada é gravado. A alteração é auditada em `_usuarios_hist` com o próprio 
 ```http
 GET /api/Me/Eventos/6f0c…            (eventoId recebido na notificação EventoCadastrado)
 
-200 { "id": "6f0c…", "dataEvento": "2026-11-10", "local": "Acampamento",
+200 { "id": "6f0c…", "titulo": "Acampamento de primavera", "descricao": null,
+      "dataEvento": "2026-11-10", "local": "Acampamento",
       "transporte": { "valor": 10.00, "ehGratis": false }, "alimentacao": { "individual": false, "valor": 8.00 },
-      "seguroObrigatorio": 2.00, "valorPorMembro": 20.00,
-      "minhaCobranca": { "valor": 20.00, "vencimento": "2026-11-10", "status": "Pendente" } }
+      "seguroObrigatorio": 2.00, "itensAdicionais": [ { "titulo": "Inscrição", "valor": 5.00 } ], "valorPorMembro": 25.00,
+      "minhaCobranca": { "valor": 25.00, "vencimento": "2026-11-10", "status": "Pago" },
+      "minhasDevolucoes": [
+        { "valor": 10.00, "vencimento": "2026-11-03", "status": "Pago", "valorDevolvido": 7.00,
+          "dataDevolucao": "2026-11-04", "justificativa": "devolvido em espécie" },
+        { "valor": 8.00, "vencimento": "2026-11-05", "status": "Pendente", "valorDevolvido": null,
+          "dataDevolucao": null, "justificativa": null } ] }
 ```
+
+Contrato do participante (issues #209, #225 e #227), igual em `GET /api/Me/Eventos` (cada item de `items`) e em
+`GET /api/Me/Eventos/{id}`:
+
+- `titulo` sempre preenchido; `descricao` nula quando o cadastro não tem descrição. `itensAdicionais` é `[]` em eventos sem itens.
+- `minhaCobranca` é nula quando o evento não tem valor a pagar ou quando a cobrança do membro foi isenta (#223).
+- `minhasDevolucoes` traz **só** as devoluções do próprio membro naquele cadastro, uma por linha, ordenadas por vencimento;
+  `[]` quando não há nenhuma (inclusive em eventos antigos). `valor` é o valor esperado; `valorDevolvido`, `dataDevolucao`
+  e `justificativa` ficam nulos até a baixa. `status` é `Pendente`, `Pago` ou `Atrasado` (texto); uma devolução pendente
+  nunca aparece como paga, e uma baixa parcial mostra o valor efetivo em `valorDevolvido`.
+- Datas são civis (`yyyy-MM-dd`) e valores são `decimal` com 2 casas.
+- Cada devolução gera uma notificação `DevolucaoEvento` em pt-BR (texto do backend, com `eventoId` e `lancamentoId`),
+  listada em `/api/Notificacoes`, contada em `naoLidas` e publicada no hub SignalR (ver [`docs/notificacoes.md`](docs/notificacoes.md)).
 
 **Impacto para os consumidores.** SEC deixa de acessar `/api/Lancamentos` (inclusive pagamentos) e recebe
 `"financeiro": null` no dashboard; TES deixa de acessar `/api/Usuarios` (inclusive fotos de terceiros) e
