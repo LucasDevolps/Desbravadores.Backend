@@ -18,6 +18,8 @@ public sealed record LancamentoDto
     public required StatusLancamento Status { get; init; }
     public Guid? EventoId { get; init; }
 
+    public bool ValorAjustado { get; init; }
+
     /// <summary>Data efetiva da liquidação; nula sem pagamento registrado.</summary>
     public DateOnly? DataPagamento { get; init; }
 

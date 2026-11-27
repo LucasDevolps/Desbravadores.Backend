@@ -101,7 +101,11 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [RequerPermissao(Permissoes.LancamentosEditar)]
     [EndpointSummary("Atualiza um lançamento.")]
     [EndpointDescription("Campos omitidos não mudam. status Pago só pelo endpoint de pagamento (409). Trocar o status para Pendente com vencimento " +
-        "anterior a hoje no fuso do clube retorna 400: o lançamento vencido e não pago fica Atrasado (a rotina de vencimento o marcaria de novo).")]
+        "anterior a hoje no fuso do clube retorna 400: o lançamento vencido e não pago fica Atrasado (a rotina de vencimento o marcaria de novo). " +
+        "Cobrança de evento: aceita status e valor (ajuste individual: > 0, 2 casas). O ajuste vale só para essa cobrança, não muda o valor padrão " +
+        "do evento nem as demais e é preservado nas edições do evento (valorAjustado = true enquanto difere do valor por membro). " +
+        "409 com codigo COBRANCA_EVENTO_COM_PAGAMENTO se a cobrança já tem pagamento, inclusive parcial; 409 para membro, vencimento, finalidade, " +
+        "categoria ou tipo de fluxo, para devoluções e quando o lançamento mudou durante a requisição.")]
     [ProducesResponseType<LancamentoDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -201,6 +205,10 @@ public sealed class LancamentosController(ISender mediator) : ControllerBase
     [HttpDelete("{id:guid}")]
     [RequerPermissao(Permissoes.LancamentosExcluir)]
     [EndpointSummary("Exclui logicamente um lançamento; a exclusão é auditada.")]
+    [EndpointDescription("Corpo: motivo (1–255). Cobrança de evento sem nenhum pagamento é excluída como isenção individual: a cobrança é " +
+        "desativada com auditoria (lancamentos_deletados), o membro continua inscrito e aparece em isencoes do evento, e as edições do evento " +
+        "não recriam a cobrança. 409 com codigo COBRANCA_EVENTO_COM_PAGAMENTO se há pagamento, inclusive parcial (nenhum pagamento é apagado); " +
+        "409 para devoluções. 404 se inexistente, já excluído ou de evento excluído.")]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]

@@ -28,6 +28,8 @@ public sealed record EventoNormalizado(
     public bool GeraCobranca => EventoRegras.GeraCobranca(ValorPorMembro);
 }
 
+public sealed record EventoTotais(decimal Estimado, decimal Pago, decimal AReceber, decimal Devolvido);
+
 public static class EventoRegras
 {
     public const decimal ValorMaximo = 9_999_999_999_999_999.99m;
@@ -111,6 +113,21 @@ public static class EventoRegras
             string.Join(',', e.Membros.OrderBy(m => m).Select(m => m.ToString("D"))));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
+
+    public static decimal ValorDevido(decimal valorPorMembro, EventoLancamentoDto cobranca) =>
+        cobranca.ValorAjustado ? cobranca.Valor : Math.Min(cobranca.Valor, valorPorMembro);
+
+    public static decimal ValorAReceber(decimal valorPorMembro, EventoLancamentoDto cobranca) =>
+        cobranca is { Status: Entities.StatusLancamento.Pago, ValorPago: null }
+            ? 0m
+            : Math.Max(0m, ValorDevido(valorPorMembro, cobranca) - (cobranca.ValorPago ?? 0m));
+
+    public static EventoTotais Totais(decimal valorPorMembro, IReadOnlyCollection<EventoLancamentoDto> cobrancas,
+        IReadOnlyCollection<EventoDevolucaoDto> devolucoes) => new(
+        cobrancas.Sum(c => ValorDevido(valorPorMembro, c)),
+        cobrancas.Sum(c => c.ValorPago ?? 0m),
+        cobrancas.Sum(c => ValorAReceber(valorPorMembro, c)),
+        devolucoes.Sum(d => d.ValorDevolvido ?? 0m));
 
     public static string VersaoParaTexto(byte[] versao) => Convert.ToBase64String(versao);
 

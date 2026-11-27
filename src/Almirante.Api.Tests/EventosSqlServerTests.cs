@@ -1162,7 +1162,7 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
     }
 
     [Fact]
-    public async Task Lancamentos_VinculadoAEvento_BloqueiaAlteracaoIsoladaEExclusao_MasPermiteStatus()
+    public async Task Lancamentos_VinculadoAEvento_BloqueiaCamposDoEvento_MasPermiteStatus()
     {
         var m = (await MembrosAsync(1))[0];
         var dto = await CriarAsync(m);
@@ -1170,7 +1170,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
 
         foreach (var corpo in new object[]
         {
-            new { valor = 50m },
             new { vencimento = dto.DataEvento.AddDays(1).ToString("yyyy-MM-dd") },
             new { categoria = "Clube" },
             new { finalidade = "Mensalidade" },
@@ -1181,11 +1180,6 @@ public sealed class EventosSqlServerTests(EventosSqlFixture fx) : IClassFixture<
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
             Assert.Contains("/api/Eventos", await response.Content.ReadAsStringAsync());
         }
-
-        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "isolada" }) };
-        var excluido = await Client.SendAsync(delete);
-        Assert.Equal(HttpStatusCode.Conflict, excluido.StatusCode);
-        Assert.Contains("/api/Eventos", await excluido.Content.ReadAsStringAsync());
 
         var lanc = Assert.Single(await LancamentosDe(dto.Id));
         Assert.Equal((20m, true, dto.DataEvento, CategoriaLancamento.Evento, (string?)null), (lanc.Valor, lanc.Ativo, lanc.Vencimento, lanc.Categoria, lanc.Finalidade));

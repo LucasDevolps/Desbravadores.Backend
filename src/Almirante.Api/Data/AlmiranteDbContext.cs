@@ -58,6 +58,16 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
         " OR ([LancamentoOrigemId] IS NOT NULL AND [TipoFluxo] = 1 AND [EventoId] IS NOT NULL AND [MembroId] IS NOT NULL" +
         " AND [DevolucaoMotivo] IS NOT NULL AND ([DevolucaoJustificativa] IS NULL OR [DataPagamento] IS NOT NULL))";
 
+    public const string CheckValorAjustado =
+        "[ValorAjustado] = 0 OR ([EventoId] IS NOT NULL AND [LancamentoOrigemId] IS NULL AND [TipoFluxo] = 0)";
+
+    public const string CheckIsencao =
+        "([Isento] = 0 AND [IsencaoLancamentoId] IS NULL AND [IsencaoMotivo] IS NULL AND [IsentoPorUsuarioId] IS NULL AND [IsentoEmUtc] IS NULL)" +
+        " OR ([Isento] = 1 AND [LancamentoId] IS NULL AND [IsencaoLancamentoId] IS NOT NULL AND [IsencaoMotivo] IS NOT NULL" +
+        " AND [IsentoPorUsuarioId] IS NOT NULL AND [IsentoEmUtc] IS NOT NULL)";
+
+    public const int IsencaoMotivoMaximo = 255;
+
     public const int DevolucaoMotivoMaximo = 255;
     public const int DevolucaoJustificativaMaximo = 255;
 
@@ -181,6 +191,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
                 table.HasCheckConstraint("CK_Lancamentos_TipoFluxo", "[TipoFluxo] IN (0, 1)");
                 table.HasCheckConstraint("CK_Lancamentos_Pagamento", CheckPagamento);
                 table.HasCheckConstraint("CK_Lancamentos_Devolucao", CheckDevolucao);
+                table.HasCheckConstraint("CK_Lancamentos_ValorAjustado", CheckValorAjustado);
             });
             entity.HasKey(l => l.Id);
             entity.Property(l => l.Finalidade).HasColumnType("varchar(50)").HasMaxLength(50).IsUnicode(false);
@@ -315,8 +326,10 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
 
         modelBuilder.Entity<EventoMembro>(entity =>
         {
-            entity.ToTable("evento_membros");
+            entity.ToTable("evento_membros", table => table.HasCheckConstraint("CK_evento_membros_Isencao", CheckIsencao));
             entity.HasKey(m => m.Id);
+            entity.Property(m => m.IsencaoMotivo).HasColumnType($"varchar({IsencaoMotivoMaximo})").HasMaxLength(IsencaoMotivoMaximo).IsUnicode(false);
+            entity.HasIndex(m => m.IsencaoLancamentoId).HasFilter("[IsencaoLancamentoId] IS NOT NULL");
             entity.HasIndex(m => m.EventoId);
             entity.HasIndex(m => m.MembroId);
             entity.HasIndex(m => m.LancamentoId);
@@ -332,6 +345,8 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(m => m.MembroId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Lancamento>().WithMany().HasForeignKey(m => m.LancamentoId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Lancamento>().WithMany().HasForeignKey(m => m.IsencaoLancamentoId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Usuario>().WithMany().HasForeignKey(m => m.IsentoPorUsuarioId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<EventoOperacao>(entity =>

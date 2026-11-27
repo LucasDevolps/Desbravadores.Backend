@@ -31,6 +31,8 @@ public sealed class Lancamento
 
     public Guid? EventoId { get; set; }
 
+    public bool ValorAjustado { get; set; }
+
     /// <summary>
     /// Preenchido só nas devoluções de evento (issue #209): o lançamento Pago de origem, cujo valor pago acima do novo valor por membro
     /// (ou retido no estorno do participante) volta para o membro. A devolução é sempre Saída, do mesmo membro e do mesmo evento.

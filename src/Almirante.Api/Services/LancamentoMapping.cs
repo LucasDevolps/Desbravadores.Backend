@@ -19,6 +19,7 @@ internal static class LancamentoMapping
         Vencimento = lancamento.Vencimento,
         Status = lancamento.Status,
         EventoId = lancamento.EventoId,
+        ValorAjustado = lancamento.ValorAjustado,
         DataPagamento = lancamento.DataPagamento,
         ValorPago = lancamento.ValorPago,
         ValorRestante = lancamento.ValorPago != null

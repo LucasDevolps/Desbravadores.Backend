@@ -428,7 +428,7 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
 
         foreach (var corpo in new object[]
         {
-            new { valor = 21m }, new { valor = 0.01m, status = "Pago" }, new { vencimento = dto.DataEvento.AddDays(3).ToString("yyyy-MM-dd") },
+            new { valor = 0.01m, status = "Pago" }, new { vencimento = dto.DataEvento.AddDays(3).ToString("yyyy-MM-dd") },
             new { categoria = "Clube", status = "Atrasado" }, new { finalidade = "Doação" }, new { tipoFluxo = "Saida" },
         })
             Assert.Equal(HttpStatusCode.Conflict, (await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", corpo)).StatusCode);
@@ -436,9 +436,8 @@ public sealed class EventosSecurityTests(EventosSqlFixture fx) : IClassFixture<E
         var lanc = await Db(db => db.Lancamentos.AsNoTracking().SingleAsync(l => l.Id == id));
         Assert.Equal((StatusLancamento.Pendente, 20m, dto.DataEvento, CategoriaLancamento.Evento), (lanc.Status, lanc.Valor, lanc.Vencimento, lanc.Categoria));
 
-        var delete = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "contorno" }) };
-        Assert.Equal(HttpStatusCode.Conflict, (await Client.SendAsync(delete)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await TestHelpers.PagarAsync(Client, id)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await Client.PutAsJsonAsync($"/api/Lancamentos/{id}", new { valor = 21m })).StatusCode);
         var delete2 = new HttpRequestMessage(HttpMethod.Delete, $"/api/Lancamentos/{id}") { Content = JsonContent.Create(new { motivo = "contorno" }) };
         Assert.Equal(HttpStatusCode.Conflict, (await Client.SendAsync(delete2)).StatusCode);
         Assert.Equal(0, await Db(db => db.LancamentosDeletados.CountAsync(d => d.LancamentoId == id)));

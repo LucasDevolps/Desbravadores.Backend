@@ -115,19 +115,18 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         var ids = eventos.Select(e => e.Id).ToList();
         var participantes = await db.EventosMembros.AsNoTracking()
             .Where(m => m.Ativo && ids.Contains(m.EventoId))
-            .Select(m => new { m.EventoId, m.MembroId })
             .ToListAsync(ct);
         var lancamentos = await db.Lancamentos.AsNoTracking()
             .Where(l => l.Ativo && l.EventoId != null && ids.Contains(l.EventoId.Value) && l.MembroId != null)
             .ToListAsync(ct);
 
-        var membrosPorEvento = participantes.ToLookup(p => p.EventoId, p => p.MembroId);
+        var participantesPorEvento = participantes.ToLookup(p => p.EventoId);
         var lancamentosPorEvento = lancamentos.ToLookup(l => l.EventoId!.Value);
         return eventos.Select(e => EventoMapping.ToDto(e,
-            membrosPorEvento[e.Id],
-            lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId == null)
-                .Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)),
-            lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId != null).Select(EventoMapping.ToDevolucaoDto))).ToList();
+            participantesPorEvento[e.Id].Select(p => p.MembroId),
+            lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId == null).Select(EventoMapping.ToLancamentoDto),
+            lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId != null).Select(EventoMapping.ToDevolucaoDto),
+            EventoMapping.Isencoes(participantesPorEvento[e.Id]))).ToList();
     }
 
     public async Task<RegistrarEventoResult> RegistrarAsync(RegistrarEventoRequest request, CancellationToken ct)
@@ -221,7 +220,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
                 var dto = EventoMapping.ToDto(evento,
                     participantes.Select(p => p.MembroId),
-                    lancamentos.Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)));
+                    lancamentos.Select(EventoMapping.ToLancamentoDto));
 
                 operacao.RespostaJson = JsonSerializer.Serialize(dto, RespostaJsonOptions);
                 await SalvarAsync(ct);
@@ -411,12 +410,13 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                         continue;
                     }
 
+                    var valorDoEvento = lancamento.ValorAjustado ? lancamento.Valor : conteudo.ValorPorMembro;
                     if (lancamento.Descricao != descricao ||
-                        (emAberto && (lancamento.Valor != conteudo.ValorPorMembro || lancamento.Vencimento != conteudo.DataEvento)))
+                        (emAberto && (lancamento.Valor != valorDoEvento || lancamento.Vencimento != conteudo.DataEvento)))
                     {
                         if (emAberto)
                         {
-                            lancamento.Valor = conteudo.ValorPorMembro;
+                            lancamento.Valor = valorDoEvento;
                             lancamento.Vencimento = conteudo.DataEvento;
                             // Vencimento que ainda não passou tira do atraso; um vencido fica para a rotina, que marca e notifica.
                             if (lancamento.Status == StatusLancamento.Atrasado && lancamento.Vencimento >= hoje)
@@ -459,7 +459,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 {
                     // Evento que passa a ter valor: quem participava sem cobrança ganha o lançamento pendente agora.
                     var comCobranca = cobrancas.Where(l => l.Ativo && l.MembroId is not null).Select(l => l.MembroId!.Value).ToHashSet();
-                    foreach (var participante in mantidos.Where(p => !comCobranca.Contains(p.MembroId)))
+                    foreach (var participante in mantidos.Where(p => !p.Isento && !comCobranca.Contains(p.MembroId)))
                     {
                         var lancamento = NovoLancamento(evento, participante.MembroId, agora);
                         novosLancamentos.Add(lancamento);
@@ -500,8 +500,9 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 var ativos = cobrancas.Where(l => l.Ativo).Concat(novosLancamentos).ToList();
                 return EventoMapping.ToDto(evento,
                     mantidos.Select(p => p.MembroId).Concat(adicionados),
-                    ativos.Select(l => new EventoLancamentoDto(l.Id, l.MembroId!.Value, l.Valor, l.Status)),
-                    devolucoes.Concat(novasDevolucoes).Select(EventoMapping.ToDevolucaoDto));
+                    ativos.Select(EventoMapping.ToLancamentoDto),
+                    devolucoes.Concat(novasDevolucoes).Select(EventoMapping.ToDevolucaoDto),
+                    EventoMapping.Isencoes(mantidos));
             }, ct);
 
             if (notificou)
@@ -555,7 +556,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         IReadOnlyCollection<Lancamento> devolucoes, decimal novoValorPorMembro)
     {
         var resultado = new List<(Lancamento Origem, decimal Valor)>();
-        foreach (var pago in pagos.OrderBy(p => p.MembroId).ThenBy(p => p.Id))
+        foreach (var pago in pagos.Where(p => !p.ValorAjustado).OrderBy(p => p.MembroId).ThenBy(p => p.Id))
         {
             var valor = DevolucaoRegras.PorReducao(ValorPagoConhecido(pago), novoValorPorMembro,
                 devolucoes.Where(d => d.LancamentoOrigemId == pago.Id).Sum(d => d.Valor));
@@ -850,13 +851,24 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
 internal static class EventoMapping
 {
+    public static EventoLancamentoDto ToLancamentoDto(Lancamento l) =>
+        new(l.Id, l.MembroId!.Value, l.Valor, l.Status, l.ValorPago, l.ValorAjustado);
+
+    public static IEnumerable<EventoIsencaoDto> Isencoes(IEnumerable<EventoMembro> participantes) => participantes
+        .Where(p => p.Isento)
+        .Select(p => new EventoIsencaoDto(p.MembroId, p.IsencaoLancamentoId!.Value, p.IsencaoMotivo!, p.IsentoPorUsuarioId!.Value,
+            p.IsentoEmUtc!.Value));
+
     public static EventoDevolucaoDto ToDevolucaoDto(Lancamento d) => new(d.Id, d.MembroId!.Value, d.LancamentoOrigemId!.Value, d.Valor,
         d.Vencimento, d.Status, d.ValorPago, d.DataPagamento, d.DevolucaoMotivo, d.DevolucaoJustificativa);
 
     public static EventoDto ToDto(Evento e, IEnumerable<Guid> membros, IEnumerable<EventoLancamentoDto> lancamentos,
-        IEnumerable<EventoDevolucaoDto>? devolucoes = null)
+        IEnumerable<EventoDevolucaoDto>? devolucoes = null, IEnumerable<EventoIsencaoDto>? isencoes = null)
     {
         var listaMembros = membros.OrderBy(m => m).ToList();
+        var listaLancamentos = lancamentos.OrderBy(l => l.MembroId).ThenBy(l => l.Id).ToList();
+        var listaDevolucoes = (devolucoes ?? []).OrderBy(d => d.MembroId).ThenBy(d => d.Vencimento).ThenBy(d => d.Id).ToList();
+        var totais = EventoRegras.Totais(e.ValorPorMembro, listaLancamentos, listaDevolucoes);
         return new EventoDto
         {
             Id = e.Id,
@@ -872,11 +884,16 @@ internal static class EventoMapping
             Membros = listaMembros,
             QuantidadeMembros = listaMembros.Count,
             ValorPorMembro = e.ValorPorMembro,
-            Total = e.ValorPorMembro * listaMembros.Count,
+            Total = totais.Estimado,
+            TotalEstimado = totais.Estimado,
+            TotalPago = totais.Pago,
+            ValorAReceber = totais.AReceber,
+            TotalDevolvido = totais.Devolvido,
             Ativo = e.Ativo,
             Versao = EventoRegras.VersaoParaTexto(e.Versao),
-            Lancamentos = lancamentos.OrderBy(l => l.MembroId).ThenBy(l => l.Id).ToList(),
-            Devolucoes = (devolucoes ?? []).OrderBy(d => d.MembroId).ThenBy(d => d.Vencimento).ThenBy(d => d.Id).ToList(),
+            Lancamentos = listaLancamentos,
+            Devolucoes = listaDevolucoes,
+            Isencoes = (isencoes ?? []).OrderBy(i => i.MembroId).ToList(),
         };
     }
 }

@@ -44,7 +44,7 @@ public sealed class MembrosAtivosUnitTests
     {
         var sinal = new SinalAvisosNotificacoes();
         return new(db, TimeProvider.System, new LancamentoGeralService(db, TimeProvider.System, sinal),
-            new LancamentoExclusaoService(db, NullLogger<LancamentoExclusaoService>.Instance), sinal,
+            new LancamentoExclusaoService(db, TimeProvider.System, NullLogger<LancamentoExclusaoService>.Instance), sinal,
             new DataCivil(TimeProvider.System, Microsoft.Extensions.Options.Options.Create(new Almirante.Api.Options.ClubeOptions())));
     }
 
