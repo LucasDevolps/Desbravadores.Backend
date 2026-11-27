@@ -1204,11 +1204,30 @@ e nada é gravado. A alteração é auditada em `_usuarios_hist` com o próprio 
 ```http
 GET /api/Me/Eventos/6f0c…            (eventoId recebido na notificação EventoCadastrado)
 
-200 { "id": "6f0c…", "dataEvento": "2026-11-10", "local": "Acampamento",
+200 { "id": "6f0c…", "titulo": "Acampamento de primavera", "descricao": null,
+      "dataEvento": "2026-11-10", "local": "Acampamento",
       "transporte": { "valor": 10.00, "ehGratis": false }, "alimentacao": { "individual": false, "valor": 8.00 },
-      "seguroObrigatorio": 2.00, "valorPorMembro": 20.00,
-      "minhaCobranca": { "valor": 20.00, "vencimento": "2026-11-10", "status": "Pendente" } }
+      "seguroObrigatorio": 2.00, "itensAdicionais": [ { "titulo": "Inscrição", "valor": 5.00 } ], "valorPorMembro": 25.00,
+      "minhaCobranca": { "valor": 25.00, "vencimento": "2026-11-10", "status": "Pago" },
+      "minhasDevolucoes": [
+        { "valor": 10.00, "vencimento": "2026-11-03", "status": "Pago", "valorDevolvido": 7.00,
+          "dataDevolucao": "2026-11-04", "justificativa": "devolvido em espécie" },
+        { "valor": 8.00, "vencimento": "2026-11-05", "status": "Pendente", "valorDevolvido": null,
+          "dataDevolucao": null, "justificativa": null } ] }
 ```
+
+Contrato do participante (issues #209, #225 e #227), igual em `GET /api/Me/Eventos` (cada item de `items`) e em
+`GET /api/Me/Eventos/{id}`:
+
+- `titulo` sempre preenchido; `descricao` nula quando o cadastro não tem descrição. `itensAdicionais` é `[]` em eventos sem itens.
+- `minhaCobranca` é nula quando o evento não tem valor a pagar ou quando a cobrança do membro foi isenta (#223).
+- `minhasDevolucoes` traz **só** as devoluções do próprio membro naquele cadastro, uma por linha, ordenadas por vencimento;
+  `[]` quando não há nenhuma (inclusive em eventos antigos). `valor` é o valor esperado; `valorDevolvido`, `dataDevolucao`
+  e `justificativa` ficam nulos até a baixa. `status` é `Pendente`, `Pago` ou `Atrasado` (texto); uma devolução pendente
+  nunca aparece como paga, e uma baixa parcial mostra o valor efetivo em `valorDevolvido`.
+- Datas são civis (`yyyy-MM-dd`) e valores são `decimal` com 2 casas.
+- Cada devolução gera uma notificação `DevolucaoEvento` em pt-BR (texto do backend, com `eventoId` e `lancamentoId`),
+  listada em `/api/Notificacoes`, contada em `naoLidas` e publicada no hub SignalR (ver [`docs/notificacoes.md`](docs/notificacoes.md)).
 
 **Impacto para os consumidores.** SEC deixa de acessar `/api/Lancamentos` (inclusive pagamentos) e recebe
 `"financeiro": null` no dashboard; TES deixa de acessar `/api/Usuarios` (inclusive fotos de terceiros) e
