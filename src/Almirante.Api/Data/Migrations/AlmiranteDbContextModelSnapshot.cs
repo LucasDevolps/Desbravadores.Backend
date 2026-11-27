@@ -1195,6 +1195,9 @@ namespace Almirante.Api.Data.Migrations
                     b.Property<Guid?>("EventoReferenciaId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal>("ItensAdicionaisValor")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<string>("Local")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1244,12 +1247,55 @@ namespace Almirante.Api.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_eventos_grupo", "[EventoReferenciaId] IS NOT NULL OR [EventoGrupoId] = [Id]");
 
-                            t.HasCheckConstraint("CK_eventos_valores_nao_negativos", "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ValorPorMembro] >= 0");
+                            t.HasCheckConstraint("CK_eventos_valores_nao_negativos", "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ItensAdicionaisValor] >= 0 AND [ValorPorMembro] >= 0");
 
-                            t.HasCheckConstraint("CK_eventos_valores_normalizados", "([TransporteEhGratis] = 0 OR [TransporteValor] = 0) AND ([AlimentacaoIndividual] = 0 OR [AlimentacaoValor] = 0) AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio]");
+                            t.HasCheckConstraint("CK_eventos_valores_normalizados", "([TransporteEhGratis] = 0 OR [TransporteValor] = 0) AND ([AlimentacaoIndividual] = 0 OR [AlimentacaoValor] = 0) AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio] + [ItensAdicionaisValor]");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.EventoItemAdicional", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("CriadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DesativadoEmUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("EventoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Ordem")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Titulo")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<decimal>("Valor")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventoId", "Ordem")
+                        .IsUnique()
+                        .HasDatabaseName("UX_evento_itens_adicionais_evento_ordem_ativo")
+                        .HasFilter("[Ativo] = 1");
+
+                    b.ToTable("evento_itens_adicionais", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_evento_itens_adicionais_Valor", "[Valor] > 0");
+                        });
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.EventoMembro", b =>
@@ -4122,6 +4168,15 @@ namespace Almirante.Api.Data.Migrations
                         .WithMany()
                         .HasForeignKey("EventoReferenciaId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Almirante.Api.Entities.EventoItemAdicional", b =>
+                {
+                    b.HasOne("Almirante.Api.Entities.Evento", null)
+                        .WithMany()
+                        .HasForeignKey("EventoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Almirante.Api.Entities.EventoMembro", b =>

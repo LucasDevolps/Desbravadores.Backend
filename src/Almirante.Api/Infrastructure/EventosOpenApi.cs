@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Text.Json.Nodes;
 using Almirante.Api.Controllers;
 using Almirante.Api.Dtos;
@@ -78,6 +78,8 @@ public sealed class EventosOperationFilter : IOperationFilter
             {
                 ["umMembro"] = Exemplo("Um membro (membros como GUID)", Corpo(post: true, membros: JsonValue.Create(UmMembro))),
                 ["variosMembros"] = Exemplo("Vários membros (membros como GUID[])", Corpo(post: true, membros: Membros())),
+                ["itensAdicionais"] = Exemplo("Com itens adicionais por participante (inscrição e material)",
+                    ComItens(Corpo(post: true, membros: Membros()))),
             };
         }
         else if (verbo == "PUT")
@@ -86,6 +88,8 @@ public sealed class EventosOperationFilter : IOperationFilter
             {
                 ["umMembro"] = Exemplo("Um membro (membros como GUID)", Corpo(post: false, membros: JsonValue.Create(UmMembro))),
                 ["variosMembros"] = Exemplo("Vários membros (membros como GUID[])", Corpo(post: false, membros: Membros())),
+                ["itensAdicionais"] = Exemplo("Substitui os itens adicionais (omitir o campo preserva; [] remove todos)",
+                    ComItens(Corpo(post: false, membros: Membros()))),
             };
         }
         else if (verbo == "DELETE")
@@ -100,6 +104,14 @@ public sealed class EventosOperationFilter : IOperationFilter
     private static OpenApiExample Exemplo(string resumo, JsonNode valor) => new() { Summary = resumo, Value = valor };
 
     private static JsonArray Membros() => new(JsonValue.Create(UmMembro), JsonValue.Create(DoisMembros));
+
+    private static JsonObject ComItens(JsonObject corpo)
+    {
+        corpo["itensAdicionais"] = new JsonArray(
+            new JsonObject { ["titulo"] = "Inscrição", ["valor"] = 30.00m },
+            new JsonObject { ["titulo"] = "Material", ["valor"] = 12.50m });
+        return corpo;
+    }
 
     private static JsonObject Corpo(bool post, JsonNode membros)
     {

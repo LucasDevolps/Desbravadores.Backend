@@ -18,6 +18,7 @@ public sealed class Evento
     public bool AlimentacaoIndividual { get; set; }
     public decimal AlimentacaoValor { get; set; }
     public decimal SeguroObrigatorio { get; set; }
+    public decimal ItensAdicionaisValor { get; set; }
 
     public decimal ValorPorMembro { get; set; }
 

@@ -80,6 +80,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
     public DbSet<Evento> Eventos => Set<Evento>();
     public DbSet<EventoMembro> EventosMembros => Set<EventoMembro>();
     public DbSet<EventoOperacao> EventosOperacoes => Set<EventoOperacao>();
+    public DbSet<EventoItemAdicional> EventosItensAdicionais => Set<EventoItemAdicional>();
 
     public DbSet<LancamentoDeletado> LancamentosDeletados => Set<LancamentoDeletado>();
 
@@ -297,10 +298,10 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             {
                 table.UseSqlOutputClause(false);
                 table.HasCheckConstraint("CK_eventos_valores_nao_negativos",
-                    "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ValorPorMembro] >= 0");
+                    "[TransporteValor] >= 0 AND [AlimentacaoValor] >= 0 AND [SeguroObrigatorio] >= 0 AND [ItensAdicionaisValor] >= 0 AND [ValorPorMembro] >= 0");
                 table.HasCheckConstraint("CK_eventos_valores_normalizados",
                     "([TransporteEhGratis] = 0 OR [TransporteValor] = 0) AND ([AlimentacaoIndividual] = 0 OR [AlimentacaoValor] = 0) " +
-                    "AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio]");
+                    "AND [ValorPorMembro] = [TransporteValor] + [AlimentacaoValor] + [SeguroObrigatorio] + [ItensAdicionaisValor]");
                 table.HasCheckConstraint("CK_eventos_grupo", "[EventoReferenciaId] IS NOT NULL OR [EventoGrupoId] = [Id]");
             });
             entity.HasKey(e => e.Id);
@@ -312,6 +313,7 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.Property(e => e.TransporteValor).HasColumnType("decimal(18,2)");
             entity.Property(e => e.AlimentacaoValor).HasColumnType("decimal(18,2)");
             entity.Property(e => e.SeguroObrigatorio).HasColumnType("decimal(18,2)");
+            entity.Property(e => e.ItensAdicionaisValor).HasColumnType("decimal(18,2)");
             entity.Property(e => e.ValorPorMembro).HasColumnType("decimal(18,2)");
             entity.Property(e => e.Versao).IsRowVersion();
 
@@ -347,6 +349,18 @@ public partial class AlmiranteDbContext(DbContextOptions<AlmiranteDbContext> opt
             entity.HasOne<Lancamento>().WithMany().HasForeignKey(m => m.LancamentoId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Lancamento>().WithMany().HasForeignKey(m => m.IsencaoLancamentoId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<Usuario>().WithMany().HasForeignKey(m => m.IsentoPorUsuarioId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<EventoItemAdicional>(entity =>
+        {
+            entity.ToTable("evento_itens_adicionais", table => table.HasCheckConstraint("CK_evento_itens_adicionais_Valor", "[Valor] > 0"));
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.Titulo).HasColumnType($"varchar({EventoRegras.ItemTituloMaximo})").HasMaxLength(EventoRegras.ItemTituloMaximo)
+                .IsUnicode(false).IsRequired();
+            entity.Property(i => i.Valor).HasColumnType("decimal(18,2)");
+            entity.HasIndex(i => new { i.EventoId, i.Ordem }).IsUnique().HasDatabaseName("UX_evento_itens_adicionais_evento_ordem_ativo")
+                .HasFilter("[Ativo] = 1");
+            entity.HasOne<Evento>().WithMany().HasForeignKey(i => i.EventoId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<EventoOperacao>(entity =>

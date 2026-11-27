@@ -774,6 +774,7 @@ podem ter título próprio.
 ```text
 valorPorMembro = (transporte.ehGratis ? 0 : transporte.valor)
                + (alimentacao.individual ? 0 : alimentacao.valor) + seguroObrigatorio
+               + Σ itensAdicionais[].valor
 total          = totalEstimado                              # nunca gravado no lançamento individual
 ```
 
@@ -911,6 +912,30 @@ motivo e horário UTC do banco. A aplicação **nunca** insere nessa tabela (o u
 (depois do middleware de proxies confiáveis; `X-Forwarded-For` nunca é lido à mão). O contexto é
 limpo no `finally` na mesma conexão física e, se a limpeza falhar, o pool dessa conexão é descartado.
 
+#### Itens adicionais por participante (issue #225)
+
+`itensAdicionais` (opcional no POST e no PUT, devolvido em `GET /api/Eventos`, `GET /api/Eventos/{id}` e `/api/Me/Eventos`)
+discrimina outros custos por participante além de transporte, alimentação e seguro:
+
+```json
+"itensAdicionais": [ { "titulo": "Inscrição", "valor": 30.00 }, { "titulo": "Material", "valor": 12.50 } ]
+```
+
+- Até 20 itens por cadastro; `titulo` de 1 a 100 caracteres depois do trim (espaços colapsados, página 1252) e `valor` > 0
+  com no máximo 2 casas (`decimal(18,2)`). Erro de um item vem identificado pelo índice (`ItensAdicionais[1].Valor`) e nada é
+  salvo. Cadastros antigos devolvem `itensAdicionais: []`.
+- Os itens são **componentes da cobrança** de cada participante: entram no `valorPorMembro` (base R$ 100 + inscrição R$ 30
+  + material R$ 12,50 = R$ 142,50; dois participantes sem ajuste = R$ 285 estimados) e **não** geram lançamento próprio.
+- No PUT, **omitir** o campo preserva os itens atuais (clientes antigos continuam funcionando); `[]` remove todos; uma lista
+  substitui todos, na ordem enviada. Renomear não muda o valor; mudar o valor ou remover um item recalcula o valor por membro
+  e as cobranças em aberto uma única vez. Os itens substituídos ficam inativos em `evento_itens_adicionais` (histórico; a
+  identidade de runtime não apaga linhas).
+- Com lançamento `Pago`, valem as regras de custo da [#209](#devoluções-issue-209): renomear passa; aumentar, ou trocar a
+  composição mantendo o total, dá `409`; reduzir gera devolução para quem pagou acima do novo valor. Cobranças ajustadas e
+  isenções individuais (#223) são preservadas.
+- Idempotência: os itens (título normalizado, valor e ordem) entram no hash da criação só quando existem, então o hash de
+  operações sem itens continua o mesmo de antes.
+
 #### Ajustes individuais, isenções e totais (issue #223)
 
 A Tesouraria (`financeiro.lancamentos.editar`/`excluir`: inicialmente `ADM`, `DIR`, `DIRA` e `TES`; os demais
@@ -993,6 +1018,13 @@ em `evento_membros`, `Isento` (`bit`, padrão `0`), `IsencaoLancamentoId` (FK pa
 `IsencaoMotivo` (`varchar(255)`), `IsentoPorUsuarioId` (FK para `Usuarios`) e `IsentoEmUtc`, com
 `CK_evento_membros_Isencao` (isento sem cobrança ativa e com todos os dados da isenção; não isento sem nenhum).
 Nenhuma linha existente muda. O `Down` é recusado (`THROW 50223`) enquanto houver cobrança ajustada ou isenta.
+
+**Migration `AddEventosItensAdicionais`** (issue #225, incremental): cria `evento_itens_adicionais` (`EventoId` FK,
+`Ordem`, `Titulo` `varchar(100)`, `Valor` `decimal(18,2)` com `CK_evento_itens_adicionais_Valor` > 0, `Ativo`,
+`CriadoEmUtc`, `DesativadoEmUtc`; índice único filtrado `EventoId + Ordem` entre os ativos) e adiciona
+`eventos.ItensAdicionaisValor` (`decimal(18,2)`, padrão `0`). `CK_eventos_valores_normalizados` passa a exigir
+`ValorPorMembro = TransporteValor + AlimentacaoValor + SeguroObrigatorio + ItensAdicionaisValor`. Nenhuma linha
+existente muda. O `Down` é recusado (`THROW 50225`) enquanto houver item adicional gravado.
 
 **Frontend (issue #57).** Use `GET /api/Membros` (id, nome e cargo, disponível também ao Tesoureiro) para os IDs; envie `membros` como GUID ou array;
 guarde `versao`; gere um `Idempotency-Key` novo por tentativa de cadastro e reutilize-o apenas em

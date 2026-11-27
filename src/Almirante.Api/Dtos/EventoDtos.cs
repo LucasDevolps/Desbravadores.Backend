@@ -22,6 +22,12 @@ public sealed record AlimentacaoRequest
     public decimal? Valor { get; init; }
 }
 
+public sealed record EventoItemAdicionalRequest
+{
+    public string? Titulo { get; init; }
+    public decimal? Valor { get; init; }
+}
+
 /// <summary>Campos editáveis de um cadastro de evento, compartilhados por POST e PUT (mesma validação e normalização).</summary>
 public abstract class EventoConteudoRequest
 {
@@ -42,6 +48,8 @@ public abstract class EventoConteudoRequest
 
     /// <summary>Valor do seguro por membro; obrigatório, pode ser zero.</summary>
     public decimal? SeguroObrigatorio { get; set; }
+
+    public IReadOnlyList<EventoItemAdicionalRequest>? ItensAdicionais { get; set; }
 
     /// <summary>IDs de Usuarios.Id: um GUID OU um array de GUIDs (normalizado para lista na desserialização).</summary>
     [JsonConverter(typeof(MembrosJsonConverter))]
@@ -112,6 +120,8 @@ public sealed record TransporteDto(decimal Valor, bool EhGratis);
 
 public sealed record AlimentacaoDto(bool Individual, decimal Valor);
 
+public sealed record EventoItemAdicionalDto(string Titulo, decimal Valor);
+
 public sealed record EventoLancamentoDto(Guid Id, Guid MembroId, decimal Valor, StatusLancamento Status, decimal? ValorPago = null,
     bool ValorAjustado = false);
 
@@ -136,6 +146,7 @@ public sealed record EventoDto
     public required TransporteDto Transporte { get; init; }
     public required AlimentacaoDto Alimentacao { get; init; }
     public decimal SeguroObrigatorio { get; init; }
+    public IReadOnlyList<EventoItemAdicionalDto> ItensAdicionais { get; init; } = [];
 
     /// <summary>Sempre um array na resposta, mesmo que o POST/PUT tenha recebido um GUID único.</summary>
     public required IReadOnlyList<Guid> Membros { get; init; }

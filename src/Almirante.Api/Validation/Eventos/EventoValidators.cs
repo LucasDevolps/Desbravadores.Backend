@@ -51,6 +51,23 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
         RuleFor(x => x.SeguroObrigatorio!.Value).Must(valorValido).WithMessage(MensagemValor("seguroObrigatorio")).OverridePropertyName("SeguroObrigatorio")
             .When(x => x.SeguroObrigatorio.HasValue);
 
+        RuleFor(x => x.ItensAdicionais!).Must(itens => itens.Count <= EventoRegras.ItensMaximo)
+            .WithMessage($"itensAdicionais aceita no máximo {EventoRegras.ItensMaximo} itens.")
+            .When(x => x.ItensAdicionais is not null);
+        RuleForEach(x => x.ItensAdicionais).NotNull().WithMessage("item adicional não pode ser nulo.").ChildRules(item =>
+        {
+            item.RuleLevelCascadeMode = CascadeMode.Stop;
+            item.RuleFor(i => i.Titulo)
+                .Must(titulo => EventoRegras.NormalizarTitulo(titulo).Length > 0).WithMessage("titulo do item é obrigatório.")
+                .Must(titulo => EventoRegras.NormalizarTitulo(titulo).Length <= EventoRegras.ItemTituloMaximo)
+                .WithMessage($"titulo do item deve ter no máximo {EventoRegras.ItemTituloMaximo} caracteres.")
+                .Must(titulo => TextoVarchar.CabeNaPagina1252(EventoRegras.NormalizarTitulo(titulo)))
+                .WithMessage(TextoVarchar.ForaDaPagina1252("titulo"));
+            item.RuleFor(i => i.Valor).NotNull().WithMessage("valor do item é obrigatório.")
+                .Must(valor => valor > 0 && EventoRegras.ValorValido(valor!.Value))
+                .WithMessage($"valor do item deve ser maior que zero, ter no máximo duas casas decimais e não exceder {EventoRegras.ValorMaximo:0.00}.");
+        }).When(x => x.ItensAdicionais is not null);
+
         RuleFor(x => x.Membros).NotNull().WithMessage("membros é obrigatório (um GUID ou um array de GUIDs).")
             .Must(m => m!.Count > 0).WithMessage("membros não pode ser vazio.")
             .Must(m => m!.Count <= MembrosJsonConverter.MaximoMembros).WithMessage($"membros aceita no máximo {MembrosJsonConverter.MaximoMembros} itens.")
@@ -71,12 +88,15 @@ public abstract class EventoConteudoValidator<T> : AbstractValidator<T> where T 
         && x.SeguroObrigatorio.HasValue && x.Membros is { Count: > 0 } && x.DataEvento.HasValue
         && (x.Transporte.EhGratis.Value || EventoRegras.ValorValido(x.Transporte.Valor.Value))
         && (x.Alimentacao.Individual.Value || EventoRegras.ValorValido(x.Alimentacao.Valor.Value))
-        && EventoRegras.ValorValido(x.SeguroObrigatorio.Value);
+        && EventoRegras.ValorValido(x.SeguroObrigatorio.Value)
+        && (x.ItensAdicionais is null || (x.ItensAdicionais.Count <= EventoRegras.ItensMaximo
+            && x.ItensAdicionais.All(i => i is { Valor: > 0 } && EventoRegras.ValorValido(i.Valor!.Value))));
 
     private static bool TotalCabeNoBanco(T x)
     {
         var por = (x.Transporte!.EhGratis!.Value ? 0m : x.Transporte.Valor!.Value)
-            + (x.Alimentacao!.Individual!.Value ? 0m : x.Alimentacao.Valor!.Value) + x.SeguroObrigatorio!.Value;
+            + (x.Alimentacao!.Individual!.Value ? 0m : x.Alimentacao.Valor!.Value) + x.SeguroObrigatorio!.Value
+            + (x.ItensAdicionais ?? []).Sum(i => i.Valor!.Value);
         return por <= EventoRegras.ValorMaximo && por * x.Membros!.Count <= EventoRegras.ValorMaximo;
     }
 }

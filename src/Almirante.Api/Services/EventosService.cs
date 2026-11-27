@@ -78,6 +78,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             .ToListAsync(ct);
 
         var ids = linhas.Select(x => x.Evento.Id).ToList();
+        var itensPorEvento = await ItensPorEventoAsync(ids, ct);
         var devolucoes = ids.Count == 0 ? [] : await db.Lancamentos.AsNoTracking()
             .Where(l => l.Ativo && l.MembroId == membroId && l.LancamentoOrigemId != null && l.EventoId != null && ids.Contains(l.EventoId.Value))
             .OrderBy(l => l.Vencimento).ThenBy(l => l.Id)
@@ -99,6 +100,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             Transporte = new TransporteDto(x.Evento.TransporteValor, x.Evento.TransporteEhGratis),
             Alimentacao = new AlimentacaoDto(x.Evento.AlimentacaoIndividual, x.Evento.AlimentacaoValor),
             SeguroObrigatorio = x.Evento.SeguroObrigatorio,
+            ItensAdicionais = itensPorEvento[x.Evento.Id].ToList(),
             ValorPorMembro = x.Evento.ValorPorMembro,
             MinhaCobranca = x.Cobranca,
             MinhasDevolucoes = devolucoesPorEvento[x.Evento.Id].ToList(),
@@ -120,13 +122,26 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
             .Where(l => l.Ativo && l.EventoId != null && ids.Contains(l.EventoId.Value) && l.MembroId != null)
             .ToListAsync(ct);
 
+        var itensPorEvento = await ItensPorEventoAsync(ids, ct);
+
         var participantesPorEvento = participantes.ToLookup(p => p.EventoId);
         var lancamentosPorEvento = lancamentos.ToLookup(l => l.EventoId!.Value);
         return eventos.Select(e => EventoMapping.ToDto(e,
             participantesPorEvento[e.Id].Select(p => p.MembroId),
             lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId == null).Select(EventoMapping.ToLancamentoDto),
             lancamentosPorEvento[e.Id].Where(l => l.LancamentoOrigemId != null).Select(EventoMapping.ToDevolucaoDto),
-            EventoMapping.Isencoes(participantesPorEvento[e.Id]))).ToList();
+            EventoMapping.Isencoes(participantesPorEvento[e.Id]),
+            itensPorEvento[e.Id])).ToList();
+    }
+
+    private async Task<ILookup<Guid, EventoItemAdicionalDto>> ItensPorEventoAsync(IReadOnlyCollection<Guid> eventoIds, CancellationToken ct)
+    {
+        var itens = await db.EventosItensAdicionais.AsNoTracking()
+            .Where(i => i.Ativo && eventoIds.Contains(i.EventoId))
+            .OrderBy(i => i.EventoId).ThenBy(i => i.Ordem)
+            .Select(i => new { i.EventoId, i.Titulo, i.Valor })
+            .ToListAsync(ct);
+        return itens.ToLookup(i => i.EventoId, i => new EventoItemAdicionalDto(i.Titulo, i.Valor));
     }
 
     public async Task<RegistrarEventoResult> RegistrarAsync(RegistrarEventoRequest request, CancellationToken ct)
@@ -186,6 +201,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 };
                 AplicarConteudo(evento, conteudo);
                 db.Eventos.Add(evento);
+                var itens = NovosItens(evento.Id, conteudo.Itens, agora);
+                db.EventosItensAdicionais.AddRange(itens);
 
                 // Valor por membro zero (ex.: reunião de clube): os membros participam, mas nenhum lançamento é gerado.
                 var participantes = new List<EventoMembro>(conteudo.Membros.Count);
@@ -220,7 +237,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
                 var dto = EventoMapping.ToDto(evento,
                     participantes.Select(p => p.MembroId),
-                    lancamentos.Select(EventoMapping.ToLancamentoDto));
+                    lancamentos.Select(EventoMapping.ToLancamentoDto),
+                    itens: itens.Select(EventoMapping.ToItemDto));
 
                 operacao.RespostaJson = JsonSerializer.Serialize(dto, RespostaJsonOptions);
                 await SalvarAsync(ct);
@@ -326,6 +344,14 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 await TravarCadastroAsync(id, versao, request.UsuarioResponsavelId, agora, ct);
                 var evento = await db.Eventos.Include(e => e.Membros.Where(m => m.Ativo)).SingleAsync(e => e.Id == id, ct);
                 var participantes = evento.Membros.ToList();
+                var itensAtuais = await db.EventosItensAdicionais.Where(i => i.EventoId == id && i.Ativo).OrderBy(i => i.Ordem).ToListAsync(ct);
+                var itensAtuaisNormalizados = itensAtuais.Select(i => new EventoItemNormalizado(i.Titulo, i.Valor)).ToList();
+                if (!conteudo.ItensInformados)
+                {
+                    conteudo = conteudo with { Itens = itensAtuaisNormalizados };
+                }
+
+                var itensMudaram = !conteudo.Itens.SequenceEqual(itensAtuaisNormalizados);
                 var lancamentos = await db.Lancamentos.Where(l => l.EventoId == id && l.Ativo).ToListAsync(ct);
                 var cobrancas = lancamentos.Where(l => l.LancamentoOrigemId == null).ToList();
                 var devolucoes = lancamentos.Where(l => l.LancamentoOrigemId != null).ToList();
@@ -343,6 +369,7 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     || conteudo.AlimentacaoIndividual != evento.AlimentacaoIndividual
                     || conteudo.AlimentacaoValor != evento.AlimentacaoValor
                     || conteudo.SeguroObrigatorio != evento.SeguroObrigatorio
+                    || !EventoRegras.MesmaComposicaoDeValores(conteudo.Itens, itensAtuaisNormalizados)
                     || conteudo.ValorPorMembro != evento.ValorPorMembro;
                 var reducao = conteudo.ValorPorMembro < evento.ValorPorMembro;
                 var hoje = dataCivil.Hoje();
@@ -396,6 +423,19 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                 AplicarConteudo(evento, conteudo);
                 evento.AtualizadoPorUsuarioId = request.UsuarioResponsavelId;
                 evento.AtualizadoEmUtc = agora;
+
+                var itensVigentes = itensAtuais;
+                if (itensMudaram)
+                {
+                    foreach (var item in itensAtuais)
+                    {
+                        item.Ativo = false;
+                        item.DesativadoEmUtc = agora;
+                    }
+
+                    itensVigentes = NovosItens(id, conteudo.Itens, agora);
+                    db.EventosItensAdicionais.AddRange(itensVigentes);
+                }
 
                 var removidosIds = removidos.Select(r => r.MembroId).ToHashSet();
                 var descricao = EventoRegras.DescricaoLancamento(conteudo.Titulo, conteudo.DataEvento);
@@ -502,7 +542,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
                     mantidos.Select(p => p.MembroId).Concat(adicionados),
                     ativos.Select(EventoMapping.ToLancamentoDto),
                     devolucoes.Concat(novasDevolucoes).Select(EventoMapping.ToDevolucaoDto),
-                    EventoMapping.Isencoes(mantidos));
+                    EventoMapping.Isencoes(mantidos),
+                    itensVigentes.Select(EventoMapping.ToItemDto));
             }, ct);
 
             if (notificou)
@@ -785,8 +826,21 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
         evento.AlimentacaoIndividual = conteudo.AlimentacaoIndividual;
         evento.AlimentacaoValor = conteudo.AlimentacaoValor;
         evento.SeguroObrigatorio = conteudo.SeguroObrigatorio;
+        evento.ItensAdicionaisValor = conteudo.ItensAdicionaisValor;
         evento.ValorPorMembro = conteudo.ValorPorMembro;
     }
+
+    private static List<EventoItemAdicional> NovosItens(Guid eventoId, IEnumerable<EventoItemNormalizado> itens, DateTime agora) =>
+        itens.Select((item, ordem) => new EventoItemAdicional
+        {
+            Id = Guid.NewGuid(),
+            EventoId = eventoId,
+            Ordem = ordem,
+            Titulo = item.Titulo,
+            Valor = item.Valor,
+            Ativo = true,
+            CriadoEmUtc = agora,
+        }).ToList();
 
     private static Lancamento NovoLancamento(Evento evento, Guid membroId, DateTime agora) => new()
     {
@@ -851,6 +905,8 @@ public sealed class EventosService(AlmiranteDbContext db, TimeProvider clock, IL
 
 internal static class EventoMapping
 {
+    public static EventoItemAdicionalDto ToItemDto(EventoItemAdicional i) => new(i.Titulo, i.Valor);
+
     public static EventoLancamentoDto ToLancamentoDto(Lancamento l) =>
         new(l.Id, l.MembroId!.Value, l.Valor, l.Status, l.ValorPago, l.ValorAjustado);
 
@@ -863,7 +919,8 @@ internal static class EventoMapping
         d.Vencimento, d.Status, d.ValorPago, d.DataPagamento, d.DevolucaoMotivo, d.DevolucaoJustificativa);
 
     public static EventoDto ToDto(Evento e, IEnumerable<Guid> membros, IEnumerable<EventoLancamentoDto> lancamentos,
-        IEnumerable<EventoDevolucaoDto>? devolucoes = null, IEnumerable<EventoIsencaoDto>? isencoes = null)
+        IEnumerable<EventoDevolucaoDto>? devolucoes = null, IEnumerable<EventoIsencaoDto>? isencoes = null,
+        IEnumerable<EventoItemAdicionalDto>? itens = null)
     {
         var listaMembros = membros.OrderBy(m => m).ToList();
         var listaLancamentos = lancamentos.OrderBy(l => l.MembroId).ThenBy(l => l.Id).ToList();
@@ -881,6 +938,7 @@ internal static class EventoMapping
             Transporte = new TransporteDto(e.TransporteValor, e.TransporteEhGratis),
             Alimentacao = new AlimentacaoDto(e.AlimentacaoIndividual, e.AlimentacaoValor),
             SeguroObrigatorio = e.SeguroObrigatorio,
+            ItensAdicionais = (itens ?? []).ToList(),
             Membros = listaMembros,
             QuantidadeMembros = listaMembros.Count,
             ValorPorMembro = e.ValorPorMembro,
